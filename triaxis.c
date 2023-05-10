@@ -10,12 +10,15 @@
 #define function static
 #define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
 #define unused(x) (x) = (x)
+#define min(x, y) (((x) < (y)) ? (x) : (y))
+#define max(x, y) (((x) > (y)) ? (x) : (y))
 // clang-format on
 
 typedef uint8_t  u8;
 typedef int32_t  i32;
 typedef uint32_t u32;
 typedef intptr_t isize;
+typedef float    f32;
 
 bool
 isPowerOf2(isize value) {
@@ -96,16 +99,30 @@ setImageSize(Renderer* renderer, isize width, isize height) {
     renderer->image.height = height;
 }
 
+typedef struct V2f {
+    f32 x, y;
+} V2f;
+
 typedef struct Rect2i {
     isize x, y, width, height;
 } Rect2i;
+
+typedef struct Rect2f {
+    f32 x, y, width, height;
+} Rect2f;
 
 typedef struct Color255 {
     u8 r, g, b, a;
 } Color255;
 
+function u32
+color255tou32(Color255 color) {
+    u32 coloru32 = (color.a << 24) | (color.r << 16) | (color.g << 8) | (color.b << 0);
+    return coloru32;
+}
+
 function void
-fillRect(Renderer* renderer, Rect2i rect, Color255 color) {
+fillRect2i(Renderer* renderer, Rect2i rect, Color255 color) {
     assert(rect.x > 0 && rect.x < renderer->image.width);
     assert(rect.y > 0 && rect.y < renderer->image.height);
     isize right = rect.x + rect.width;
@@ -113,11 +130,53 @@ fillRect(Renderer* renderer, Rect2i rect, Color255 color) {
     assert(right > 0 && right < renderer->image.width);
     assert(bottom > 0 && bottom < renderer->image.height);
 
-    u32 coloru32 =  (color.a << 24) | (color.r << 16) | (color.g << 8) | (color.b << 0);
+    u32 coloru32 = color255tou32(color);
     for (isize row = rect.y; row < bottom; row++) {
         for (isize column = rect.x; column < right; column++) {
             isize index = row * renderer->image.width + column;
             renderer->image.pixels[index] = coloru32;
+        }
+    }
+}
+
+function bool
+v2fInRect2i(V2f point, Rect2i rectf) {
+    Rect2f rect = {(f32)rectf.x, (f32)rectf.y, (f32)rectf.width, (f32)rectf.height};
+    bool   hor = point.x >= rect.x && point.x < rect.x + rect.width;
+    bool   ver = point.y >= rect.y && point.y < rect.y + rect.height;
+    bool   result = hor && ver;
+    return result;
+}
+
+function bool
+v2fInBounds(Renderer* renderer, V2f point) {
+    bool result = v2fInRect2i(point, (Rect2i) {0, 0, renderer->image.width, renderer->image.height});
+    return result;
+}
+
+typedef struct TriangleF {
+    V2f v1, v2, v3;
+} TriangleF;
+
+function void
+fillTriangleF(Renderer* renderer, TriangleF triangle, Color255 color) {
+    assert(v2fInBounds(renderer, triangle.v1));
+    assert(v2fInBounds(renderer, triangle.v2));
+    assert(v2fInBounds(renderer, triangle.v3));
+
+    f32 xmin = min(triangle.v1.x, min(triangle.v2.x, triangle.v3.x));
+    f32 ymin = min(triangle.v1.y, min(triangle.v2.y, triangle.v3.y));
+    f32 xmax = max(triangle.v1.x, max(triangle.v2.x, triangle.v3.x));
+    f32 ymax = max(triangle.v1.y, max(triangle.v2.y, triangle.v3.y));
+
+    u32 coloru32 = color255tou32(color);
+
+    for (f32 ycoord = ymin; ycoord <= ymax; ycoord += 1.0f) {
+        for (f32 xcoord = xmin; xcoord <= xmax; xcoord += 1.0f) {
+            // TODO(khvorov) Implement
+            isize ypx = (isize)ycoord;
+            isize xpx = (isize)xcoord;
+            renderer->image.pixels[ypx * renderer->image.width + xpx] = coloru32;
         }
     }
 }
@@ -176,7 +235,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     assert(memBase);
     Win32Renderer win32Rend = {.renderer = createRenderer(memBase, memSize), .windowWidth = 1000, .windowHeight = 1000};
     setImageSize(&win32Rend.renderer, win32Rend.windowWidth, win32Rend.windowHeight);
-    fillRect(&win32Rend.renderer, (Rect2i) {100, 100, 100, 100}, (Color255) {255, 0, 0, 255});
+    fillRect2i(&win32Rend.renderer, (Rect2i) {100, 100, 100, 100}, (Color255) {255, 0, 0, 255});
+    fillTriangleF(&win32Rend.renderer, (TriangleF) {{10, 2}, {200, 280}, {30, 210}}, (Color255) {255, 0, 255, 255});
 
     WNDCLASSEXW windowClass = {
         .cbSize = sizeof(WNDCLASSEXW),
