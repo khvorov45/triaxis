@@ -20,7 +20,14 @@ typedef uint32_t u32;
 typedef intptr_t isize;
 typedef float    f32;
 
-bool
+function i32
+ceilf32toi32(f32 val) {
+    i32 valint = (i32)val;
+    i32 result = valint + (isize)(val > (f32)valint);
+    return result;
+}
+
+function bool
 isPowerOf2(isize value) {
     bool result = (value > 0) && ((value & (value - 1)) == 0);
     return result;
@@ -103,6 +110,20 @@ typedef struct V2f {
     f32 x, y;
 } V2f;
 
+function V2f
+v2fminus(V2f v1, V2f v2) {
+    V2f result = {v2.x - v1.x, v2.y - v1.y};
+    return result;
+}
+
+function f32
+edgeCrossMag(V2f v1, V2f v2, V2f pt) {
+    V2f v1v2 = v2fminus(v2, v1);
+    V2f v1pt = v2fminus(pt, v1);
+    f32 result = v1v2.x * v1pt.y - v1v2.y * v1pt.x;
+    return result;
+}
+
 typedef struct Rect2i {
     isize x, y, width, height;
 } Rect2i;
@@ -169,14 +190,23 @@ fillTriangleF(Renderer* renderer, TriangleF triangle, Color255 color) {
     f32 xmax = max(triangle.v1.x, max(triangle.v2.x, triangle.v3.x));
     f32 ymax = max(triangle.v1.y, max(triangle.v2.y, triangle.v3.y));
 
-    u32 coloru32 = color255tou32(color);
+    i32 xstart = ceilf32toi32(xmin);
+    i32 xend = ceilf32toi32(xmax);
+    i32 ystart = ceilf32toi32(ymin);
+    i32 yend = ceilf32toi32(ymax);
 
-    for (f32 ycoord = ymin; ycoord <= ymax; ycoord += 1.0f) {
-        for (f32 xcoord = xmin; xcoord <= xmax; xcoord += 1.0f) {
-            // TODO(khvorov) Implement
-            isize ypx = (isize)ycoord;
-            isize xpx = (isize)xcoord;
-            renderer->image.pixels[ypx * renderer->image.width + xpx] = coloru32;
+    u32 coloru32 = color255tou32(color);
+    for (i32 ycoord = ystart; ycoord < yend; ycoord++) {
+        for (i32 xcoord = xstart; xcoord < xend; xcoord++) {
+
+            V2f point = {(float)xcoord, (float)ycoord};
+            f32 cross1 = edgeCrossMag(triangle.v1, triangle.v2, point);
+            f32 cross2 = edgeCrossMag(triangle.v2, triangle.v3, point);
+            f32 cross3 = edgeCrossMag(triangle.v3, triangle.v1, point);
+
+            if (cross1 > 0 && cross2 > 0 && cross3 > 0) {
+                renderer->image.pixels[ycoord * renderer->image.width + xcoord] = coloru32;
+            }
         }
     }
 }
@@ -236,7 +266,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Win32Renderer win32Rend = {.renderer = createRenderer(memBase, memSize), .windowWidth = 1000, .windowHeight = 1000};
     setImageSize(&win32Rend.renderer, win32Rend.windowWidth, win32Rend.windowHeight);
     fillRect2i(&win32Rend.renderer, (Rect2i) {100, 100, 100, 100}, (Color255) {255, 0, 0, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{10, 2}, {200, 280}, {30, 210}}, (Color255) {255, 0, 255, 255});
+    fillTriangleF(&win32Rend.renderer, (TriangleF) {{10, 2}, {200, 280}, {30, 210}}, (Color255) {0, 0, 255, 255});
 
     WNDCLASSEXW windowClass = {
         .cbSize = sizeof(WNDCLASSEXW),
