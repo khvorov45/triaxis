@@ -123,6 +123,12 @@ v2fsub(V2f v1, V2f v2) {
     return result;
 }
 
+function V2f
+v2fhadamard(V2f v1, V2f v2) {
+    V2f result = {v1.x * v2.x, v1.y * v2.y};
+    return result;
+}
+
 typedef struct Rect2i {
     isize x, y, width, height;
 } Rect2i;
@@ -239,44 +245,48 @@ fillTriangleF(Renderer* renderer, TriangleF triangle) {
     f32 cross3topleft = edgeCrossMag(triangle.v3, triangle.v1, topleft);
 
     for (i32 ycoord = ystart; ycoord <= (i32)ymax; ycoord++) {
-        f32 yinc = (f32)(ycoord - ystart);
-        f32 cross1row = cross1topleft + yinc * dcross1y;
-        f32 cross2row = cross2topleft + yinc * dcross2y;
-        f32 cross3row = cross3topleft + yinc * dcross3y;
+        if (ycoord < renderer->image.height) {
+            f32 yinc = (f32)(ycoord - ystart);
+            f32 cross1row = cross1topleft + yinc * dcross1y;
+            f32 cross2row = cross2topleft + yinc * dcross2y;
+            f32 cross3row = cross3topleft + yinc * dcross3y;
 
-        for (i32 xcoord = xstart; xcoord <= (i32)xmax; xcoord++) {
-            f32 xinc = (f32)(xcoord - xstart);
-            f32 cross1 = cross1row + xinc * dcross1x;
-            f32 cross2 = cross2row + xinc * dcross2x;
-            f32 cross3 = cross3row + xinc * dcross3x;
+            for (i32 xcoord = xstart; xcoord <= (i32)xmax; xcoord++) {
+                if (xcoord < renderer->image.width) {
+                    f32 xinc = (f32)(xcoord - xstart);
+                    f32 cross1 = cross1row + xinc * dcross1x;
+                    f32 cross2 = cross2row + xinc * dcross2x;
+                    f32 cross3 = cross3row + xinc * dcross3x;
 
-            bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
-            bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
-            bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
+                    bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
+                    bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
+                    bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
 
-            if (pass1 && pass2 && pass3) {
-                i32 index = ycoord * renderer->image.width + xcoord;
-                if (index < renderer->image.width * renderer->image.height) {
-                    f32 cross1scaled = cross1 / area;
-                    f32 cross2scaled = cross2 / area;
-                    f32 cross3scaled = cross3 / area;
+                    if (pass1 && pass2 && pass3) {
+                        f32 cross1scaled = cross1 / area;
+                        f32 cross2scaled = cross2 / area;
+                        f32 cross3scaled = cross3 / area;
 
-                    Color01 color01 = color01add(color01add(color01mul(triangle.c1, cross2scaled), color01mul(triangle.c2, cross3scaled)), color01mul(triangle.c3, cross1scaled));
+                        Color01 color01 = color01add(color01add(color01mul(triangle.c1, cross2scaled), color01mul(triangle.c2, cross3scaled)), color01mul(triangle.c3, cross1scaled));
 
-                    u32      existingColoru32 = renderer->image.pixels[index];
-                    Color255 existingColor255 = coloru32to255(existingColoru32);
-                    Color01  existingColor01 = color255to01(existingColor255);
+                        i32 index = ycoord * renderer->image.width + xcoord;
+                        assert(index < renderer->image.width * renderer->image.height);
 
-                    Color01 blended01 = {
-                        .r = lerp(existingColor01.r, color01.r, color01.a),
-                        .g = lerp(existingColor01.g, color01.g, color01.a),
-                        .b = lerp(existingColor01.b, color01.b, color01.a),
-                        .a = 1,
-                    };
+                        u32      existingColoru32 = renderer->image.pixels[index];
+                        Color255 existingColor255 = coloru32to255(existingColoru32);
+                        Color01  existingColor01 = color255to01(existingColor255);
 
-                    Color255 blended255 = color01to255(blended01);
-                    u32      blendedu32 = color255tou32(blended255);
-                    renderer->image.pixels[index] = blendedu32;
+                        Color01 blended01 = {
+                            .r = lerp(existingColor01.r, color01.r, color01.a),
+                            .g = lerp(existingColor01.g, color01.g, color01.a),
+                            .b = lerp(existingColor01.b, color01.b, color01.a),
+                            .a = 1,
+                        };
+
+                        Color255 blended255 = color01to255(blended01);
+                        u32      blendedu32 = color255tou32(blended255);
+                        renderer->image.pixels[index] = blendedu32;
+                    }
                 }
             }
         }
@@ -304,23 +314,7 @@ windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     LRESULT result = 0;
     switch (uMsg) {
         case WM_DESTROY: PostQuitMessage(0); break;
-        case WM_ERASEBKGND: result = TRUE; break;  // NOTE(khvorov) Do nothinga
-
-        case WM_PAINT: {
-            Win32Renderer* win32Rend = (Win32Renderer*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-            if (win32Rend) {
-                BITMAPINFO bmi = {
-                    .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
-                    .bmiHeader.biWidth = win32Rend->renderer.image.width,
-                    .bmiHeader.biHeight = -win32Rend->renderer.image.height,  // NOTE(khvorov) Top-down
-                    .bmiHeader.biPlanes = 1,
-                    .bmiHeader.biBitCount = 32,
-                    .bmiHeader.biCompression = BI_RGB,
-                };
-                StretchDIBits(win32Rend->hdc, 0, 0, win32Rend->windowWidth, win32Rend->windowHeight, 0, 0, win32Rend->renderer.image.width, win32Rend->renderer.image.height, win32Rend->renderer.image.pixels, &bmi, DIB_RGB_COLORS, SRCCOPY);
-            }
-        } break;
-
+        case WM_ERASEBKGND: result = TRUE; break;  // NOTE(khvorov) Do nothing
         default: result = DefWindowProc(hwnd, uMsg, wParam, lParam); break;
     }
     return result;
@@ -383,22 +377,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     }
 
     clearImage(&win32Rend.renderer);
-    setImageSize(&win32Rend.renderer, win32Rend.windowWidth, win32Rend.windowHeight);
-
-    {
-        V2f v1 = {40, 10};
-        V2f v2 = {500, 500};
-        V2f v3 = {10, 300};
-        V2f v4 = {400, 30};
-
-        Color01 c1 = {.a = 1, .r = 1};
-        Color01 c2 = {.a = 1, .g = 1};
-        Color01 c3 = {.a = 1, .b = 1};
-        Color01 c4 = {.a = 1, .r = 1, .g = 1};
-
-        fillTriangleF(&win32Rend.renderer, (TriangleF) {v1, v2, v3, c1, c2, c3});
-        fillTriangleF(&win32Rend.renderer, (TriangleF) {v1, v4, v2, c1, c4, c2});
-    }
 
     WNDCLASSEXW windowClass = {
         .cbSize = sizeof(WNDCLASSEXW),
@@ -431,9 +409,56 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&win32Rend);
 
-    for (MSG msg = {}; GetMessageW(&msg, NULL, 0, 0);) {
+    setImageSize(&win32Rend.renderer, win32Rend.windowWidth / 50, win32Rend.windowHeight / 50);
+    V2f vertices[] = {
+        v2fhadamard((V2f) {0.04, 0.01}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
+        v2fhadamard((V2f) {0.5, 0.5}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
+        v2fhadamard((V2f) {0.01, 0.3}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
+        v2fhadamard((V2f) {0.4, 0.03}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
+    };
+
+    Color01 colors[] = {
+        {.a = 1, .r = 1},
+        {.a = 1, .g = 1},
+        {.a = 1, .b = 1},
+        {.a = 1, .r = 1, .g = 1},
+    };
+
+    assert(arrayCount(vertices) == arrayCount(colors));
+
+    for (MSG msg = {}; GetMessageW(&msg, 0, 0, 0);) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
+
+        clearImage(&win32Rend.renderer);
+        fillTriangleF(&win32Rend.renderer, (TriangleF) {vertices[0], vertices[1], vertices[2], colors[0], colors[1], colors[2]});
+        fillTriangleF(&win32Rend.renderer, (TriangleF) {vertices[0], vertices[3], vertices[1], colors[0], colors[3], colors[1]});
+
+        // NOTE(khvorov) Present the bitmap
+        {
+            BITMAPINFO bmi = {
+                .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
+                .bmiHeader.biWidth = win32Rend.renderer.image.width,
+                .bmiHeader.biHeight = -win32Rend.renderer.image.height,  // NOTE(khvorov) Top-down
+                .bmiHeader.biPlanes = 1,
+                .bmiHeader.biBitCount = 32,
+                .bmiHeader.biCompression = BI_RGB,
+            };
+            StretchDIBits(win32Rend.hdc, 0, 0, win32Rend.windowWidth, win32Rend.windowHeight, 0, 0, win32Rend.renderer.image.width, win32Rend.renderer.image.height, win32Rend.renderer.image.pixels, &bmi, DIB_RGB_COLORS, SRCCOPY);
+        }
+
+        // NOTE(khvorov) Move the shape to the cursor
+        {
+            V2f   refVertex = vertices[1];
+            POINT cursor = {};
+            GetCursorPos(&cursor);
+            ScreenToClient(window, &cursor);
+            f32 cursorImageX = ((f32)cursor.x / (f32)win32Rend.windowWidth * (f32)win32Rend.renderer.image.width);
+            f32 dref = cursorImageX - refVertex.x;
+            for (isize ind = 0; ind < (isize)arrayCount(vertices); ind++) {
+                vertices[ind].x += dref;
+            }
+        }
     }
 
     return 0;
