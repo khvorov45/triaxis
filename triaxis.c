@@ -9,6 +9,7 @@
 // clang-format off
 #define function static
 #define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
+#define arrayCount(x) (sizeof(x) / sizeof(x[0]))
 #define unused(x) (x) = (x)
 #define min(x, y) (((x) < (y)) ? (x) : (y))
 #define max(x, y) (((x) > (y)) ? (x) : (y))
@@ -19,13 +20,6 @@ typedef int32_t  i32;
 typedef uint32_t u32;
 typedef intptr_t isize;
 typedef float    f32;
-
-// function i32
-// ceilf32toi32(f32 val) {
-//     i32 valint = (i32)val;
-//     i32 result = valint + (isize)(val > (f32)valint);
-//     return result;
-// }
 
 function bool
 isPowerOf2(isize value) {
@@ -106,6 +100,13 @@ setImageSize(Renderer* renderer, isize width, isize height) {
     renderer->image.height = height;
 }
 
+function void
+clearImage(Renderer* renderer) {
+    for (isize ind = 0; ind < renderer->image.width * renderer->image.height; ind++) {
+        renderer->image.pixels[ind] = 0;
+    }
+}
+
 function f32
 lerp(f32 start, f32 end, f32 by) {
     f32 result = start + (end - start) * by;
@@ -117,7 +118,7 @@ typedef struct V2f {
 } V2f;
 
 function V2f
-v2fminus(V2f v1, V2f v2) {
+v2fsub(V2f v1, V2f v2) {
     V2f result = {v1.x - v2.x, v1.y - v2.y};
     return result;
 }
@@ -158,65 +159,49 @@ color255to01(Color255 color) {
 
 function Color255
 color01to255(Color01 color) {
-    Color255 result = {.r = (u8)(color.r * 255.0f), .g = (u8)(color.g * 255.0f), .b = (u8)(color.b * 255.0f), .a = (u8)(color.a * 255.0f)};
+    Color255 result = {
+        .r = (u8)(color.r * 255.0f + 0.5f),
+        .g = (u8)(color.g * 255.0f + 0.5f),
+        .b = (u8)(color.b * 255.0f + 0.5f),
+        .a = (u8)(color.a * 255.0f + 0.5f)};
     return result;
 }
 
-function void
-fillRect2i(Renderer* renderer, Rect2i rect, Color255 color) {
-    assert(rect.x > 0 && rect.x < renderer->image.width);
-    assert(rect.y > 0 && rect.y < renderer->image.height);
-    isize right = rect.x + rect.width;
-    isize bottom = rect.y + rect.height;
-    assert(right > 0 && right < renderer->image.width);
-    assert(bottom > 0 && bottom < renderer->image.height);
-
-    u32 coloru32 = color255tou32(color);
-    for (isize row = rect.y; row < bottom; row++) {
-        for (isize column = rect.x; column < right; column++) {
-            isize index = row * renderer->image.width + column;
-            renderer->image.pixels[index] = coloru32;
-        }
-    }
+function Color01
+color01add(Color01 c1, Color01 c2) {
+    Color01 result = {.r = c1.r + c2.r, .g = c1.g + c2.g, .b = c1.b + c2.b, .a = c1.a + c2.a};
+    return result;
 }
 
-// function bool
-// v2fInRect2f(V2f point, Rect2f rect) {
-//     bool hor = point.x >= rect.x && point.x < rect.x + rect.width;
-//     bool ver = point.y >= rect.y && point.y < rect.y + rect.height;
-//     bool result = hor && ver;
-//     return result;
-// }
-
-// function bool
-// v2fInRect2i(V2f point, Rect2i recti) {
-//     Rect2f rect = {(f32)recti.x, (f32)recti.y, (f32)recti.width, (f32)recti.height};
-//     bool   result = v2fInRect2f(point, rect);
-//     return result;
-// }
-
-// function bool
-// v2fInBounds(Renderer* renderer, V2f point) {
-//     Rect2f rect = (Rect2f) {-0.5f, -0.5f, ((f32)renderer->image.width), ((f32)renderer->image.height)};
-//     bool   result = v2fInRect2f(point, rect);
-//     return result;
-// }
+function Color01
+color01mul(Color01 c1, f32 by) {
+    Color01 result = {.r = c1.r * by, .g = c1.g * by, .b = c1.b * by, .a = c1.a * by};
+    return result;
+}
 
 typedef struct TriangleF {
-    V2f v1, v2, v3;
+    V2f     v1, v2, v3;
+    Color01 c1, c2, c3;
 } TriangleF;
+
+function TriangleF
+triangleSameColor(V2f v1, V2f v2, V2f v3, Color255 color) {
+    Color01   c01 = color255to01(color);
+    TriangleF result = {v1, v2, v3, c01, c01, c01};
+    return result;
+}
 
 function f32
 edgeCrossMag(V2f v1, V2f v2, V2f pt) {
-    V2f v1v2 = v2fminus(v2, v1);
-    V2f v1pt = v2fminus(pt, v1);
+    V2f v1v2 = v2fsub(v2, v1);
+    V2f v1pt = v2fsub(pt, v1);
     f32 result = v1v2.x * v1pt.y - v1v2.y * v1pt.x;
     return result;
 }
 
 function bool
 isTopLeft(V2f v1, V2f v2) {
-    V2f  v1v2 = v2fminus(v2, v1);
+    V2f  v1v2 = v2fsub(v2, v1);
     bool isFlatTop = v1v2.y == 0 && v1v2.x > 0;
     bool isLeft = v1v2.y < 0;
     bool result = isFlatTop || isLeft;
@@ -224,7 +209,7 @@ isTopLeft(V2f v1, V2f v2) {
 }
 
 function void
-fillTriangleF(Renderer* renderer, TriangleF triangle, Color255 color) {
+fillTriangleF(Renderer* renderer, TriangleF triangle) {
     f32 xmin = min(triangle.v1.x, min(triangle.v2.x, triangle.v3.x));
     f32 ymin = min(triangle.v1.y, min(triangle.v2.y, triangle.v3.y));
     f32 xmax = max(triangle.v1.x, max(triangle.v2.x, triangle.v3.x));
@@ -234,13 +219,36 @@ fillTriangleF(Renderer* renderer, TriangleF triangle, Color255 color) {
     bool allowZero2 = isTopLeft(triangle.v2, triangle.v3);
     bool allowZero3 = isTopLeft(triangle.v3, triangle.v1);
 
-    Color01 color01 = color255to01(color);
-    for (i32 ycoord = (i32)ymin; ycoord <= (i32)ymax; ycoord++) {
-        for (i32 xcoord = (i32)xmin; xcoord <= (i32)xmax; xcoord++) {
-            V2f point = {(f32)xcoord, (f32)ycoord};
-            f32 cross1 = edgeCrossMag(triangle.v1, triangle.v2, point);
-            f32 cross2 = edgeCrossMag(triangle.v2, triangle.v3, point);
-            f32 cross3 = edgeCrossMag(triangle.v3, triangle.v1, point);
+    f32 area = edgeCrossMag(triangle.v1, triangle.v2, triangle.v3);
+
+    f32 dcross1x = triangle.v1.y - triangle.v2.y;
+    f32 dcross2x = triangle.v2.y - triangle.v3.y;
+    f32 dcross3x = triangle.v3.y - triangle.v1.y;
+
+    f32 dcross1y = triangle.v2.x - triangle.v1.x;
+    f32 dcross2y = triangle.v3.x - triangle.v2.x;
+    f32 dcross3y = triangle.v1.x - triangle.v3.x;
+
+    i32 ystart = (i32)ymin;
+    i32 xstart = (i32)xmin;
+
+    // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
+    V2f topleft = {(f32)(xstart), (f32)(ystart)};
+    f32 cross1topleft = edgeCrossMag(triangle.v1, triangle.v2, topleft);
+    f32 cross2topleft = edgeCrossMag(triangle.v2, triangle.v3, topleft);
+    f32 cross3topleft = edgeCrossMag(triangle.v3, triangle.v1, topleft);
+
+    for (i32 ycoord = ystart; ycoord <= (i32)ymax; ycoord++) {
+        f32 yinc = (f32)(ycoord - ystart);
+        f32 cross1row = cross1topleft + yinc * dcross1y;
+        f32 cross2row = cross2topleft + yinc * dcross2y;
+        f32 cross3row = cross3topleft + yinc * dcross3y;
+
+        for (i32 xcoord = xstart; xcoord <= (i32)xmax; xcoord++) {
+            f32 xinc = (f32)(xcoord - xstart);
+            f32 cross1 = cross1row + xinc * dcross1x;
+            f32 cross2 = cross2row + xinc * dcross2x;
+            f32 cross3 = cross3row + xinc * dcross3x;
 
             bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
             bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
@@ -249,15 +257,23 @@ fillTriangleF(Renderer* renderer, TriangleF triangle, Color255 color) {
             if (pass1 && pass2 && pass3) {
                 i32 index = ycoord * renderer->image.width + xcoord;
                 if (index < renderer->image.width * renderer->image.height) {
+                    f32 cross1scaled = cross1 / area;
+                    f32 cross2scaled = cross2 / area;
+                    f32 cross3scaled = cross3 / area;
+
+                    Color01 color01 = color01add(color01add(color01mul(triangle.c1, cross2scaled), color01mul(triangle.c2, cross3scaled)), color01mul(triangle.c3, cross1scaled));
+
                     u32      existingColoru32 = renderer->image.pixels[index];
                     Color255 existingColor255 = coloru32to255(existingColoru32);
                     Color01  existingColor01 = color255to01(existingColor255);
-                    Color01  blended01 = {
+
+                    Color01 blended01 = {
                         .r = lerp(existingColor01.r, color01.r, color01.a),
                         .g = lerp(existingColor01.g, color01.g, color01.a),
                         .b = lerp(existingColor01.b, color01.b, color01.a),
                         .a = 1,
                     };
+
                     Color255 blended255 = color01to255(blended01);
                     u32      blendedu32 = color255tou32(blended255);
                     renderer->image.pixels[index] = blendedu32;
@@ -320,26 +336,69 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     assert(memBase);
     Win32Renderer win32Rend = {.renderer = createRenderer(memBase, memSize), .windowWidth = 1600, .windowHeight = 800};
-    setImageSize(&win32Rend.renderer, 16, 8);
-    if (false)
-        fillRect2i(&win32Rend.renderer, (Rect2i) {100, 100, 100, 100}, (Color255) {255, 0, 0, 255});
 
-    // NOTE(khvorov) Triangles taken from https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{0.5, 0.5}, {5.5, 1.5}, {1.5, 3.5}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{4, 0}, {4, 0}, {4, 0}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{5.75, -0.25}, {5.75, 0.75}, {4.75, 0.75}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{7, 0}, {7, 1}, {6, 1}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{7.25, 2}, {9.25, 0.25}, {11.25, 2}}, (Color255) {0, 0, 255, 128});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{7.25, 2}, {11.25, 2}, {9, 4.75}}, (Color255) {0, 255, 255, 128});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{13, 1}, {14.5, -0.5}, {14, 2}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{13, 1}, {14, 2}, {14, 4}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{0.5, 5.5}, {6.5, 3.5}, {4.5, 5.5}}, (Color255) {0, 0, 255, 128});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{4.5, 5.5}, {6.5, 3.5}, {7.5, 6.5}}, (Color255) {0, 255, 0, 128});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{6.5, 3.5}, {9, 5}, {7.5, 6.5}}, (Color255) {255, 0, 0, 128});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{9, 7}, {10, 7}, {9, 9}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{11, 4}, {12, 5}, {11, 6}}, (Color255) {0, 0, 255, 255});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{13, 5}, {15, 5}, {13, 7}}, (Color255) {0, 0, 255, 128});
-    fillTriangleF(&win32Rend.renderer, (TriangleF) {{15, 5}, {15, 7}, {13, 7}}, (Color255) {0, 255, 0, 128});
+    // NOTE(khvorov) Run some tests
+    {
+        setImageSize(&win32Rend.renderer, 16, 8);
+
+        // NOTE(khvorov) Triangles taken from https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {0.5, 0.5}, (V2f) {5.5, 1.5}, (V2f) {1.5, 3.5}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {4, 0}, (V2f) {4, 0}, (V2f) {4, 0}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {5.75, -0.25}, (V2f) {5.75, 0.75}, (V2f) {4.75, 0.75}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {7, 0}, (V2f) {7, 1}, (V2f) {6, 1}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {7.25, 2}, (V2f) {9.25, 0.25}, (V2f) {11.25, 2}, (Color255) {0, 0, 255, 128}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {7.25, 2}, (V2f) {11.25, 2}, (V2f) {9, 4.75}, (Color255) {0, 255, 255, 128}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {13, 1}, (V2f) {14.5, -0.5}, (V2f) {14, 2}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {13, 1}, (V2f) {14, 2}, (V2f) {14, 4}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {0.5, 5.5}, (V2f) {6.5, 3.5}, (V2f) {4.5, 5.5}, (Color255) {0, 0, 255, 128}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {4.5, 5.5}, (V2f) {6.5, 3.5}, (V2f) {7.5, 6.5}, (Color255) {0, 255, 0, 128}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {6.5, 3.5}, (V2f) {9, 5}, (V2f) {7.5, 6.5}, (Color255) {255, 0, 0, 128}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {9, 7}, (V2f) {10, 7}, (V2f) {9, 9}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {11, 4}, (V2f) {12, 5}, (V2f) {11, 6}, (Color255) {0, 0, 255, 255}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {13, 5}, (V2f) {15, 5}, (V2f) {13, 7}, (Color255) {0, 0, 255, 128}));
+        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {15, 5}, (V2f) {15, 7}, (V2f) {13, 7}, (Color255) {0, 255, 0, 128}));
+
+        // clang-format off
+        u32 expected[] = {
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 
+            0x00000000, 0xff0000ff, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff000080, 0xff000080, 0x00000000, 0x00000000, 0xff0000ff, 0xff0000ff, 0x00000000, 
+            0x00000000, 0xff0000ff, 0xff0000ff, 0xff0000ff, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0xff008080, 0xff008080, 0xff008080, 0xff008080, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
+            0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff008080, 0xff008080, 0xff008080, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff000080, 0xff008000, 0xff800000, 0x00000000, 0xff008080, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
+            0x00000000, 0x00000000, 0xff000080, 0xff000080, 0xff000080, 0xff008000, 0xff008000, 0xff800000, 0xff800000, 0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 0xff000080, 0xff000080, 0x00000000, 
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff008000, 0xff008000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff000080, 0xff008000, 0x00000000, 
+            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
+        };
+        // clang-format on
+
+        assert(arrayCount(expected) == win32Rend.renderer.image.height * win32Rend.renderer.image.width);
+        for (isize row = 0; row < win32Rend.renderer.image.height; row++) {
+            for (isize column = 0; column < win32Rend.renderer.image.width; column++) {
+                isize index = row * win32Rend.renderer.image.width + column;
+                u32   expectedPx = expected[index];
+                u32   actualPx = win32Rend.renderer.image.pixels[index];
+                assert(expectedPx == actualPx);
+            }
+        }
+    }
+
+    clearImage(&win32Rend.renderer);
+    setImageSize(&win32Rend.renderer, win32Rend.windowWidth, win32Rend.windowHeight);
+
+    {
+        V2f v1 = {40, 10};
+        V2f v2 = {500, 500};
+        V2f v3 = {10, 300};
+        V2f v4 = {400, 30};
+
+        Color01 c1 = {.a = 1, .r = 1};
+        Color01 c2 = {.a = 1, .g = 1};
+        Color01 c3 = {.a = 1, .b = 1};
+        Color01 c4 = {.a = 1, .r = 1, .g = 1};
+
+        fillTriangleF(&win32Rend.renderer, (TriangleF) {v1, v2, v3, c1, c2, c3});
+        fillTriangleF(&win32Rend.renderer, (TriangleF) {v1, v4, v2, c1, c4, c2});
+    }
 
     WNDCLASSEXW windowClass = {
         .cbSize = sizeof(WNDCLASSEXW),
@@ -351,7 +410,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     };
     assert(RegisterClassExW(&windowClass) != 0);
 
-    // TODO(khvorov) Adjust window size such that it's the client area that's the specified width/height
     HWND window = CreateWindowExW(0, windowClass.lpszClassName, L"Triaxis", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, win32Rend.windowWidth, win32Rend.windowHeight, NULL, NULL, hInstance, NULL);
     assert(window);
     win32Rend.hdc = GetDC(window);
@@ -367,7 +425,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         SetWindowPos(window, 0, rect.left, rect.top, win32Rend.windowWidth + dwidth, win32Rend.windowHeight + dheight, 0);
     }
 
-    // TODO(khvorov) Find out if there is a better way
+    // TODO(khvorov) Hack is debug only
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
