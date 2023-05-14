@@ -43,6 +43,7 @@ typedef struct Arena {
     void* base;
     isize size;
     isize used;
+    isize tempCount;
 } Arena;
 
 function void*
@@ -69,6 +70,27 @@ createArenaFromArena(Arena* parent, isize size) {
     Arena arena = {.base = arenaFreePtr(parent), .size = size};
     arenaChangeUsed(parent, size);
     return arena;
+}
+
+typedef struct TempMemory {
+    Arena* arena;
+    isize  usedAtBegin;
+    isize  tempCountAtBegin;
+} TempMemory;
+
+function TempMemory
+beginTempMemory(Arena* arena) {
+    TempMemory result = {arena, arena->used, arena->tempCount};
+    arena->tempCount += 1;
+    return result;
+}
+
+function void
+endTempMemory(TempMemory temp) {
+    assert(temp.arena->used >= temp.usedAtBegin);
+    assert(temp.arena->tempCount == temp.tempCountAtBegin + 1);
+    temp.arena->used = temp.usedAtBegin;
+    temp.arena->tempCount = temp.tempCountAtBegin;
 }
 
 typedef struct Texture {
@@ -185,6 +207,29 @@ color01mul(Color01 c1, f32 by) {
     return result;
 }
 
+function u32
+coloru32GetContrast(u32 cu32) {
+    Color255 c255 = coloru32to255(cu32);
+    Color01  c01 = color255to01(c255);
+
+    f32 luminance = c01.r * 0.2126 + c01.g * 0.7152 + c01.b * 0.0722;
+
+    Color01 result01 = {.a = c01.a};
+    if (luminance >= 0.5) {
+        result01.r = c01.r * 0.7;
+        result01.g = c01.g * 0.7;
+        result01.b = c01.b * 0.7;
+    } else {
+        result01.r = (c01.r + 1) / 2;
+        result01.g = (c01.g + 1) / 2;
+        result01.b = (c01.b + 1) / 2;
+    }
+
+    Color255 result255 = color01to255(result01);
+    u32      resultu32 = color255tou32(result255);
+    return resultu32;
+}
+
 typedef struct TriangleF {
     V2f     v1, v2, v3;
     Color01 c1, c2, c3;
@@ -245,14 +290,14 @@ fillTriangleF(Renderer* renderer, TriangleF triangle) {
     f32 cross3topleft = edgeCrossMag(triangle.v3, triangle.v1, topleft);
 
     for (i32 ycoord = ystart; ycoord <= (i32)ymax; ycoord++) {
-        if (ycoord < renderer->image.height) {
+        if (ycoord >= 0 && ycoord < renderer->image.height) {
             f32 yinc = (f32)(ycoord - ystart);
             f32 cross1row = cross1topleft + yinc * dcross1y;
             f32 cross2row = cross2topleft + yinc * dcross2y;
             f32 cross3row = cross3topleft + yinc * dcross3y;
 
             for (i32 xcoord = xstart; xcoord <= (i32)xmax; xcoord++) {
-                if (xcoord < renderer->image.width) {
+                if (xcoord >= 0 && xcoord < renderer->image.width) {
                     f32 xinc = (f32)(xcoord - xstart);
                     f32 cross1 = cross1row + xinc * dcross1x;
                     f32 cross2 = cross2row + xinc * dcross2x;
@@ -291,6 +336,74 @@ fillTriangleF(Renderer* renderer, TriangleF triangle) {
             }
         }
     }
+}
+
+function void
+scaleOntoAPixelGrid_contrast(Renderer* renderer, isize row, isize col) {
+    isize index = row * renderer->image.width + col;
+    u32   oldVal = renderer->image.pixels[index];
+    u32   inverted = coloru32GetContrast(oldVal);
+    renderer->image.pixels[index] = inverted;
+}
+
+function void
+scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height) {
+    TempMemory temp = beginTempMemory(&renderer->arena);
+
+    arenaAlign(&renderer->arena, alignof(u32));
+    u32* currentImageCopy = arenaFreePtr(&renderer->arena);
+    arenaChangeUsed(&renderer->arena, renderer->image.width * renderer->image.height * sizeof(u32));
+
+    for (isize ind = 0; ind < renderer->image.width * renderer->image.height; ind++) {
+        currentImageCopy[ind] = renderer->image.pixels[ind];
+    }
+
+    isize scaleX = width / renderer->image.width;
+    isize scaleY = height / renderer->image.height;
+
+    isize oldWidth = renderer->image.width;
+    isize oldHeight = renderer->image.height;
+    setImageSize(renderer, width, height);
+
+    // NOTE(khvorov) Copy the scaled up image
+    for (isize oldRow = 0; oldRow < oldHeight; oldRow++) {
+        isize newRowStart = oldRow * scaleY;
+        isize newRowEnd = newRowStart + scaleY;
+        for (isize newRow = newRowStart; newRow < newRowEnd; newRow++) {
+            for (isize oldColumn = 0; oldColumn < oldWidth; oldColumn++) {
+                isize newColumnStart = oldColumn * scaleX;
+                isize newColumnEnd = newColumnStart + scaleX;
+                for (isize newColumn = newColumnStart; newColumn < newColumnEnd; newColumn++) {
+                    isize oldIndex = oldRow * oldWidth + oldColumn;
+                    u32   oldVal = currentImageCopy[oldIndex];
+                    isize newIndex = newRow * width + newColumn;
+                    renderer->image.pixels[newIndex] = oldVal;
+                }
+            }
+        }
+    }
+
+    // NOTE(khvorov) Grid line
+    for (isize oldRow = 0; oldRow < oldHeight; oldRow++) {
+        isize topleftY = oldRow * scaleY;
+        for (isize oldCol = 0; oldCol < oldWidth; oldCol++) {
+            isize topleftX = oldCol * scaleX;
+            for (isize toplineX = topleftX; toplineX < topleftX + scaleX; toplineX++) {
+                scaleOntoAPixelGrid_contrast(renderer, topleftY, toplineX);
+            }
+            for (isize leftlineY = topleftY + 1; leftlineY < topleftY + scaleY; leftlineY++) {
+                scaleOntoAPixelGrid_contrast(renderer, leftlineY, topleftX);
+            }
+
+            {
+                isize centerY = topleftY + scaleY / 2;
+                isize centerX = topleftX + scaleX / 2;
+                scaleOntoAPixelGrid_contrast(renderer, centerY, centerX);
+            }
+        }
+    }
+
+    endTempMemory(temp);
 }
 
 //
@@ -378,17 +491,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     clearImage(&win32Rend.renderer);
 
-    WNDCLASSEXW windowClass = {
-        .cbSize = sizeof(WNDCLASSEXW),
+    WNDCLASSEXA windowClass = {
+        .cbSize = sizeof(WNDCLASSEXA),
         .lpfnWndProc = windowProc,
         .hInstance = hInstance,
-        .lpszClassName = L"Triaxis",
+        .lpszClassName = "Triaxis",
         .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH),
         .hCursor = LoadCursorA(NULL, IDC_ARROW),
     };
-    assert(RegisterClassExW(&windowClass) != 0);
+    assert(RegisterClassExA(&windowClass) != 0);
 
-    HWND window = CreateWindowExW(0, windowClass.lpszClassName, L"Triaxis", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, win32Rend.windowWidth, win32Rend.windowHeight, NULL, NULL, hInstance, NULL);
+    HWND window = CreateWindowExA(0, windowClass.lpszClassName, "Triaxis", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, win32Rend.windowWidth, win32Rend.windowHeight, NULL, NULL, hInstance, NULL);
     assert(window);
     win32Rend.hdc = GetDC(window);
 
@@ -409,12 +522,13 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&win32Rend);
 
-    setImageSize(&win32Rend.renderer, win32Rend.windowWidth / 50, win32Rend.windowHeight / 50);
-    V2f vertices[] = {
-        v2fhadamard((V2f) {0.04, 0.01}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
-        v2fhadamard((V2f) {0.5, 0.5}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
-        v2fhadamard((V2f) {0.01, 0.3}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
-        v2fhadamard((V2f) {0.4, 0.03}, (V2f) {(f32)win32Rend.renderer.image.width, (f32)win32Rend.renderer.image.height}),
+    isize imageWidth = win32Rend.windowWidth / 50;
+    isize imageHeight = win32Rend.windowHeight / 50;
+    V2f   vertices[] = {
+        v2fhadamard((V2f) {0.04, 0.01}, (V2f) {(f32)imageWidth, (f32)imageHeight}),
+        v2fhadamard((V2f) {0.5, 0.5}, (V2f) {(f32)imageWidth, (f32)imageHeight}),
+        v2fhadamard((V2f) {0.01, 0.3}, (V2f) {(f32)imageWidth, (f32)imageHeight}),
+        v2fhadamard((V2f) {0.4, 0.03}, (V2f) {(f32)imageWidth, (f32)imageHeight}),
     };
 
     Color01 colors[] = {
@@ -430,9 +544,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         TranslateMessage(&msg);
         DispatchMessage(&msg);
 
+        setImageSize(&win32Rend.renderer, imageWidth, imageHeight);
         clearImage(&win32Rend.renderer);
         fillTriangleF(&win32Rend.renderer, (TriangleF) {vertices[0], vertices[1], vertices[2], colors[0], colors[1], colors[2]});
         fillTriangleF(&win32Rend.renderer, (TriangleF) {vertices[0], vertices[3], vertices[1], colors[0], colors[3], colors[1]});
+        scaleOntoAPixelGrid(&win32Rend.renderer, win32Rend.windowWidth, win32Rend.windowHeight);
 
         // NOTE(khvorov) Present the bitmap
         {
@@ -453,7 +569,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             POINT cursor = {};
             GetCursorPos(&cursor);
             ScreenToClient(window, &cursor);
-            f32 cursorImageX = ((f32)cursor.x / (f32)win32Rend.windowWidth * (f32)win32Rend.renderer.image.width);
+            f32 cursorImageX = ((f32)cursor.x / (f32)win32Rend.windowWidth * (f32)imageWidth);
             f32 dref = cursorImageX - refVertex.x;
             for (isize ind = 0; ind < (isize)arrayCount(vertices); ind++) {
                 vertices[ind].x += dref;
