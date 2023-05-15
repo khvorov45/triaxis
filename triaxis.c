@@ -9,6 +9,7 @@
 #define unused(x) (x) = (x)
 #define min(x, y) (((x) < (y)) ? (x) : (y))
 #define max(x, y) (((x) > (y)) ? (x) : (y))
+#define absval(x) ((x) >= 0 ? (x) : -(x))
 #define arenaAllocArray(arena, type, count) (type*)arenaAlloc(arena, sizeof(type)*count, alignof(type))
 #define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
 #define arrayPush(arr, val) assert(arr.len < arr.cap); arr.ptr[arr.len++] = val
@@ -126,18 +127,56 @@ v2fsub(V2f v1, V2f v2) {
 }
 
 function V2f
+v2fadd(V2f v1, V2f v2) {
+    V2f result = {v1.x + v2.x, v1.y + v2.y};
+    return result;
+}
+
+function V2f
+v2fmul(V2f v1, V2f v2) {
+    V2f result = {v1.x * v2.x, v1.y * v2.y};
+    return result;
+}
+
+function V2f
+v2fdiv(V2f v1, V2f v2) {
+    V2f result = {v1.x / v2.x, v1.y / v2.y};
+    return result;
+}
+
+function V2f
 v2fhadamard(V2f v1, V2f v2) {
     V2f result = {v1.x * v2.x, v1.y * v2.y};
     return result;
 }
 
-typedef struct Rect2i {
-    isize x, y, width, height;
-} Rect2i;
-
 typedef struct Rect2f {
-    f32 x, y, width, height;
+    V2f topleft;
+    V2f dim;
 } Rect2f;
+
+function Rect2f
+rect2fCenterDim(V2f center, V2f dim) {
+    Rect2f result = {v2fsub(center, v2fmul(dim, (V2f) {0.5, 0.5})), dim};
+    return result;
+}
+
+function Rect2f
+rect2fClip(Rect2f rect, Rect2f clip) {
+    f32 x0 = max(rect.topleft.x, clip.topleft.x);
+    f32 y0 = max(rect.topleft.y, clip.topleft.y);
+
+    V2f rectBottomRight = v2fadd(rect.topleft, rect.dim);
+    V2f clipBottomRight = v2fadd(clip.topleft, clip.dim);
+    f32 x1 = min(rectBottomRight.x, clipBottomRight.x);
+    f32 y1 = min(rectBottomRight.y, clipBottomRight.y);
+
+    V2f topleft = {x0, y0};
+    V2f dim = v2fsub((V2f) {x1, y1}, topleft);
+
+    Rect2f result = {topleft, dim};
+    return result;
+}
 
 typedef struct Color255 {
     u8 r, g, b, a;
@@ -196,9 +235,9 @@ coloru32GetContrast(u32 cu32) {
 
     Color01 result01 = {.a = c01.a};
     if (luminance >= 0.5) {
-        result01.r = c01.r * 0.7;
-        result01.g = c01.g * 0.7;
-        result01.b = c01.b * 0.7;
+        result01.r = c01.r * 0.3;
+        result01.g = c01.g * 0.3;
+        result01.b = c01.b * 0.3;
     } else {
         result01.r = (c01.r + 1) / 2;
         result01.g = (c01.g + 1) / 2;
@@ -388,6 +427,88 @@ fillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
 }
 
 function void
+rendererContrast(Renderer* renderer, isize row, isize col) {
+    assert(row >= 0 && col >= 0 && row < renderer->image.height && col < renderer->image.width);
+    isize index = row * renderer->image.width + col;
+    u32   oldVal = renderer->image.ptr[index];
+    u32   inverted = coloru32GetContrast(oldVal);
+    renderer->image.ptr[index] = inverted;
+}
+
+function void
+drawContrastLine(Renderer* renderer, V2f v1, V2f v2) {
+    i32 x0 = (i32)(v1.x + 0.5);
+    i32 y0 = (i32)(v1.y + 0.5);
+    i32 x1 = (i32)(v2.x + 0.5);
+    i32 y1 = (i32)(v2.y + 0.5);
+
+    i32 dx = absval(x1 - x0);
+    i32 sx = x0 < x1 ? 1 : -1;
+    i32 dy = -absval(y1 - y0);
+    i32 sy = y0 < y1 ? 1 : -1;
+    i32 error = dx + dy;
+
+    for (;;) {
+        if (y0 >= 0 && x0 >= 0 && y0 < renderer->image.height && x0 < renderer->image.width) {
+            rendererContrast(renderer, y0, x0);
+        }
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        i32 e2 = 2 * error;
+
+        if (e2 >= dy) {
+            if (x0 == x1) {
+                break;
+            }
+            error = error + dy;
+            x0 = x0 + sx;
+        }
+
+        if (e2 <= dx) {
+            if (y0 == y1) {
+                break;
+            }
+            error = error + dx;
+            y0 = y0 + sy;
+        }
+    }
+}
+
+function void
+drawContrastRect(Renderer* renderer, Rect2f rect) {
+    Rect2f rectClipped = rect2fClip(rect, (Rect2f) {{-0.5, -0.5}, {renderer->image.width, renderer->image.height}});
+    i32    x0 = (i32)(rectClipped.topleft.x + 0.5);
+    i32    x1 = (i32)(rectClipped.topleft.x + rectClipped.dim.x + 0.5);
+    i32    y0 = (i32)(rectClipped.topleft.y + 0.5);
+    i32    y1 = (i32)(rectClipped.topleft.y + rectClipped.dim.y + 0.5);
+
+    for (i32 ycoord = y0; ycoord < y1; ycoord++) {
+        for (i32 xcoord = x0; xcoord < x1; xcoord++) {
+            rendererContrast(renderer, ycoord, xcoord);
+        }
+    }
+}
+
+function void
+outlineTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
+    // TODO(khvorov) Bounds check on array access
+    V2f imageDim = {(f32)renderer->image.width, (f32)renderer->image.height};
+    V2f v1 = v2fhadamard(renderer->vertices.ptr[i1], imageDim);
+    V2f v2 = v2fhadamard(renderer->vertices.ptr[i2], imageDim);
+    V2f v3 = v2fhadamard(renderer->vertices.ptr[i3], imageDim);
+
+    drawContrastLine(renderer, v1, v2);
+    drawContrastLine(renderer, v2, v3);
+    drawContrastLine(renderer, v3, v1);
+
+    V2f vertexRectDim = {10, 10};
+    drawContrastRect(renderer, rect2fCenterDim(v1, vertexRectDim));
+    drawContrastRect(renderer, rect2fCenterDim(v2, vertexRectDim));
+    drawContrastRect(renderer, rect2fCenterDim(v3, vertexRectDim));
+}
+
+function void
 rendererFillTriangles(Renderer* renderer) {
     // TODO(khvorov) Bounds check
     for (i32 start = 0; start < renderer->indices.len; start += 3) {
@@ -396,11 +517,11 @@ rendererFillTriangles(Renderer* renderer) {
 }
 
 function void
-scaleOntoAPixelGrid_contrast(Renderer* renderer, isize row, isize col) {
-    isize index = row * renderer->image.width + col;
-    u32   oldVal = renderer->image.ptr[index];
-    u32   inverted = coloru32GetContrast(oldVal);
-    renderer->image.ptr[index] = inverted;
+rendererOutlineTriangles(Renderer* renderer) {
+    // TODO(khvorov) Bounds check
+    for (i32 start = 0; start < renderer->indices.len; start += 3) {
+        outlineTriangle(renderer, renderer->indices.ptr[start], renderer->indices.ptr[start + 1], renderer->indices.ptr[start + 2]);
+    }
 }
 
 function void
@@ -446,16 +567,16 @@ scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height) {
         for (isize oldCol = 0; oldCol < oldWidth; oldCol++) {
             isize topleftX = oldCol * scaleX;
             for (isize toplineX = topleftX; toplineX < topleftX + scaleX; toplineX++) {
-                scaleOntoAPixelGrid_contrast(renderer, topleftY, toplineX);
+                rendererContrast(renderer, topleftY, toplineX);
             }
             for (isize leftlineY = topleftY + 1; leftlineY < topleftY + scaleY; leftlineY++) {
-                scaleOntoAPixelGrid_contrast(renderer, leftlineY, topleftX);
+                rendererContrast(renderer, leftlineY, topleftX);
             }
 
             {
                 isize centerY = topleftY + scaleY / 2;
                 isize centerX = topleftX + scaleX / 2;
-                scaleOntoAPixelGrid_contrast(renderer, centerY, centerX);
+                rendererContrast(renderer, centerY, centerX);
             }
         }
     }
@@ -493,54 +614,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     assert(memBase);
     Renderer renderer = createRenderer(memBase, memSize);
-
-// NOTE(khvorov) Run some tests
-// TODO(khvorov) How much do we care?
-#if 0
-    if (false) {
-        setImageSize(&win32Rend.renderer, 16, 8);
-
-        // NOTE(khvorov) Triangles taken from https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {0.5, 0.5}, (V2f) {5.5, 1.5}, (V2f) {1.5, 3.5}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {4, 0}, (V2f) {4, 0}, (V2f) {4, 0}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {5.75, -0.25}, (V2f) {5.75, 0.75}, (V2f) {4.75, 0.75}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {7, 0}, (V2f) {7, 1}, (V2f) {6, 1}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {7.25, 2}, (V2f) {9.25, 0.25}, (V2f) {11.25, 2}, (Color255) {0, 0, 255, 128}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {7.25, 2}, (V2f) {11.25, 2}, (V2f) {9, 4.75}, (Color255) {0, 255, 255, 128}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {13, 1}, (V2f) {14.5, -0.5}, (V2f) {14, 2}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {13, 1}, (V2f) {14, 2}, (V2f) {14, 4}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {0.5, 5.5}, (V2f) {6.5, 3.5}, (V2f) {4.5, 5.5}, (Color255) {0, 0, 255, 128}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {4.5, 5.5}, (V2f) {6.5, 3.5}, (V2f) {7.5, 6.5}, (Color255) {0, 255, 0, 128}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {6.5, 3.5}, (V2f) {9, 5}, (V2f) {7.5, 6.5}, (Color255) {255, 0, 0, 128}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {9, 7}, (V2f) {10, 7}, (V2f) {9, 9}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {11, 4}, (V2f) {12, 5}, (V2f) {11, 6}, (Color255) {0, 0, 255, 255}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {13, 5}, (V2f) {15, 5}, (V2f) {13, 7}, (Color255) {0, 0, 255, 128}));
-        fillTriangleF(&win32Rend.renderer, triangleSameColor((V2f) {15, 5}, (V2f) {15, 7}, (V2f) {13, 7}, (Color255) {0, 255, 0, 128}));
-
-        // clang-format off
-        u32 expected[] = {
-            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 
-            0x00000000, 0xff0000ff, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff000080, 0xff000080, 0x00000000, 0x00000000, 0xff0000ff, 0xff0000ff, 0x00000000, 
-            0x00000000, 0xff0000ff, 0xff0000ff, 0xff0000ff, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0xff008080, 0xff008080, 0xff008080, 0xff008080, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-            0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff008080, 0xff008080, 0xff008080, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff000080, 0xff008000, 0xff800000, 0x00000000, 0xff008080, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-            0x00000000, 0x00000000, 0xff000080, 0xff000080, 0xff000080, 0xff008000, 0xff008000, 0xff800000, 0xff800000, 0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 0xff000080, 0xff000080, 0x00000000, 
-            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff008000, 0xff008000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff000080, 0xff008000, 0x00000000, 
-            0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xff0000ff, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-        };
-        // clang-format on
-
-        assert(arrayCount(expected) == win32Rend.renderer.image.height * win32Rend.renderer.image.width);
-        for (isize row = 0; row < win32Rend.renderer.image.height; row++) {
-            for (isize column = 0; column < win32Rend.renderer.image.width; column++) {
-                isize index = row * win32Rend.renderer.image.width + column;
-                u32   expectedPx = expected[index];
-                u32   actualPx = win32Rend.renderer.image.ptr[index];
-                assert(expectedPx == actualPx);
-            }
-        }
-    }
-#endif
 
     WNDCLASSEXA windowClass = {
         .cbSize = sizeof(WNDCLASSEXA),
@@ -586,18 +659,120 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
-    arrayPush(renderer.vertices, ((V2f) {0.04, 0.01}));
+    // NOTE(khvorov) Debug triangles from
+    // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
     arrayPush(renderer.vertices, ((V2f) {0.5, 0.5}));
-    arrayPush(renderer.vertices, ((V2f) {0.01, 0.3}));
-    arrayPush(renderer.vertices, ((V2f) {0.4, 0.03}));
+    arrayPush(renderer.vertices, ((V2f) {5.5, 1.5}));
+    arrayPush(renderer.vertices, ((V2f) {1.5, 3.5}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.colors, ((Color01) {.a = 1, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 1, .g = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 1, .b = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 1, .r = 1, .g = 1}));
+    arrayPush(renderer.vertices, ((V2f) {4, 0}));
+    arrayPush(renderer.vertices, ((V2f) {4, 0}));
+    arrayPush(renderer.vertices, ((V2f) {4, 0}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    rendererPushTriangle(&renderer, 0, 1, 2);
-    rendererPushTriangle(&renderer, 0, 3, 1);
+    arrayPush(renderer.vertices, ((V2f) {5.75, -0.25}));
+    arrayPush(renderer.vertices, ((V2f) {5.75, 0.75}));
+    arrayPush(renderer.vertices, ((V2f) {4.75, 0.75}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {7, 0}));
+    arrayPush(renderer.vertices, ((V2f) {7, 1}));
+    arrayPush(renderer.vertices, ((V2f) {6, 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {7.25, 2}));
+    arrayPush(renderer.vertices, ((V2f) {9.25, 0.25}));
+    arrayPush(renderer.vertices, ((V2f) {11.25, 2}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {7.25, 2}));
+    arrayPush(renderer.vertices, ((V2f) {11.25, 2}));
+    arrayPush(renderer.vertices, ((V2f) {9, 4.75}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {13, 1}));
+    arrayPush(renderer.vertices, ((V2f) {14.5, -0.5}));
+    arrayPush(renderer.vertices, ((V2f) {14, 2}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {13, 1}));
+    arrayPush(renderer.vertices, ((V2f) {14, 2}));
+    arrayPush(renderer.vertices, ((V2f) {14, 4}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {0.5, 5.5}));
+    arrayPush(renderer.vertices, ((V2f) {6.5, 3.5}));
+    arrayPush(renderer.vertices, ((V2f) {4.5, 5.5}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {4.5, 5.5}));
+    arrayPush(renderer.vertices, ((V2f) {6.5, 3.5}));
+    arrayPush(renderer.vertices, ((V2f) {7.5, 6.5}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {6.5, 3.5}));
+    arrayPush(renderer.vertices, ((V2f) {9, 5}));
+    arrayPush(renderer.vertices, ((V2f) {7.5, 6.5}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {9, 7}));
+    arrayPush(renderer.vertices, ((V2f) {10, 7}));
+    arrayPush(renderer.vertices, ((V2f) {9, 9}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {11, 4}));
+    arrayPush(renderer.vertices, ((V2f) {12, 5}));
+    arrayPush(renderer.vertices, ((V2f) {11, 6}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {13, 5}));
+    arrayPush(renderer.vertices, ((V2f) {15, 5}));
+    arrayPush(renderer.vertices, ((V2f) {13, 7}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrayPush(renderer.vertices, ((V2f) {15, 5}));
+    arrayPush(renderer.vertices, ((V2f) {15, 7}));
+    arrayPush(renderer.vertices, ((V2f) {13, 7}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+
+    for (isize ind = 0; ind < renderer.vertices.len; ind++) {
+        renderer.vertices.ptr[ind] = v2fdiv(renderer.vertices.ptr[ind], (V2f) {16, 8});
+    }
+
+    for (isize ind = 0; ind < renderer.vertices.len; ind += 3) {
+        rendererPushTriangle(&renderer, ind, ind + 1, ind + 2);
+    }
 
     assert(renderer.colors.len == renderer.vertices.len);
 
@@ -605,12 +780,32 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         TranslateMessage(&msg);
         DispatchMessage(&msg);
 
-        isize imageWidth = windowWidth / 50;
-        isize imageHeight = windowHeight / 50;
+        isize imageScaleX = 100;
+        isize imageScaleY = 100;
+        isize imageWidth = windowWidth / imageScaleX;
+        isize imageHeight = windowHeight / imageScaleY;
         setImageSize(&renderer, imageWidth, imageHeight);
         clearImage(&renderer);
         rendererFillTriangles(&renderer);
         scaleOntoAPixelGrid(&renderer, windowWidth, windowHeight);
+
+        // NOTE(khvorov) Fill triangles on the pixel grid - vertices have to be shifted to correspond
+        // to their positions in the smaller image
+        {
+            f32 offsetX = 0.5 * (f32)imageScaleX / (f32)windowWidth;
+            f32 offsetY = 0.5 * (f32)imageScaleY / (f32)windowHeight;
+            for (isize ind = 0; ind < renderer.vertices.len; ind++) {
+                renderer.vertices.ptr[ind].x += offsetX;
+                renderer.vertices.ptr[ind].y += offsetY;
+            }
+
+            rendererOutlineTriangles(&renderer);
+
+            for (isize ind = 0; ind < renderer.vertices.len; ind++) {
+                renderer.vertices.ptr[ind].x -= offsetX;
+                renderer.vertices.ptr[ind].y -= offsetY;
+            }
+        }
 
         // NOTE(khvorov) Present the bitmap
         {
@@ -640,7 +835,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         }
 
         // NOTE(khvorov) Move the shape to the cursor
-        {
+        if (false) {
             V2f   refVertex = renderer.vertices.ptr[1];
             POINT cursor = {};
             GetCursorPos(&cursor);
