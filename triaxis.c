@@ -12,7 +12,8 @@
 #define absval(x) ((x) >= 0 ? (x) : -(x))
 #define arenaAllocArray(arena, type, count) (type*)arenaAlloc(arena, sizeof(type)*count, alignof(type))
 #define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
-#define arrayPush(arr, val) assert(arr.len < arr.cap); arr.ptr[arr.len++] = val
+#define arrpush(arr, val) assert(arr.len < arr.cap); arr.ptr[arr.len++] = val
+#define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
 // clang-format on
 
 typedef uint8_t  u8;
@@ -332,22 +333,23 @@ clearImage(Renderer* renderer) {
 
 function void
 rendererPushTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    arrayPush(renderer->indices, i1);
-    arrayPush(renderer->indices, i2);
-    arrayPush(renderer->indices, i3);
+    assert(i1 < renderer->vertices.len && i2 < renderer->vertices.len && i3 < renderer->vertices.len);
+    assert(i1 < renderer->colors.len && i2 < renderer->colors.len && i3 < renderer->colors.len);
+    arrpush(renderer->indices, i1);
+    arrpush(renderer->indices, i2);
+    arrpush(renderer->indices, i3);
 }
 
 function void
 fillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    // TODO(khvorov) Bounds check on array access
     V2f imageDim = {(f32)renderer->image.width, (f32)renderer->image.height};
-    V2f v1 = v2fhadamard(renderer->vertices.ptr[i1], imageDim);
-    V2f v2 = v2fhadamard(renderer->vertices.ptr[i2], imageDim);
-    V2f v3 = v2fhadamard(renderer->vertices.ptr[i3], imageDim);
+    V2f v1 = v2fhadamard(arrget(renderer->vertices, i1), imageDim);
+    V2f v2 = v2fhadamard(arrget(renderer->vertices, i2), imageDim);
+    V2f v3 = v2fhadamard(arrget(renderer->vertices, i3), imageDim);
 
-    Color01 c1 = renderer->colors.ptr[i1];
-    Color01 c2 = renderer->colors.ptr[i2];
-    Color01 c3 = renderer->colors.ptr[i3];
+    Color01 c1 = arrget(renderer->colors, i1);
+    Color01 c2 = arrget(renderer->colors, i2);
+    Color01 c3 = arrget(renderer->colors, i3);
 
     f32 xmin = min(v1.x, min(v2.x, v3.x));
     f32 ymin = min(v1.y, min(v2.y, v3.y));
@@ -492,11 +494,10 @@ drawContrastRect(Renderer* renderer, Rect2f rect) {
 
 function void
 outlineTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    // TODO(khvorov) Bounds check on array access
     V2f imageDim = {(f32)renderer->image.width, (f32)renderer->image.height};
-    V2f v1 = v2fhadamard(renderer->vertices.ptr[i1], imageDim);
-    V2f v2 = v2fhadamard(renderer->vertices.ptr[i2], imageDim);
-    V2f v3 = v2fhadamard(renderer->vertices.ptr[i3], imageDim);
+    V2f v1 = v2fhadamard(arrget(renderer->vertices, i1), imageDim);
+    V2f v2 = v2fhadamard(arrget(renderer->vertices, i2), imageDim);
+    V2f v3 = v2fhadamard(arrget(renderer->vertices, i3), imageDim);
 
     drawContrastLine(renderer, v1, v2);
     drawContrastLine(renderer, v2, v3);
@@ -510,17 +511,15 @@ outlineTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
 
 function void
 rendererFillTriangles(Renderer* renderer) {
-    // TODO(khvorov) Bounds check
     for (i32 start = 0; start < renderer->indices.len; start += 3) {
-        fillTriangle(renderer, renderer->indices.ptr[start], renderer->indices.ptr[start + 1], renderer->indices.ptr[start + 2]);
+        fillTriangle(renderer, arrget(renderer->indices, start), arrget(renderer->indices, start + 1), arrget(renderer->indices, start + 2));
     }
 }
 
 function void
 rendererOutlineTriangles(Renderer* renderer) {
-    // TODO(khvorov) Bounds check
     for (i32 start = 0; start < renderer->indices.len; start += 3) {
-        outlineTriangle(renderer, renderer->indices.ptr[start], renderer->indices.ptr[start + 1], renderer->indices.ptr[start + 2]);
+        outlineTriangle(renderer, arrget(renderer->indices, start), arrget(renderer->indices, start + 1), arrget(renderer->indices, start + 2));
     }
 }
 
@@ -661,110 +660,110 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     // NOTE(khvorov) Debug triangles from
     // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
-    arrayPush(renderer.vertices, ((V2f) {0.5, 0.5}));
-    arrayPush(renderer.vertices, ((V2f) {5.5, 1.5}));
-    arrayPush(renderer.vertices, ((V2f) {1.5, 3.5}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {0.5, 0.5}));
+    arrpush(renderer.vertices, ((V2f) {5.5, 1.5}));
+    arrpush(renderer.vertices, ((V2f) {1.5, 3.5}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {4, 0}));
-    arrayPush(renderer.vertices, ((V2f) {4, 0}));
-    arrayPush(renderer.vertices, ((V2f) {4, 0}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {4, 0}));
+    arrpush(renderer.vertices, ((V2f) {4, 0}));
+    arrpush(renderer.vertices, ((V2f) {4, 0}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {5.75, -0.25}));
-    arrayPush(renderer.vertices, ((V2f) {5.75, 0.75}));
-    arrayPush(renderer.vertices, ((V2f) {4.75, 0.75}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {5.75, -0.25}));
+    arrpush(renderer.vertices, ((V2f) {5.75, 0.75}));
+    arrpush(renderer.vertices, ((V2f) {4.75, 0.75}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {7, 0}));
-    arrayPush(renderer.vertices, ((V2f) {7, 1}));
-    arrayPush(renderer.vertices, ((V2f) {6, 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {7, 0}));
+    arrpush(renderer.vertices, ((V2f) {7, 1}));
+    arrpush(renderer.vertices, ((V2f) {6, 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {7.25, 2}));
-    arrayPush(renderer.vertices, ((V2f) {9.25, 0.25}));
-    arrayPush(renderer.vertices, ((V2f) {11.25, 2}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {7.25, 2}));
+    arrpush(renderer.vertices, ((V2f) {9.25, 0.25}));
+    arrpush(renderer.vertices, ((V2f) {11.25, 2}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {7.25, 2}));
-    arrayPush(renderer.vertices, ((V2f) {11.25, 2}));
-    arrayPush(renderer.vertices, ((V2f) {9, 4.75}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.vertices, ((V2f) {7.25, 2}));
+    arrpush(renderer.vertices, ((V2f) {11.25, 2}));
+    arrpush(renderer.vertices, ((V2f) {9, 4.75}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {13, 1}));
-    arrayPush(renderer.vertices, ((V2f) {14.5, -0.5}));
-    arrayPush(renderer.vertices, ((V2f) {14, 2}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {13, 1}));
+    arrpush(renderer.vertices, ((V2f) {14.5, -0.5}));
+    arrpush(renderer.vertices, ((V2f) {14, 2}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {13, 1}));
-    arrayPush(renderer.vertices, ((V2f) {14, 2}));
-    arrayPush(renderer.vertices, ((V2f) {14, 4}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {13, 1}));
+    arrpush(renderer.vertices, ((V2f) {14, 2}));
+    arrpush(renderer.vertices, ((V2f) {14, 4}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {0.5, 5.5}));
-    arrayPush(renderer.vertices, ((V2f) {6.5, 3.5}));
-    arrayPush(renderer.vertices, ((V2f) {4.5, 5.5}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {0.5, 5.5}));
+    arrpush(renderer.vertices, ((V2f) {6.5, 3.5}));
+    arrpush(renderer.vertices, ((V2f) {4.5, 5.5}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {4.5, 5.5}));
-    arrayPush(renderer.vertices, ((V2f) {6.5, 3.5}));
-    arrayPush(renderer.vertices, ((V2f) {7.5, 6.5}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.vertices, ((V2f) {4.5, 5.5}));
+    arrpush(renderer.vertices, ((V2f) {6.5, 3.5}));
+    arrpush(renderer.vertices, ((V2f) {7.5, 6.5}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {6.5, 3.5}));
-    arrayPush(renderer.vertices, ((V2f) {9, 5}));
-    arrayPush(renderer.vertices, ((V2f) {7.5, 6.5}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {6.5, 3.5}));
+    arrpush(renderer.vertices, ((V2f) {9, 5}));
+    arrpush(renderer.vertices, ((V2f) {7.5, 6.5}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {9, 7}));
-    arrayPush(renderer.vertices, ((V2f) {10, 7}));
-    arrayPush(renderer.vertices, ((V2f) {9, 9}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {9, 7}));
+    arrpush(renderer.vertices, ((V2f) {10, 7}));
+    arrpush(renderer.vertices, ((V2f) {9, 9}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {11, 4}));
-    arrayPush(renderer.vertices, ((V2f) {12, 5}));
-    arrayPush(renderer.vertices, ((V2f) {11, 6}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {11, 4}));
+    arrpush(renderer.vertices, ((V2f) {12, 5}));
+    arrpush(renderer.vertices, ((V2f) {11, 6}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {13, 5}));
-    arrayPush(renderer.vertices, ((V2f) {15, 5}));
-    arrayPush(renderer.vertices, ((V2f) {13, 7}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.vertices, ((V2f) {13, 5}));
+    arrpush(renderer.vertices, ((V2f) {15, 5}));
+    arrpush(renderer.vertices, ((V2f) {13, 7}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrayPush(renderer.vertices, ((V2f) {15, 5}));
-    arrayPush(renderer.vertices, ((V2f) {15, 7}));
-    arrayPush(renderer.vertices, ((V2f) {13, 7}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrayPush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.vertices, ((V2f) {15, 5}));
+    arrpush(renderer.vertices, ((V2f) {15, 7}));
+    arrpush(renderer.vertices, ((V2f) {13, 7}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
 
     for (isize ind = 0; ind < renderer.vertices.len; ind++) {
         renderer.vertices.ptr[ind] = v2fdiv(renderer.vertices.ptr[ind], (V2f) {16, 8});
