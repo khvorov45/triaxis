@@ -134,8 +134,14 @@ v2fadd(V2f v1, V2f v2) {
 }
 
 function V2f
-v2fmul(V2f v1, V2f v2) {
+v2fmulv2f(V2f v1, V2f v2) {
     V2f result = {v1.x * v2.x, v1.y * v2.y};
+    return result;
+}
+
+function V2f
+v2fmulf32(V2f v1, f32 s1) {
+    V2f result = {v1.x * s1, v1.y * s1};
     return result;
 }
 
@@ -158,7 +164,7 @@ typedef struct Rect2f {
 
 function Rect2f
 rect2fCenterDim(V2f center, V2f dim) {
-    Rect2f result = {v2fsub(center, v2fmul(dim, (V2f) {0.5, 0.5})), dim};
+    Rect2f result = {v2fsub(center, v2fmulv2f(dim, (V2f) {0.5, 0.5})), dim};
     return result;
 }
 
@@ -791,18 +797,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         // NOTE(khvorov) Fill triangles on the pixel grid - vertices have to be shifted to correspond
         // to their positions in the smaller image
         {
-            f32 offsetX = 0.5 * (f32)imageScaleX / (f32)windowWidth;
-            f32 offsetY = 0.5 * (f32)imageScaleY / (f32)windowHeight;
+            V2f offset = v2fdiv(v2fmulf32((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {(f32)windowWidth, (f32)windowHeight});
             for (isize ind = 0; ind < renderer.vertices.len; ind++) {
-                renderer.vertices.ptr[ind].x += offsetX;
-                renderer.vertices.ptr[ind].y += offsetY;
+                renderer.vertices.ptr[ind] = v2fadd(renderer.vertices.ptr[ind], offset);
             }
 
             rendererOutlineTriangles(&renderer);
 
             for (isize ind = 0; ind < renderer.vertices.len; ind++) {
-                renderer.vertices.ptr[ind].x -= offsetX;
-                renderer.vertices.ptr[ind].y -= offsetY;
+                renderer.vertices.ptr[ind] = v2fsub(renderer.vertices.ptr[ind], offset);
             }
         }
 
