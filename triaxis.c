@@ -58,6 +58,13 @@ arenaFreePtr(Arena* arena) {
     return result;
 }
 
+function isize
+arenaFreeSize(Arena* arena) {
+    assert(arena->used <= arena->size);
+    isize result = arena->size - arena->used;
+    return result;
+}
+
 function void
 arenaChangeUsed(Arena* arena, isize size) {
     arena->used += size;
@@ -78,13 +85,12 @@ arenaAlloc(Arena* arena, isize size, isize align) {
     return result;
 }
 
-// TODO(khvorov) Remove?
-// function Arena
-// createArenaFromArena(Arena* parent, isize size) {
-//     Arena arena = {.base = arenaFreePtr(parent), .size = size};
-//     arenaChangeUsed(parent, size);
-//     return arena;
-// }
+function Arena
+createArenaFromArena(Arena* parent, isize size) {
+    Arena arena = {.base = arenaFreePtr(parent), .size = size};
+    arenaChangeUsed(parent, size);
+    return arena;
+}
 
 typedef struct TempMemory {
     Arena* arena;
@@ -121,9 +127,19 @@ typedef struct V2f {
     f32 x, y;
 } V2f;
 
+typedef struct V3f {
+    f32 x, y, z;
+} V3f;
+
 function V2f
 v2fsub(V2f v1, V2f v2) {
     V2f result = {v1.x - v2.x, v1.y - v2.y};
+    return result;
+}
+
+function V3f
+v3fadd(V3f v1, V3f v2) {
+    V3f result = {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z};
     return result;
 }
 
@@ -274,12 +290,96 @@ isTopLeft(V2f v1, V2f v2) {
 }
 
 //
+// SECTION Meshes
+//
+
+typedef struct IndexArrDyn {
+    i32*  ptr;
+    isize len;
+    isize cap;
+} IndexArrDyn;
+
+typedef struct Mesh {
+    struct {
+        V3f*  ptr;
+        isize len;
+    } vertices;
+    struct {
+        i32*  ptr;
+        isize len;
+    } indices;
+} Mesh;
+
+typedef struct MeshStorage {
+    struct {
+        V3f*  ptr;
+        isize len;
+        isize cap;
+    } vertices;
+
+    IndexArrDyn indices;
+} MeshStorage;
+
+typedef struct MeshBuilder {
+    MeshStorage* storage;
+    isize        vertexLenBefore;
+    isize        indexLenBefore;
+} MeshBuilder;
+
+function MeshBuilder
+beginMesh(MeshStorage* storage) {
+    MeshBuilder builder = {storage, storage->vertices.len, storage->indices.len};
+    return builder;
+}
+
+function Mesh
+endMesh(MeshBuilder builder) {
+    Mesh mesh = {
+        .vertices.ptr = builder.storage->vertices.ptr + builder.vertexLenBefore,
+        .vertices.len = builder.storage->vertices.len - builder.vertexLenBefore,
+        .indices.ptr = builder.storage->indices.ptr + builder.indexLenBefore,
+        .indices.len = builder.storage->indices.len - builder.indexLenBefore,
+    };
+    assert(mesh.vertices.len >= 0);
+    assert(mesh.indices.len >= 0);
+    return mesh;
+}
+
+function MeshStorage
+createMeshStorage(Arena* arena, isize bytes) {
+    MeshStorage storage = {};
+    isize       bytesPerBuffer = bytes / 2;
+    arenaAllocCap(arena, V3f, bytesPerBuffer, storage.vertices);
+    arenaAllocCap(arena, i32, bytesPerBuffer, storage.indices);
+    return storage;
+}
+
+function Mesh
+cubeCenterDim(MeshStorage* storage, V3f center, f32 dim) {
+    f32         halfdim = dim / 2;
+    MeshBuilder cubeBuilder = beginMesh(storage);
+
+    V3f frontTopLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, -halfdim});
+    V3f frontTopRight = v3fadd(center, (V3f) {halfdim, -halfdim, -halfdim});
+    V3f frontBottomLeft = v3fadd(center, (V3f) {-halfdim, halfdim, -halfdim});
+    V3f frontBottomRight = v3fadd(center, (V3f) {halfdim, halfdim, -halfdim});
+
+    V3f backTopLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, halfdim});
+    V3f backTopRight = v3fadd(center, (V3f) {halfdim, -halfdim, halfdim});
+    V3f backBottomLeft = v3fadd(center, (V3f) {-halfdim, halfdim, halfdim});
+    V3f backBottomRight = v3fadd(center, (V3f) {halfdim, halfdim, halfdim});
+
+    // TODO(khvorov) Finish filling the triangles
+
+    Mesh cube = endMesh(cubeBuilder);
+    return cube;
+}
+
+//
 // SECTION Renderer
 //
 
 typedef struct Renderer {
-    Arena arena;
-
     struct {
         u32*  ptr;
         isize width;
@@ -299,19 +399,15 @@ typedef struct Renderer {
         isize    cap;
     } colors;
 
-    struct {
-        i32*  ptr;
-        isize len;
-        isize cap;
-    } indices;
+    IndexArrDyn indices;
+    Arena       scratch;
 } Renderer;
 
 function Renderer
-createRenderer(void* base, isize size) {
-    Renderer renderer = {.arena.base = base, .arena.size = size};
-    Arena*   arena = &renderer.arena;
+createRenderer(Arena* arena, isize bytes) {
+    Renderer renderer = {};
 
-    isize bytesForBuffers = size / 2;
+    isize bytesForBuffers = bytes / 2;
     isize bufferSize = bytesForBuffers / 4;
 
     arenaAllocCap(arena, u32, bufferSize, renderer.image);
@@ -319,7 +415,17 @@ createRenderer(void* base, isize size) {
     arenaAllocCap(arena, Color01, bufferSize, renderer.colors);
     arenaAllocCap(arena, i32, bufferSize, renderer.indices);
 
+    renderer.scratch = createArenaFromArena(arena, bytes - bytesForBuffers);
+
     return renderer;
+}
+
+function void
+rendererClear(Renderer* renderer) {
+    renderer->scratch.used = 0;
+    renderer->vertices.len = 0;
+    renderer->colors.len = 0;
+    renderer->indices.len = 0;
 }
 
 function void
@@ -531,11 +637,9 @@ rendererOutlineTriangles(Renderer* renderer) {
 
 function void
 scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height) {
-    TempMemory temp = beginTempMemory(&renderer->arena);
+    TempMemory temp = beginTempMemory(&renderer->scratch);
 
-    arenaAlign(&renderer->arena, alignof(u32));
-    u32* currentImageCopy = arenaFreePtr(&renderer->arena);
-    arenaChangeUsed(&renderer->arena, renderer->image.width * renderer->image.height * sizeof(u32));
+    u32* currentImageCopy = arenaAllocArray(&renderer->scratch, u32, renderer->image.width * renderer->image.height);
 
     for (isize ind = 0; ind < renderer->image.width * renderer->image.height; ind++) {
         currentImageCopy[ind] = renderer->image.ptr[ind];
@@ -589,6 +693,151 @@ scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height) {
     endTempMemory(temp);
 }
 
+function void
+drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHeight) {
+    // NOTE(khvorov) Debug triangles from
+    // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
+    arrpush(renderer->vertices, ((V2f) {0.5, 0.5}));
+    arrpush(renderer->vertices, ((V2f) {5.5, 1.5}));
+    arrpush(renderer->vertices, ((V2f) {1.5, 3.5}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {4, 0}));
+    arrpush(renderer->vertices, ((V2f) {4, 0}));
+    arrpush(renderer->vertices, ((V2f) {4, 0}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {5.75, -0.25}));
+    arrpush(renderer->vertices, ((V2f) {5.75, 0.75}));
+    arrpush(renderer->vertices, ((V2f) {4.75, 0.75}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {7, 0}));
+    arrpush(renderer->vertices, ((V2f) {7, 1}));
+    arrpush(renderer->vertices, ((V2f) {6, 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {7.25, 2}));
+    arrpush(renderer->vertices, ((V2f) {9.25, 0.25}));
+    arrpush(renderer->vertices, ((V2f) {11.25, 2}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {7.25, 2}));
+    arrpush(renderer->vertices, ((V2f) {11.25, 2}));
+    arrpush(renderer->vertices, ((V2f) {9, 4.75}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {13, 1}));
+    arrpush(renderer->vertices, ((V2f) {14.5, -0.5}));
+    arrpush(renderer->vertices, ((V2f) {14, 2}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {13, 1}));
+    arrpush(renderer->vertices, ((V2f) {14, 2}));
+    arrpush(renderer->vertices, ((V2f) {14, 4}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {0.5, 5.5}));
+    arrpush(renderer->vertices, ((V2f) {6.5, 3.5}));
+    arrpush(renderer->vertices, ((V2f) {4.5, 5.5}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {4.5, 5.5}));
+    arrpush(renderer->vertices, ((V2f) {6.5, 3.5}));
+    arrpush(renderer->vertices, ((V2f) {7.5, 6.5}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {6.5, 3.5}));
+    arrpush(renderer->vertices, ((V2f) {9, 5}));
+    arrpush(renderer->vertices, ((V2f) {7.5, 6.5}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {9, 7}));
+    arrpush(renderer->vertices, ((V2f) {10, 7}));
+    arrpush(renderer->vertices, ((V2f) {9, 9}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {11, 4}));
+    arrpush(renderer->vertices, ((V2f) {12, 5}));
+    arrpush(renderer->vertices, ((V2f) {11, 6}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {13, 5}));
+    arrpush(renderer->vertices, ((V2f) {15, 5}));
+    arrpush(renderer->vertices, ((V2f) {13, 7}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+
+    arrpush(renderer->vertices, ((V2f) {15, 5}));
+    arrpush(renderer->vertices, ((V2f) {15, 7}));
+    arrpush(renderer->vertices, ((V2f) {13, 7}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+
+    assert(renderer->colors.len == renderer->vertices.len);
+
+    isize imageWidth = 16;
+    isize imageHeight = 8;
+    for (isize ind = 0; ind < renderer->vertices.len; ind++) {
+        renderer->vertices.ptr[ind] = v2fdiv(renderer->vertices.ptr[ind], (V2f) {(f32)imageWidth, (f32)imageHeight});
+    }
+
+    for (isize ind = 0; ind < renderer->vertices.len; ind += 3) {
+        rendererPushTriangle(renderer, ind, ind + 1, ind + 2);
+    }
+
+    setImageSize(renderer, imageWidth, imageHeight);
+    clearImage(renderer);
+    rendererFillTriangles(renderer);
+    scaleOntoAPixelGrid(renderer, finalImageWidth, finalImageHeight);
+
+    // NOTE(khvorov) Fill triangles on the pixel grid - vertices have to be shifted to correspond
+    // to their positions in the smaller image
+    {
+        isize imageScaleX = finalImageWidth / imageWidth;
+        isize imageScaleY = finalImageHeight / imageHeight;
+
+        V2f offset = v2fdiv(v2fmulf32((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {(f32)finalImageWidth, (f32)finalImageHeight});
+        for (isize ind = 0; ind < renderer->vertices.len; ind++) {
+            renderer->vertices.ptr[ind] = v2fadd(renderer->vertices.ptr[ind], offset);
+        }
+
+        rendererOutlineTriangles(renderer);
+
+        for (isize ind = 0; ind < renderer->vertices.len; ind++) {
+            renderer->vertices.ptr[ind] = v2fsub(renderer->vertices.ptr[ind], offset);
+        }
+    }
+}
+
 //
 // SECTION Platform
 //
@@ -615,10 +864,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     unused(lpCmdLine);
     unused(nCmdShow);
 
-    isize memSize = 1 * 1024 * 1024 * 1024;
-    void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    assert(memBase);
-    Renderer renderer = createRenderer(memBase, memSize);
+    Renderer    renderer = {};
+    MeshStorage meshStorage = {};
+    {
+        isize memSize = 1 * 1024 * 1024 * 1024;
+        void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        assert(memBase);
+
+        Arena arena = {.base = memBase, .size = memSize};
+
+        renderer = createRenderer(&arena, arenaFreeSize(&arena) / 2);
+        meshStorage = createMeshStorage(&arena, arenaFreeSize(&arena));
+    }
 
     WNDCLASSEXA windowClass = {
         .cbSize = sizeof(WNDCLASSEXA),
@@ -664,149 +921,19 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
-    // NOTE(khvorov) Debug triangles from
-    // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
-    arrpush(renderer.vertices, ((V2f) {0.5, 0.5}));
-    arrpush(renderer.vertices, ((V2f) {5.5, 1.5}));
-    arrpush(renderer.vertices, ((V2f) {1.5, 3.5}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {4, 0}));
-    arrpush(renderer.vertices, ((V2f) {4, 0}));
-    arrpush(renderer.vertices, ((V2f) {4, 0}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {5.75, -0.25}));
-    arrpush(renderer.vertices, ((V2f) {5.75, 0.75}));
-    arrpush(renderer.vertices, ((V2f) {4.75, 0.75}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {7, 0}));
-    arrpush(renderer.vertices, ((V2f) {7, 1}));
-    arrpush(renderer.vertices, ((V2f) {6, 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {7.25, 2}));
-    arrpush(renderer.vertices, ((V2f) {9.25, 0.25}));
-    arrpush(renderer.vertices, ((V2f) {11.25, 2}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {7.25, 2}));
-    arrpush(renderer.vertices, ((V2f) {11.25, 2}));
-    arrpush(renderer.vertices, ((V2f) {9, 4.75}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {13, 1}));
-    arrpush(renderer.vertices, ((V2f) {14.5, -0.5}));
-    arrpush(renderer.vertices, ((V2f) {14, 2}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {13, 1}));
-    arrpush(renderer.vertices, ((V2f) {14, 2}));
-    arrpush(renderer.vertices, ((V2f) {14, 4}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {0.5, 5.5}));
-    arrpush(renderer.vertices, ((V2f) {6.5, 3.5}));
-    arrpush(renderer.vertices, ((V2f) {4.5, 5.5}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {4.5, 5.5}));
-    arrpush(renderer.vertices, ((V2f) {6.5, 3.5}));
-    arrpush(renderer.vertices, ((V2f) {7.5, 6.5}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {6.5, 3.5}));
-    arrpush(renderer.vertices, ((V2f) {9, 5}));
-    arrpush(renderer.vertices, ((V2f) {7.5, 6.5}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {9, 7}));
-    arrpush(renderer.vertices, ((V2f) {10, 7}));
-    arrpush(renderer.vertices, ((V2f) {9, 9}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {11, 4}));
-    arrpush(renderer.vertices, ((V2f) {12, 5}));
-    arrpush(renderer.vertices, ((V2f) {11, 6}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {13, 5}));
-    arrpush(renderer.vertices, ((V2f) {15, 5}));
-    arrpush(renderer.vertices, ((V2f) {13, 7}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .r = 1}));
-
-    arrpush(renderer.vertices, ((V2f) {15, 5}));
-    arrpush(renderer.vertices, ((V2f) {15, 7}));
-    arrpush(renderer.vertices, ((V2f) {13, 7}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer.colors, ((Color01) {.a = 0.5, .g = 1}));
-
-    for (isize ind = 0; ind < renderer.vertices.len; ind++) {
-        renderer.vertices.ptr[ind] = v2fdiv(renderer.vertices.ptr[ind], (V2f) {16, 8});
-    }
-
-    for (isize ind = 0; ind < renderer.vertices.len; ind += 3) {
-        rendererPushTriangle(&renderer, ind, ind + 1, ind + 2);
-    }
-
-    assert(renderer.colors.len == renderer.vertices.len);
+    Mesh cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 0}, 1);
 
     for (MSG msg = {}; GetMessageW(&msg, 0, 0, 0);) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
 
-        isize imageScaleX = 100;
-        isize imageScaleY = 100;
-        isize imageWidth = windowWidth / imageScaleX;
-        isize imageHeight = windowHeight / imageScaleY;
-        setImageSize(&renderer, imageWidth, imageHeight);
-        clearImage(&renderer);
-        rendererFillTriangles(&renderer);
-        scaleOntoAPixelGrid(&renderer, windowWidth, windowHeight);
+        rendererClear(&renderer);
 
-        // NOTE(khvorov) Fill triangles on the pixel grid - vertices have to be shifted to correspond
-        // to their positions in the smaller image
-        {
-            V2f offset = v2fdiv(v2fmulf32((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {(f32)windowWidth, (f32)windowHeight});
-            for (isize ind = 0; ind < renderer.vertices.len; ind++) {
-                renderer.vertices.ptr[ind] = v2fadd(renderer.vertices.ptr[ind], offset);
-            }
-
-            rendererOutlineTriangles(&renderer);
-
-            for (isize ind = 0; ind < renderer.vertices.len; ind++) {
-                renderer.vertices.ptr[ind] = v2fsub(renderer.vertices.ptr[ind], offset);
-            }
+        bool showDebugTriangles = false;
+        if (showDebugTriangles) {
+            drawDebugTriangles(&renderer, windowWidth, windowHeight);
+        } else {
+            // TODO(khvorov) Draw something
         }
 
         // NOTE(khvorov) Present the bitmap
