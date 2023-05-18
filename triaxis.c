@@ -5,14 +5,14 @@
 // clang-format off
 #define function static
 #define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
-#define arrayCount(x) (sizeof(x) / sizeof(x[0]))
+#define arrayCount(x) (int)(sizeof(x) / sizeof(x[0]))
 #define unused(x) (x) = (x)
 #define min(x, y) (((x) < (y)) ? (x) : (y))
 #define max(x, y) (((x) > (y)) ? (x) : (y))
 #define absval(x) ((x) >= 0 ? (x) : -(x))
 #define arenaAllocArray(arena, type, count) (type*)arenaAlloc(arena, sizeof(type)*count, alignof(type))
 #define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
-#define arrpush(arr, val) assert(arr.len < arr.cap); arr.ptr[arr.len++] = val
+#define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = val, (arr).len++) : (__debugbreak(), 0))
 #define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
 // clang-format on
 
@@ -326,6 +326,15 @@ typedef struct MeshBuilder {
     isize        indexLenBefore;
 } MeshBuilder;
 
+function MeshStorage
+createMeshStorage(Arena* arena, isize bytes) {
+    MeshStorage storage = {};
+    isize       bytesPerBuffer = bytes / 2;
+    arenaAllocCap(arena, V3f, bytesPerBuffer, storage.vertices);
+    arenaAllocCap(arena, i32, bytesPerBuffer, storage.indices);
+    return storage;
+}
+
 function MeshBuilder
 beginMesh(MeshStorage* storage) {
     MeshBuilder builder = {storage, storage->vertices.len, storage->indices.len};
@@ -342,16 +351,24 @@ endMesh(MeshBuilder builder) {
     };
     assert(mesh.vertices.len >= 0);
     assert(mesh.indices.len >= 0);
+    for (i32 ind = 0; ind < mesh.indices.len; ind++) {
+        mesh.indices.ptr[ind] -= builder.indexLenBefore;
+    }
     return mesh;
 }
 
-function MeshStorage
-createMeshStorage(Arena* arena, isize bytes) {
-    MeshStorage storage = {};
-    isize       bytesPerBuffer = bytes / 2;
-    arenaAllocCap(arena, V3f, bytesPerBuffer, storage.vertices);
-    arenaAllocCap(arena, i32, bytesPerBuffer, storage.indices);
-    return storage;
+function void
+meshStorageAddTriangle(MeshStorage* storage, i32 i1, i32 i2, i32 i3) {
+    assert(i1 < storage->vertices.len && i2 < storage->vertices.len && i3 < storage->vertices.len);
+    arrpush(storage->indices, i1);
+    arrpush(storage->indices, i2);
+    arrpush(storage->indices, i3);
+}
+
+function void
+meshStorageAddQuad(MeshStorage* storage, i32 i1, i32 i2, i32 i3, i32 i4) {
+    meshStorageAddTriangle(storage, i1, i2, i3);
+    meshStorageAddTriangle(storage, i1, i3, i4);
 }
 
 function Mesh
@@ -369,7 +386,21 @@ cubeCenterDim(MeshStorage* storage, V3f center, f32 dim) {
     V3f backBottomLeft = v3fadd(center, (V3f) {-halfdim, halfdim, halfdim});
     V3f backBottomRight = v3fadd(center, (V3f) {halfdim, halfdim, halfdim});
 
-    // TODO(khvorov) Finish filling the triangles
+    i32 frontTopLeftIndex = arrpush(storage->vertices, frontTopLeft);
+    i32 frontTopRightIndex = arrpush(storage->vertices, frontTopRight);
+    i32 frontBottomLeftIndex = arrpush(storage->vertices, frontBottomLeft);
+    i32 frontBottomRightIndex = arrpush(storage->vertices, frontBottomRight);
+    i32 backTopLeftIndex = arrpush(storage->vertices, backTopLeft);
+    i32 backTopRightIndex = arrpush(storage->vertices, backTopRight);
+    i32 backBottomLeftIndex = arrpush(storage->vertices, backBottomLeft);
+    i32 backBottomRightIndex = arrpush(storage->vertices, backBottomRight);
+
+    meshStorageAddQuad(storage, frontTopLeftIndex, frontTopRightIndex, frontBottomRightIndex, frontBottomLeftIndex);
+    meshStorageAddQuad(storage, frontTopRightIndex, backTopRightIndex, backBottomRightIndex, frontBottomRightIndex);
+    meshStorageAddQuad(storage, frontTopLeftIndex, backTopLeftIndex, backTopRightIndex, frontTopRightIndex);
+    meshStorageAddQuad(storage, frontTopLeftIndex, backTopRightIndex, backBottomRightIndex, frontBottomRightIndex);
+    meshStorageAddQuad(storage, frontBottomLeftIndex, frontBottomRightIndex, backBottomRightIndex, backBottomLeftIndex);
+    meshStorageAddQuad(storage, backTopRightIndex, backTopLeftIndex, backBottomLeftIndex, backBottomRightIndex);
 
     Mesh cube = endMesh(cubeBuilder);
     return cube;
@@ -921,7 +952,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
-    Mesh cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 0}, 1);
+    Mesh cube = cubeCenterDim(&meshStorage, (V3f) {0.5, 0.5, 0}, 0.5);
 
     for (MSG msg = {}; GetMessageW(&msg, 0, 0, 0);) {
         TranslateMessage(&msg);
@@ -933,7 +964,38 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         if (showDebugTriangles) {
             drawDebugTriangles(&renderer, windowWidth, windowHeight);
         } else {
-            // TODO(khvorov) Draw something
+            i32     cubeFirstIndex = renderer.vertices.len;
+            Color01 colors[] = {
+                {.r = 1, .a = 1},
+                {.g = 1, .a = 1},
+                {.b = 1, .a = 1},
+                {.r = 1, .g = 1, .a = 1},
+                {.r = 1, .b = 1, .a = 1},
+                {.g = 1, .b = 1, .a = 1},
+                {.r = 1, .g = 1, .b = 1, .a = 1},
+                {.r = 0.5, .g = 1, .a = 1},
+            };
+            for (i32 ind = 0; ind < cube.vertices.len; ind++) {
+                V3f cubeVertex = cube.vertices.ptr[ind];
+                V2f cubeVertexProjected = {cubeVertex.x, cubeVertex.y};
+                arrpush(renderer.vertices, cubeVertexProjected);
+                assert(ind < arrayCount(colors));
+                arrpush(renderer.colors, colors[ind]);
+            }
+
+            for (i32 ind = 0; ind < cube.indices.len; ind += 3) {
+                if (ind == 6) {
+                    break;
+                }
+                assert(ind + 2 < cube.indices.len);
+                i32 cubeIndex1 = cube.indices.ptr[ind];
+                i32 cubeIndex2 = cube.indices.ptr[ind + 1];
+                i32 cubeIndex3 = cube.indices.ptr[ind + 2];
+                rendererPushTriangle(&renderer, cubeIndex1 + cubeFirstIndex, cubeIndex2 + cubeFirstIndex, cubeIndex3 + cubeFirstIndex);
+            }
+
+            setImageSize(&renderer, windowWidth, windowHeight);
+            rendererFillTriangles(&renderer);
         }
 
         // NOTE(khvorov) Present the bitmap
