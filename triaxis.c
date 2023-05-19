@@ -2,7 +2,11 @@
 #include <stdbool.h>
 #include <stdalign.h>
 
+// TODO(khvorov) Remove
+#include <math.h>
+
 // clang-format off
+#define PI 3.14159
 #define function static
 #define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
 #define arrayCount(x) (int)(sizeof(x) / sizeof(x[0]))
@@ -376,15 +380,15 @@ cubeCenterDim(MeshStorage* storage, V3f center, f32 dim) {
     f32         halfdim = dim / 2;
     MeshBuilder cubeBuilder = beginMesh(storage);
 
-    V3f frontTopLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, -halfdim});
-    V3f frontTopRight = v3fadd(center, (V3f) {halfdim, -halfdim, -halfdim});
-    V3f frontBottomLeft = v3fadd(center, (V3f) {-halfdim, halfdim, -halfdim});
-    V3f frontBottomRight = v3fadd(center, (V3f) {halfdim, halfdim, -halfdim});
+    V3f frontTopLeft = v3fadd(center, (V3f) {-halfdim, halfdim, -halfdim});
+    V3f frontTopRight = v3fadd(center, (V3f) {halfdim, halfdim, -halfdim});
+    V3f frontBottomLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, -halfdim});
+    V3f frontBottomRight = v3fadd(center, (V3f) {halfdim, -halfdim, -halfdim});
 
-    V3f backTopLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, halfdim});
-    V3f backTopRight = v3fadd(center, (V3f) {halfdim, -halfdim, halfdim});
-    V3f backBottomLeft = v3fadd(center, (V3f) {-halfdim, halfdim, halfdim});
-    V3f backBottomRight = v3fadd(center, (V3f) {halfdim, halfdim, halfdim});
+    V3f backTopLeft = v3fadd(center, (V3f) {-halfdim, halfdim, halfdim});
+    V3f backTopRight = v3fadd(center, (V3f) {halfdim, halfdim, halfdim});
+    V3f backBottomLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, halfdim});
+    V3f backBottomRight = v3fadd(center, (V3f) {halfdim, -halfdim, halfdim});
 
     i32 frontTopLeftIndex = arrpush(storage->vertices, frontTopLeft);
     i32 frontTopRightIndex = arrpush(storage->vertices, frontTopRight);
@@ -452,7 +456,7 @@ createRenderer(Arena* arena, isize bytes) {
 }
 
 function void
-rendererClear(Renderer* renderer) {
+rendererClearBuffers(Renderer* renderer) {
     renderer->scratch.used = 0;
     renderer->vertices.len = 0;
     renderer->colors.len = 0;
@@ -663,6 +667,25 @@ function void
 rendererOutlineTriangles(Renderer* renderer) {
     for (i32 start = 0; start < renderer->indices.len; start += 3) {
         outlineTriangle(renderer, arrget(renderer->indices, start), arrget(renderer->indices, start + 1), arrget(renderer->indices, start + 2));
+    }
+}
+
+typedef struct RendererMeshBuilder {
+    Renderer* renderer;
+    i32       firstVertexIndex;
+    i32       firstIndexIndex;
+} RendererMeshBuilder;
+
+function RendererMeshBuilder
+rendererBeginMesh(Renderer* renderer) {
+    RendererMeshBuilder builder = {renderer, renderer->vertices.len, renderer->indices.len};
+    return builder;
+}
+
+function void
+rendererEndMesh(RendererMeshBuilder builder) {
+    for (i32 indexIndex = builder.firstIndexIndex; indexIndex < builder.renderer->indices.len; indexIndex++) {
+        builder.renderer->indices.ptr[indexIndex] += builder.firstVertexIndex;
     }
 }
 
@@ -952,19 +975,21 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
-    Mesh cube = cubeCenterDim(&meshStorage, (V3f) {0.5, 0.5, 0}, 0.5);
+    f32  fovDegreesX = 90;
+    Mesh cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 3}, 1.5);
 
     for (MSG msg = {}; GetMessageW(&msg, 0, 0, 0);) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
 
-        rendererClear(&renderer);
+        rendererClearBuffers(&renderer);
 
         bool showDebugTriangles = false;
         if (showDebugTriangles) {
             drawDebugTriangles(&renderer, windowWidth, windowHeight);
         } else {
-            i32     cubeFirstIndex = renderer.vertices.len;
+            RendererMeshBuilder cubeInRendererBuilder = rendererBeginMesh(&renderer);
+
             Color01 colors[] = {
                 {.r = 1, .a = 1},
                 {.g = 1, .a = 1},
@@ -977,8 +1002,21 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             };
             for (i32 ind = 0; ind < cube.vertices.len; ind++) {
                 V3f cubeVertex = cube.vertices.ptr[ind];
-                V2f cubeVertexProjected = {cubeVertex.x, cubeVertex.y};
-                arrpush(renderer.vertices, cubeVertexProjected);
+                V2f cubeVertexOnPlane = {cubeVertex.x / cubeVertex.z, cubeVertex.y / cubeVertex.z};
+
+                f32 fovRadiansX = fovDegreesX / 180 * PI;
+
+                f32 planeRight = tan(0.5f * fovRadiansX);
+                f32 planeLeft = -planeRight;
+                f32 planeTop =((f32)windowHeight / (f32)windowWidth) * planeRight;
+                f32 planeBottom = -planeTop;
+
+                V2f cubeVertexOnScreen = {
+                    (cubeVertexOnPlane.x - planeLeft) / (planeRight - planeLeft),
+                    (cubeVertexOnPlane.y - planeTop) / (planeBottom - planeTop),
+                };
+
+                arrpush(renderer.vertices, cubeVertexOnScreen);
                 assert(ind < arrayCount(colors));
                 arrpush(renderer.colors, colors[ind]);
             }
@@ -991,11 +1029,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 i32 cubeIndex1 = cube.indices.ptr[ind];
                 i32 cubeIndex2 = cube.indices.ptr[ind + 1];
                 i32 cubeIndex3 = cube.indices.ptr[ind + 2];
-                rendererPushTriangle(&renderer, cubeIndex1 + cubeFirstIndex, cubeIndex2 + cubeFirstIndex, cubeIndex3 + cubeFirstIndex);
+                rendererPushTriangle(&renderer, cubeIndex1, cubeIndex2, cubeIndex3);
             }
 
+            rendererEndMesh(cubeInRendererBuilder);
+
             setImageSize(&renderer, windowWidth, windowHeight);
+            clearImage(&renderer);
             rendererFillTriangles(&renderer);
+            rendererOutlineTriangles(&renderer);
         }
 
         // NOTE(khvorov) Present the bitmap
