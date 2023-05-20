@@ -153,6 +153,12 @@ v3fsub(V3f v1, V3f v2) {
     return result;
 }
 
+function f32
+v3fdot(V3f v1, V3f v2) {
+    f32 result = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+    return result;
+}
+
 function V2f
 v2fadd(V2f v1, V2f v2) {
     V2f result = {v1.x + v2.x, v1.y + v2.y};
@@ -899,6 +905,34 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
 }
 
 //
+// SECTION Camera
+//
+
+typedef struct Camera {
+    V3f pos;
+    f32 fovDegreesX;
+    V3f axisX;
+    V3f axisY;
+    V3f axisZ;
+} Camera;
+
+function Camera
+createCamera(void) {
+    Camera camera = {.fovDegreesX = 90, .axisX = {.x = 1}, .axisY = {.y = 1}, .axisZ = {.z = 1}};
+    return camera;
+}
+
+function void
+cameraRotateZ(Camera* camera, f32 by) {
+    f32 sinAngle = sin(by);
+    f32 cosAngle = cos(by);
+
+    camera->axisX.x = camera->axisX.x * cosAngle - camera->axisX.y * sinAngle;
+    camera->axisX.y = camera->axisX.x * sinAngle + camera->axisX.y * cosAngle;
+    camera->axisY = (V3f) {-camera->axisX.y, camera->axisX.x, camera->axisX.z};
+}
+
+//
 // SECTION Platform
 //
 
@@ -981,21 +1015,23 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
-    V3f  cameraPos = {0, 0, 0};
-    f32  fovDegreesX = 90;
-    Mesh cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 3}, 1.5);
+    Camera camera = createCamera();
+    Mesh   cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 3}, 1.5);
 
     for (MSG msg = {}; GetMessageW(&msg, 0, 0, 0);) {
         switch (msg.message) {
             case WM_KEYDOWN: {
                 f32 cameraMovementInc = 0.1;
+                f32 cameraZRotationInc = 0.01;
                 switch (msg.wParam) {
-                    case 'W': cameraPos.z += cameraMovementInc; break;
-                    case 'S': cameraPos.z -= cameraMovementInc; break;
-                    case 'A': cameraPos.x -= cameraMovementInc; break;
-                    case 'D': cameraPos.x += cameraMovementInc; break;
-                    case VK_SHIFT: cameraPos.y += cameraMovementInc; break;
-                    case VK_CONTROL: cameraPos.y -= cameraMovementInc; break;
+                    case 'W': camera.pos.z += cameraMovementInc; break;
+                    case 'S': camera.pos.z -= cameraMovementInc; break;
+                    case 'A': camera.pos.x -= cameraMovementInc; break;
+                    case 'D': camera.pos.x += cameraMovementInc; break;
+                    case VK_SHIFT: camera.pos.y += cameraMovementInc; break;
+                    case VK_CONTROL: camera.pos.y -= cameraMovementInc; break;
+                    case 'Q': cameraRotateZ(&camera, cameraZRotationInc); break;
+                    case 'E': cameraRotateZ(&camera, -cameraZRotationInc); break;
                     default: break;
                 }
             } break;
@@ -1027,11 +1063,16 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             for (i32 ind = 0; ind < cube.vertices.len; ind++) {
                 V3f cubeVertex = cube.vertices.ptr[ind];
 
-                V3f cubeVertexInCameraSpace = v3fsub(cubeVertex, cameraPos);
+                V3f cubeVertexCameraAligned = {
+                    .x = v3fdot(camera.axisX, cubeVertex),
+                    .y = v3fdot(camera.axisY, cubeVertex),
+                    .z = v3fdot(camera.axisZ, cubeVertex),
+                };
+                V3f cubeVertexInCameraSpace = v3fsub(cubeVertexCameraAligned, camera.pos);
 
                 V2f cubeVertexOnPlane = {cubeVertexInCameraSpace.x / cubeVertexInCameraSpace.z, cubeVertexInCameraSpace.y / cubeVertexInCameraSpace.z};
 
-                f32 fovRadiansX = fovDegreesX / 180 * PI;
+                f32 fovRadiansX = camera.fovDegreesX / 180 * PI;
 
                 f32 planeRight = tan(0.5f * fovRadiansX);
                 f32 planeLeft = -planeRight;
