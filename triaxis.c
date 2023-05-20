@@ -402,7 +402,7 @@ cubeCenterDim(MeshStorage* storage, V3f center, f32 dim) {
     meshStorageAddQuad(storage, frontTopLeftIndex, frontTopRightIndex, frontBottomRightIndex, frontBottomLeftIndex);
     meshStorageAddQuad(storage, frontTopRightIndex, backTopRightIndex, backBottomRightIndex, frontBottomRightIndex);
     meshStorageAddQuad(storage, frontTopLeftIndex, backTopLeftIndex, backTopRightIndex, frontTopRightIndex);
-    meshStorageAddQuad(storage, frontTopLeftIndex, backTopRightIndex, backBottomRightIndex, frontBottomRightIndex);
+    meshStorageAddQuad(storage, frontTopLeftIndex, frontBottomLeftIndex, backBottomLeftIndex, backTopLeftIndex);
     meshStorageAddQuad(storage, frontBottomLeftIndex, frontBottomRightIndex, backBottomRightIndex, backBottomLeftIndex);
     meshStorageAddQuad(storage, backTopRightIndex, backTopLeftIndex, backBottomLeftIndex, backBottomRightIndex);
 
@@ -1008,7 +1008,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
                 f32 planeRight = tan(0.5f * fovRadiansX);
                 f32 planeLeft = -planeRight;
-                f32 planeTop =((f32)windowHeight / (f32)windowWidth) * planeRight;
+                f32 planeTop = ((f32)windowHeight / (f32)windowWidth) * planeRight;
                 f32 planeBottom = -planeTop;
 
                 V2f cubeVertexOnScreen = {
@@ -1022,14 +1022,19 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             }
 
             for (i32 ind = 0; ind < cube.indices.len; ind += 3) {
-                if (ind == 6) {
-                    break;
-                }
                 assert(ind + 2 < cube.indices.len);
                 i32 cubeIndex1 = cube.indices.ptr[ind];
                 i32 cubeIndex2 = cube.indices.ptr[ind + 1];
                 i32 cubeIndex3 = cube.indices.ptr[ind + 2];
-                rendererPushTriangle(&renderer, cubeIndex1, cubeIndex2, cubeIndex3);
+
+                V2f cubeVertex1 = arrget(renderer.vertices, cubeIndex1 + cubeInRendererBuilder.firstVertexIndex);
+                V2f cubeVertex2 = arrget(renderer.vertices, cubeIndex2 + cubeInRendererBuilder.firstVertexIndex);
+                V2f cubeVertex3 = arrget(renderer.vertices, cubeIndex3 + cubeInRendererBuilder.firstVertexIndex);
+
+                f32 area = edgeCrossMag(cubeVertex1, cubeVertex2, cubeVertex3);
+                if (area > 0) {
+                    rendererPushTriangle(&renderer, cubeIndex1, cubeIndex2, cubeIndex3);
+                }
             }
 
             rendererEndMesh(cubeInRendererBuilder);
