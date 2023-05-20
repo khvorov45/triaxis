@@ -153,6 +153,12 @@ v3fsub(V3f v1, V3f v2) {
     return result;
 }
 
+function V3f
+v3fmul(V3f v1, f32 by) {
+    V3f result = {v1.x * by, v1.y * by, v1.z * by};
+    return result;
+}
+
 function f32
 v3fdot(V3f v1, V3f v2) {
     f32 result = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
@@ -186,6 +192,43 @@ v2fdiv(V2f v1, V2f v2) {
 function V2f
 v2fhadamard(V2f v1, V2f v2) {
     V2f result = {v1.x * v2.x, v1.y * v2.y};
+    return result;
+}
+
+// clang-format off
+typedef struct M3x3f {
+    f32 m11, m12, m13;
+    f32 m21, m22, m23;
+    f32 m31, m32, m33;
+} M3x3f;
+// clang-format on
+
+function M3x3f
+getRotationMat(f32 by, V3f axis) {
+    f32 s = sin(by);
+    f32 c = cos(by);
+    f32 x = axis.x;
+    f32 y = axis.y;
+    f32 z = axis.z;
+
+    // clang-format off
+    M3x3f mat = {
+        c + x * x * (1 - c),     x * y * (1 - c) - z * s, x * z * (1 - c) + y * s,
+        y * x * (1 - c) + z * s, c + y * y * (1 - c),     y * z * (1 - c) - x * s,
+        z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c),
+    };
+    // clang-format on
+
+    return mat;
+}
+
+function V3f
+m3x3fmulv3f(M3x3f m, V3f v) {
+    V3f result = {
+        .x = m.m11 * v.x + m.m12 * v.y + m.m13 * v.z,
+        .y = m.m21 * v.x + m.m22 * v.y + m.m23 * v.z,
+        .z = m.m31 * v.x + m.m32 * v.y + m.m33 * v.z,
+    };
     return result;
 }
 
@@ -923,14 +966,32 @@ createCamera(void) {
 }
 
 function void
-cameraRotateZ(Camera* camera, f32 by) {
-    f32 sinAngle = sin(by);
-    f32 cosAngle = cos(by);
-
-    camera->axisX.x = camera->axisX.x * cosAngle - camera->axisX.y * sinAngle;
-    camera->axisX.y = camera->axisX.x * sinAngle + camera->axisX.y * cosAngle;
-    camera->axisY = (V3f) {-camera->axisX.y, camera->axisX.x, camera->axisX.z};
+cameraRotate(Camera* camera, f32 by, V3f axis) {
+    M3x3f mat = getRotationMat(by, axis);
+    camera->axisX = m3x3fmulv3f(mat, camera->axisX);
+    camera->axisY = m3x3fmulv3f(mat, camera->axisY);
+    camera->axisZ = m3x3fmulv3f(mat, camera->axisZ);
 }
+
+typedef enum InputKey {
+    InputKey_Forward,
+    InputKey_Back,
+    InputKey_Left,
+    InputKey_Right,
+    InputKey_Up,
+    InputKey_Down,
+    InputKey_RotateXLeft,
+    InputKey_RotateXRight,
+    InputKey_RotateYLeft,
+    InputKey_RotateYRight,
+    InputKey_RotateZLeft,
+    InputKey_RotateZRight,
+    InputKey_Count,
+} InputKey;
+
+typedef struct Input {
+    bool keysDown[InputKey_Count];
+} Input;
 
 //
 // SECTION Platform
@@ -1016,30 +1077,85 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWNORMAL);
 
     Camera camera = createCamera();
+    Input  input = {};
     Mesh   cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 3}, 1.5);
 
-    for (MSG msg = {}; GetMessageW(&msg, 0, 0, 0);) {
-        switch (msg.message) {
-            case WM_KEYDOWN: {
-                f32 cameraMovementInc = 0.1;
-                f32 cameraZRotationInc = 0.01;
-                switch (msg.wParam) {
-                    case 'W': camera.pos.z += cameraMovementInc; break;
-                    case 'S': camera.pos.z -= cameraMovementInc; break;
-                    case 'A': camera.pos.x -= cameraMovementInc; break;
-                    case 'D': camera.pos.x += cameraMovementInc; break;
-                    case VK_SHIFT: camera.pos.y += cameraMovementInc; break;
-                    case VK_CONTROL: camera.pos.y -= cameraMovementInc; break;
-                    case 'Q': cameraRotateZ(&camera, cameraZRotationInc); break;
-                    case 'E': cameraRotateZ(&camera, -cameraZRotationInc); break;
-                    default: break;
-                }
-            } break;
+    for (;;) {
+        for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
+            switch (msg.message) {
+                case WM_QUIT: ExitProcess(0); break;
 
-            default: {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            } break;
+                case WM_KEYDOWN:
+                case WM_KEYUP: {
+                    InputKey key = 0;
+                    bool     keyFound = true;
+                    switch (msg.wParam) {
+                        case 'W': key = InputKey_Forward; break;
+                        case 'S': key = InputKey_Back; break;
+                        case 'A': key = InputKey_Left; break;
+                        case 'D': key = InputKey_Right; break;
+                        case VK_SHIFT: key = InputKey_Up; break;
+                        case VK_CONTROL: key = InputKey_Down; break;
+                        case VK_UP: key = InputKey_RotateXLeft; break;
+                        case VK_DOWN: key = InputKey_RotateXRight; break;
+                        case VK_LEFT: key = InputKey_RotateYLeft; break;
+                        case VK_RIGHT: key = InputKey_RotateYRight; break;
+                        case 'Q': key = InputKey_RotateZLeft; break;
+                        case 'E': key = InputKey_RotateZRight; break;
+                        default: keyFound = false; break;
+                    }
+                    if (keyFound) {
+                        bool state = msg.message == WM_KEYDOWN;
+                        input.keysDown[key] = state;
+                    }
+                } break;
+
+                default: {
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                } break;
+            }
+        }
+
+        {
+            f32 cameraMovementInc = 0.1;
+            f32 cameraRotationInc = 0.01;
+            if (input.keysDown[InputKey_Forward]) {
+                camera.pos = v3fadd(v3fmul(camera.axisZ, cameraMovementInc), camera.pos);
+            }
+            if (input.keysDown[InputKey_Back]) {
+                camera.pos = v3fadd(v3fmul(camera.axisZ, -cameraMovementInc), camera.pos);
+            }
+            if (input.keysDown[InputKey_Left]) {
+                camera.pos = v3fadd(v3fmul(camera.axisX, -cameraMovementInc), camera.pos);
+            }
+            if (input.keysDown[InputKey_Right]) {
+                camera.pos = v3fadd(v3fmul(camera.axisX, cameraMovementInc), camera.pos);
+            }
+            if (input.keysDown[InputKey_Up]) {
+                camera.pos = v3fadd(v3fmul(camera.axisY, cameraMovementInc), camera.pos);
+            }
+            if (input.keysDown[InputKey_Down]) {
+                camera.pos = v3fadd(v3fmul(camera.axisY, -cameraMovementInc), camera.pos);
+            }
+            if (input.keysDown[InputKey_RotateXLeft]) {
+                cameraRotate(&camera, cameraRotationInc, camera.axisX);
+            }
+            if (input.keysDown[InputKey_RotateXRight]) {
+                cameraRotate(&camera, -cameraRotationInc, camera.axisX);
+            }
+            if (input.keysDown[InputKey_RotateYLeft]) {
+                cameraRotate(&camera, -cameraRotationInc, camera.axisY);
+            }
+            if (input.keysDown[InputKey_RotateYRight]) {
+                cameraRotate(&camera, cameraRotationInc, camera.axisY);
+            }
+            if (input.keysDown[InputKey_RotateZLeft]) {
+                cameraRotate(&camera, cameraRotationInc, camera.axisZ);
+            }
+            if (input.keysDown[InputKey_RotateZRight]) {
+                cameraRotate(&camera, -cameraRotationInc, camera.axisZ);
+            }
         }
 
         rendererClearBuffers(&renderer);
@@ -1063,12 +1179,13 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             for (i32 ind = 0; ind < cube.vertices.len; ind++) {
                 V3f cubeVertex = cube.vertices.ptr[ind];
 
-                V3f cubeVertexCameraAligned = {
-                    .x = v3fdot(camera.axisX, cubeVertex),
-                    .y = v3fdot(camera.axisY, cubeVertex),
-                    .z = v3fdot(camera.axisZ, cubeVertex),
+                V3f cubeVertexCameraTranslated = v3fsub(cubeVertex, camera.pos);
+
+                V3f cubeVertexInCameraSpace = {
+                    .x = v3fdot(camera.axisX, cubeVertexCameraTranslated),
+                    .y = v3fdot(camera.axisY, cubeVertexCameraTranslated),
+                    .z = v3fdot(camera.axisZ, cubeVertexCameraTranslated),
                 };
-                V3f cubeVertexInCameraSpace = v3fsub(cubeVertexCameraAligned, camera.pos);
 
                 V2f cubeVertexOnPlane = {cubeVertexInCameraSpace.x / cubeVertexInCameraSpace.z, cubeVertexInCameraSpace.y / cubeVertexInCameraSpace.z};
 
@@ -1139,6 +1256,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 SRCCOPY
             );
         }
+
+        // TODO(khvorov) Better timing
+        Sleep(10);
 
         // NOTE(khvorov) Move the shape to the cursor
         if (false) {
