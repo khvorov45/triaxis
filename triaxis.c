@@ -147,6 +147,12 @@ v3fadd(V3f v1, V3f v2) {
     return result;
 }
 
+function V3f
+v3fsub(V3f v1, V3f v2) {
+    V3f result = {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z};
+    return result;
+}
+
 function V2f
 v2fadd(V2f v1, V2f v2) {
     V2f result = {v1.x + v2.x, v1.y + v2.y};
@@ -975,12 +981,30 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
+    V3f  cameraPos = {0, 0, 0};
     f32  fovDegreesX = 90;
     Mesh cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 3}, 1.5);
 
     for (MSG msg = {}; GetMessageW(&msg, 0, 0, 0);) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        switch (msg.message) {
+            case WM_KEYDOWN: {
+                f32 cameraMovementInc = 0.1;
+                switch (msg.wParam) {
+                    case 'W': cameraPos.z += cameraMovementInc; break;
+                    case 'S': cameraPos.z -= cameraMovementInc; break;
+                    case 'A': cameraPos.x -= cameraMovementInc; break;
+                    case 'D': cameraPos.x += cameraMovementInc; break;
+                    case VK_SHIFT: cameraPos.y += cameraMovementInc; break;
+                    case VK_CONTROL: cameraPos.y -= cameraMovementInc; break;
+                    default: break;
+                }
+            } break;
+
+            default: {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            } break;
+        }
 
         rendererClearBuffers(&renderer);
 
@@ -1002,7 +1026,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             };
             for (i32 ind = 0; ind < cube.vertices.len; ind++) {
                 V3f cubeVertex = cube.vertices.ptr[ind];
-                V2f cubeVertexOnPlane = {cubeVertex.x / cubeVertex.z, cubeVertex.y / cubeVertex.z};
+
+                V3f cubeVertexInCameraSpace = v3fsub(cubeVertex, cameraPos);
+
+                V2f cubeVertexOnPlane = {cubeVertexInCameraSpace.x / cubeVertexInCameraSpace.z, cubeVertexInCameraSpace.y / cubeVertexInCameraSpace.z};
 
                 f32 fovRadiansX = fovDegreesX / 180 * PI;
 
