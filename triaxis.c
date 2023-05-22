@@ -1,3 +1,5 @@
+#pragma clang diagnostic ignored "-Wunused-function"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdalign.h>
@@ -127,6 +129,12 @@ lerp(f32 start, f32 end, f32 by) {
     return result;
 }
 
+function f32
+degreesToRadians(f32 degrees) {
+    f32 result = degrees / 180 * PI;
+    return result;
+}
+
 typedef struct V2f {
     f32 x, y;
 } V2f;
@@ -195,6 +203,85 @@ v2fhadamard(V2f v1, V2f v2) {
     return result;
 }
 
+typedef struct Rotor3f {
+    f32 dt;
+    f32 xy;
+    f32 xz;
+    f32 yz;
+} Rotor3f;
+
+function Rotor3f
+createRotor3f(void) {
+    Rotor3f result = {.dt = 1};
+    return result;
+}
+
+function Rotor3f
+createRotor3fAnglePlane(f32 angleDegrees, f32 xy, f32 xz, f32 yz) {
+    f32 area = sqrtf(xy * xy + xz * xz + yz * yz);
+    f32 angleRadians = degreesToRadians(angleDegrees);
+    f32 halfa = angleRadians / 2;
+    f32 sina = sinf(halfa);
+    f32 cosa = cosf(halfa);
+
+    Rotor3f result = {
+        .dt = cosa,
+        .xy = -xy / area * sina,
+        .xz = -xz / area * sina,
+        .yz = -yz / area * sina,
+    };
+    return result;
+}
+
+function Rotor3f
+rotor3fNormalise(Rotor3f r) {
+    f32 l = sqrtf(r.dt * r.dt + r.xy * r.xy + r.xz * r.xz + r.yz * r.yz);
+    assert(l > 0);
+    Rotor3f result = {
+        .dt = r.dt / l,
+        .xy = r.xy / l,
+        .xz = r.xz / l,
+        .yz = r.yz / l,
+    };
+    return result;
+}
+
+function Rotor3f
+rotor3fMulRotor3f(Rotor3f p, Rotor3f q) {
+    Rotor3f result = {
+        .dt = p.dt * q.dt - p.xy * q.xy - p.xz * q.xz - p.yz * q.yz,
+        .xy = p.xy * q.dt + p.dt * q.xy + p.yz * q.xz - p.xz * q.yz,
+        .xz = p.xz * q.dt + p.dt * q.xz - p.yz * q.xy + p.xy * q.yz,
+        .yz = p.yz * q.dt + p.dt * q.yz + p.xz * q.xy - p.xy * q.xz,
+    };
+    return result;
+}
+
+function V3f
+rotor3fRotateV3f(Rotor3f r, V3f v) {
+    f32 x = r.dt * v.x + v.y * r.xy + v.z * r.xz;
+    f32 y = r.dt * v.y - v.x * r.xy + v.z * r.yz;
+    f32 z = r.dt * v.z - v.x * r.xz - v.y * r.yz;
+    f32 t = v.x * r.yz - v.y * r.xz + v.z * r.xy;
+
+    V3f result = {
+        .x = r.dt * x + y * r.xy + z * r.xz + t * r.yz,
+        .y = r.dt * y - x * r.xy - t * r.xz + z * r.yz,
+        .z = r.dt * z + t * r.xy - x * r.xz - y * r.yz,
+    };
+
+    return result;
+}
+
+function Rotor3f
+rotor3fRotateRotor3f(Rotor3f r, Rotor3f by) {
+    Rotor3f ba = by;
+    Rotor3f ab = {.dt = ba.dt, .xy = -ba.xy, .xz = -ba.xz, .yz = -ba.yz};
+    Rotor3f bar = rotor3fMulRotor3f(ba, r);
+    Rotor3f result = rotor3fMulRotor3f(bar, ab);
+    return result;
+}
+
 // clang-format off
 typedef struct M3x3f {
     f32 m11, m12, m13;
@@ -205,8 +292,8 @@ typedef struct M3x3f {
 
 function M3x3f
 getRotationMat(f32 by, V3f axis) {
-    f32 s = sin(by);
-    f32 c = cos(by);
+    f32 s = sinf(by);
+    f32 c = cosf(by);
     f32 x = axis.x;
     f32 y = axis.y;
     f32 z = axis.z;
@@ -332,7 +419,7 @@ coloru32GetContrast(u32 cu32) {
 }
 
 function f32
-edgeCrossMag(V2f v1, V2f v2, V2f pt) {
+edgeWedge(V2f v1, V2f v2, V2f pt) {
     V2f v1v2 = v2fsub(v2, v1);
     V2f v1pt = v2fsub(pt, v1);
     f32 result = v1v2.x * v1pt.y - v1v2.y * v1pt.x;
@@ -367,6 +454,7 @@ typedef struct Mesh {
         i32*  ptr;
         isize len;
     } indices;
+    Rotor3f orientation;
 } Mesh;
 
 typedef struct MeshStorage {
@@ -407,6 +495,7 @@ endMesh(MeshBuilder builder) {
         .vertices.len = builder.storage->vertices.len - builder.vertexLenBefore,
         .indices.ptr = builder.storage->indices.ptr + builder.indexLenBefore,
         .indices.len = builder.storage->indices.len - builder.indexLenBefore,
+        .orientation = createRotor3f(),
     };
     assert(mesh.vertices.len >= 0);
     assert(mesh.indices.len >= 0);
@@ -562,7 +651,7 @@ fillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
     bool allowZero2 = isTopLeft(v2, v3);
     bool allowZero3 = isTopLeft(v3, v1);
 
-    f32 area = edgeCrossMag(v1, v2, v3);
+    f32 area = edgeWedge(v1, v2, v3);
 
     f32 dcross1x = v1.y - v2.y;
     f32 dcross2x = v2.y - v3.y;
@@ -577,9 +666,9 @@ fillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
 
     // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
     V2f topleft = {(f32)(xstart), (f32)(ystart)};
-    f32 cross1topleft = edgeCrossMag(v1, v2, topleft);
-    f32 cross2topleft = edgeCrossMag(v2, v3, topleft);
-    f32 cross3topleft = edgeCrossMag(v3, v1, topleft);
+    f32 cross1topleft = edgeWedge(v1, v2, topleft);
+    f32 cross2topleft = edgeWedge(v2, v3, topleft);
+    f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
     for (i32 ycoord = ystart; ycoord <= (i32)ymax; ycoord++) {
         if (ycoord >= 0 && ycoord < renderer->image.height) {
@@ -960,8 +1049,8 @@ typedef struct Camera {
 } Camera;
 
 function Camera
-createCamera(void) {
-    Camera camera = {.fovDegreesX = 90, .axisX = {.x = 1}, .axisY = {.y = 1}, .axisZ = {.z = 1}};
+createCamera(V3f pos) {
+    Camera camera = {.fovDegreesX = 90, .axisX = {.x = 1}, .axisY = {.y = 1}, .axisZ = {.z = 1}, .pos = pos};
     return camera;
 }
 
@@ -1076,9 +1165,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
-    Camera camera = createCamera();
+    Camera camera = createCamera((V3f) {0, 0, -3});
     Input  input = {};
-    Mesh   cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 3}, 1.5);
+    Mesh   cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 0}, 1.5);
 
     for (;;) {
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1156,6 +1245,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             if (input.keysDown[InputKey_RotateZRight]) {
                 cameraRotate(&camera, -cameraRotationInc, camera.axisZ);
             }
+
+            Rotor3f cubeRotation = createRotor3fAnglePlane(1, 1, 1, 1);
+            cube.orientation = rotor3fMulRotor3f(cube.orientation, cubeRotation);
         }
 
         rendererClearBuffers(&renderer);
@@ -1178,8 +1270,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             };
             for (i32 ind = 0; ind < cube.vertices.len; ind++) {
                 V3f cubeVertex = cube.vertices.ptr[ind];
+                V3f cubeVertexOriented = rotor3fRotateV3f(cube.orientation, cubeVertex);
 
-                V3f cubeVertexCameraTranslated = v3fsub(cubeVertex, camera.pos);
+                V3f cubeVertexCameraTranslated = v3fsub(cubeVertexOriented, camera.pos);
 
                 V3f cubeVertexInCameraSpace = {
                     .x = v3fdot(camera.axisX, cubeVertexCameraTranslated),
@@ -1189,7 +1282,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
                 V2f cubeVertexOnPlane = {cubeVertexInCameraSpace.x / cubeVertexInCameraSpace.z, cubeVertexInCameraSpace.y / cubeVertexInCameraSpace.z};
 
-                f32 fovRadiansX = camera.fovDegreesX / 180 * PI;
+                f32 fovRadiansX = degreesToRadians(camera.fovDegreesX);
 
                 f32 planeRight = tan(0.5f * fovRadiansX);
                 f32 planeLeft = -planeRight;
@@ -1216,7 +1309,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 V2f cubeVertex2 = arrget(renderer.vertices, cubeIndex2 + cubeInRendererBuilder.firstVertexIndex);
                 V2f cubeVertex3 = arrget(renderer.vertices, cubeIndex3 + cubeInRendererBuilder.firstVertexIndex);
 
-                f32 area = edgeCrossMag(cubeVertex1, cubeVertex2, cubeVertex3);
+                f32 area = edgeWedge(cubeVertex1, cubeVertex2, cubeVertex3);
                 if (area > 0) {
                     rendererPushTriangle(&renderer, cubeIndex1, cubeIndex2, cubeIndex3);
                 }
