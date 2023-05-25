@@ -247,6 +247,12 @@ rotor3fNormalise(Rotor3f r) {
 }
 
 function Rotor3f
+rotor3fReverse(Rotor3f r) {
+    Rotor3f result = {r.dt, -r.xy, -r.xz, -r.yz};
+    return result;
+}
+
+function Rotor3f
 rotor3fMulRotor3f(Rotor3f p, Rotor3f q) {
     Rotor3f result = {
         .dt = p.dt * q.dt - p.xy * q.xy - p.xz * q.xz - p.yz * q.yz,
@@ -450,10 +456,13 @@ typedef struct Mesh {
         V3f*  ptr;
         isize len;
     } vertices;
+
     struct {
         i32*  ptr;
         isize len;
     } indices;
+
+    V3f     pos;
     Rotor3f orientation;
 } Mesh;
 
@@ -489,13 +498,14 @@ beginMesh(MeshStorage* storage) {
 }
 
 function Mesh
-endMesh(MeshBuilder builder) {
+endMesh(MeshBuilder builder, V3f pos, Rotor3f orientation) {
     Mesh mesh = {
         .vertices.ptr = builder.storage->vertices.ptr + builder.vertexLenBefore,
         .vertices.len = builder.storage->vertices.len - builder.vertexLenBefore,
         .indices.ptr = builder.storage->indices.ptr + builder.indexLenBefore,
         .indices.len = builder.storage->indices.len - builder.indexLenBefore,
-        .orientation = createRotor3f(),
+        .pos = pos,
+        .orientation = orientation,
     };
     assert(mesh.vertices.len >= 0);
     assert(mesh.indices.len >= 0);
@@ -520,19 +530,19 @@ meshStorageAddQuad(MeshStorage* storage, i32 i1, i32 i2, i32 i3, i32 i4) {
 }
 
 function Mesh
-cubeCenterDim(MeshStorage* storage, V3f center, f32 dim) {
+createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
     f32         halfdim = dim / 2;
     MeshBuilder cubeBuilder = beginMesh(storage);
 
-    V3f frontTopLeft = v3fadd(center, (V3f) {-halfdim, halfdim, -halfdim});
-    V3f frontTopRight = v3fadd(center, (V3f) {halfdim, halfdim, -halfdim});
-    V3f frontBottomLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, -halfdim});
-    V3f frontBottomRight = v3fadd(center, (V3f) {halfdim, -halfdim, -halfdim});
+    V3f frontTopLeft = {-halfdim, halfdim, -halfdim};
+    V3f frontTopRight = {halfdim, halfdim, -halfdim};
+    V3f frontBottomLeft = {-halfdim, -halfdim, -halfdim};
+    V3f frontBottomRight = {halfdim, -halfdim, -halfdim};
 
-    V3f backTopLeft = v3fadd(center, (V3f) {-halfdim, halfdim, halfdim});
-    V3f backTopRight = v3fadd(center, (V3f) {halfdim, halfdim, halfdim});
-    V3f backBottomLeft = v3fadd(center, (V3f) {-halfdim, -halfdim, halfdim});
-    V3f backBottomRight = v3fadd(center, (V3f) {halfdim, -halfdim, halfdim});
+    V3f backTopLeft = {-halfdim, halfdim, halfdim};
+    V3f backTopRight = {halfdim, halfdim, halfdim};
+    V3f backBottomLeft = {-halfdim, -halfdim, halfdim};
+    V3f backBottomRight = {halfdim, -halfdim, halfdim};
 
     i32 frontTopLeftIndex = arrpush(storage->vertices, frontTopLeft);
     i32 frontTopRightIndex = arrpush(storage->vertices, frontTopRight);
@@ -550,7 +560,7 @@ cubeCenterDim(MeshStorage* storage, V3f center, f32 dim) {
     meshStorageAddQuad(storage, frontBottomLeftIndex, frontBottomRightIndex, backBottomRightIndex, backBottomLeftIndex);
     meshStorageAddQuad(storage, backTopRightIndex, backTopLeftIndex, backBottomLeftIndex, backBottomRightIndex);
 
-    Mesh cube = endMesh(cubeBuilder);
+    Mesh cube = endMesh(cubeBuilder, pos, orientation);
     return cube;
 }
 
@@ -1041,25 +1051,15 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
 //
 
 typedef struct Camera {
-    V3f pos;
-    f32 fovDegreesX;
-    V3f axisX;
-    V3f axisY;
-    V3f axisZ;
+    V3f     pos;
+    f32     fovDegreesX;
+    Rotor3f orientation;
 } Camera;
 
 function Camera
 createCamera(V3f pos) {
-    Camera camera = {.fovDegreesX = 90, .axisX = {.x = 1}, .axisY = {.y = 1}, .axisZ = {.z = 1}, .pos = pos};
+    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f()};
     return camera;
-}
-
-function void
-cameraRotate(Camera* camera, f32 by, V3f axis) {
-    M3x3f mat = getRotationMat(by, axis);
-    camera->axisX = m3x3fmulv3f(mat, camera->axisX);
-    camera->axisY = m3x3fmulv3f(mat, camera->axisY);
-    camera->axisZ = m3x3fmulv3f(mat, camera->axisZ);
 }
 
 typedef enum InputKey {
@@ -1069,12 +1069,12 @@ typedef enum InputKey {
     InputKey_Right,
     InputKey_Up,
     InputKey_Down,
-    InputKey_RotateXLeft,
-    InputKey_RotateXRight,
-    InputKey_RotateYLeft,
-    InputKey_RotateYRight,
-    InputKey_RotateZLeft,
-    InputKey_RotateZRight,
+    InputKey_RotateXY,
+    InputKey_RotateYX,
+    InputKey_RotateXZ,
+    InputKey_RotateZX,
+    InputKey_RotateYZ,
+    InputKey_RotateZY,
     InputKey_Count,
 } InputKey;
 
@@ -1167,7 +1167,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     Camera camera = createCamera((V3f) {0, 0, -3});
     Input  input = {};
-    Mesh   cube = cubeCenterDim(&meshStorage, (V3f) {0, 0, 0}, 1.5);
+    Mesh   cube = createCubeMesh(&meshStorage, 1.5, (V3f) {0, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
 
     for (;;) {
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1185,12 +1185,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                         case 'D': key = InputKey_Right; break;
                         case VK_SHIFT: key = InputKey_Up; break;
                         case VK_CONTROL: key = InputKey_Down; break;
-                        case VK_UP: key = InputKey_RotateXLeft; break;
-                        case VK_DOWN: key = InputKey_RotateXRight; break;
-                        case VK_LEFT: key = InputKey_RotateYLeft; break;
-                        case VK_RIGHT: key = InputKey_RotateYRight; break;
-                        case 'Q': key = InputKey_RotateZLeft; break;
-                        case 'E': key = InputKey_RotateZRight; break;
+                        case VK_UP: key = InputKey_RotateZY; break;
+                        case VK_DOWN: key = InputKey_RotateYZ; break;
+                        case VK_LEFT: key = InputKey_RotateXZ; break;
+                        case VK_RIGHT: key = InputKey_RotateZX; break;
+                        case 'Q': key = InputKey_RotateXY; break;
+                        case 'E': key = InputKey_RotateYX; break;
                         default: keyFound = false; break;
                     }
                     if (keyFound) {
@@ -1208,42 +1208,44 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         {
             f32 cameraMovementInc = 0.1;
-            f32 cameraRotationInc = 0.01;
+            f32 cameraRotationInc = 1;
+
             if (input.keysDown[InputKey_Forward]) {
-                camera.pos = v3fadd(v3fmul(camera.axisZ, cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Back]) {
-                camera.pos = v3fadd(v3fmul(camera.axisZ, -cameraMovementInc), camera.pos);
-            }
-            if (input.keysDown[InputKey_Left]) {
-                camera.pos = v3fadd(v3fmul(camera.axisX, -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), -cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Right]) {
-                camera.pos = v3fadd(v3fmul(camera.axisX, cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), cameraMovementInc), camera.pos);
+            }
+            if (input.keysDown[InputKey_Left]) {
+                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), -cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Up]) {
-                camera.pos = v3fadd(v3fmul(camera.axisY, cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Down]) {
-                camera.pos = v3fadd(v3fmul(camera.axisY, -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), -cameraMovementInc), camera.pos);
             }
-            if (input.keysDown[InputKey_RotateXLeft]) {
-                cameraRotate(&camera, cameraRotationInc, camera.axisX);
+
+            if (input.keysDown[InputKey_RotateXY]) {
+                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 1, 0, 0));
             }
-            if (input.keysDown[InputKey_RotateXRight]) {
-                cameraRotate(&camera, -cameraRotationInc, camera.axisX);
+            if (input.keysDown[InputKey_RotateYX]) {
+                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, -1, 0, 0));
             }
-            if (input.keysDown[InputKey_RotateYLeft]) {
-                cameraRotate(&camera, -cameraRotationInc, camera.axisY);
+            if (input.keysDown[InputKey_RotateXZ]) {
+                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 1, 0));
             }
-            if (input.keysDown[InputKey_RotateYRight]) {
-                cameraRotate(&camera, cameraRotationInc, camera.axisY);
+            if (input.keysDown[InputKey_RotateZX]) {
+                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, -1, 0));
             }
-            if (input.keysDown[InputKey_RotateZLeft]) {
-                cameraRotate(&camera, cameraRotationInc, camera.axisZ);
+            if (input.keysDown[InputKey_RotateYZ]) {
+                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, 1));
             }
-            if (input.keysDown[InputKey_RotateZRight]) {
-                cameraRotate(&camera, -cameraRotationInc, camera.axisZ);
+            if (input.keysDown[InputKey_RotateZY]) {
+                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, -1));
             }
 
             Rotor3f cubeRotation = createRotor3fAnglePlane(1, 1, 1, 1);
@@ -1269,32 +1271,43 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 {.r = 0.5, .g = 1, .a = 1},
             };
             for (i32 ind = 0; ind < cube.vertices.len; ind++) {
-                V3f cubeVertex = cube.vertices.ptr[ind];
-                V3f cubeVertexOriented = rotor3fRotateV3f(cube.orientation, cubeVertex);
+                V3f vtxModel = cube.vertices.ptr[ind];
 
-                V3f cubeVertexCameraTranslated = v3fsub(cubeVertexOriented, camera.pos);
+                V3f vtxWorld = {};
+                {
+                    V3f rot = rotor3fRotateV3f(cube.orientation, vtxModel);
+                    V3f trans = v3fadd(rot, cube.pos);
+                    vtxWorld = trans;
+                }
 
-                V3f cubeVertexInCameraSpace = {
-                    .x = v3fdot(camera.axisX, cubeVertexCameraTranslated),
-                    .y = v3fdot(camera.axisY, cubeVertexCameraTranslated),
-                    .z = v3fdot(camera.axisZ, cubeVertexCameraTranslated),
-                };
+                V3f vtxCamera = {};
+                {
+                    V3f     trans = v3fsub(vtxWorld, camera.pos);
+                    Rotor3f cameraRotationRev = rotor3fReverse(camera.orientation);
+                    V3f     rot = rotor3fRotateV3f(cameraRotationRev, trans);
+                    vtxCamera = rot;
+                }
 
-                V2f cubeVertexOnPlane = {cubeVertexInCameraSpace.x / cubeVertexInCameraSpace.z, cubeVertexInCameraSpace.y / cubeVertexInCameraSpace.z};
+                V2f vtxScreen = {};
+                {
+                    V2f plane = {vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z};
 
-                f32 fovRadiansX = degreesToRadians(camera.fovDegreesX);
+                    f32 fovRadiansX = degreesToRadians(camera.fovDegreesX);
 
-                f32 planeRight = tan(0.5f * fovRadiansX);
-                f32 planeLeft = -planeRight;
-                f32 planeTop = ((f32)windowHeight / (f32)windowWidth) * planeRight;
-                f32 planeBottom = -planeTop;
+                    f32 planeRight = tan(0.5f * fovRadiansX);
+                    f32 planeLeft = -planeRight;
+                    f32 planeTop = ((f32)windowHeight / (f32)windowWidth) * planeRight;
+                    f32 planeBottom = -planeTop;
 
-                V2f cubeVertexOnScreen = {
-                    (cubeVertexOnPlane.x - planeLeft) / (planeRight - planeLeft),
-                    (cubeVertexOnPlane.y - planeTop) / (planeBottom - planeTop),
-                };
+                    V2f screen = {
+                        (plane.x - planeLeft) / (planeRight - planeLeft),
+                        (plane.y - planeTop) / (planeBottom - planeTop),
+                    };
 
-                arrpush(renderer.vertices, cubeVertexOnScreen);
+                    vtxScreen = screen;
+                }
+
+                arrpush(renderer.vertices, vtxScreen);
                 assert(ind < arrayCount(colors));
                 arrpush(renderer.colors, colors[ind]);
             }
