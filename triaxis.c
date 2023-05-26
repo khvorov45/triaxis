@@ -124,6 +124,12 @@ endTempMemory(TempMemory temp) {
 //
 
 function f32
+squaref(f32 val) {
+    f32 result = val * val;
+    return result;
+}
+
+function f32
 lerp(f32 start, f32 end, f32 by) {
     f32 result = start + (end - start) * by;
     return result;
@@ -143,33 +149,15 @@ typedef struct V3f {
     f32 x, y, z;
 } V3f;
 
-function V2f
-v2fsub(V2f v1, V2f v2) {
-    V2f result = {v1.x - v2.x, v1.y - v2.y};
+function bool
+v2feq(V2f v1, V2f v2) {
+    bool result = v1.x == v2.x && v1.y == v2.y;
     return result;
 }
 
-function V3f
-v3fadd(V3f v1, V3f v2) {
-    V3f result = {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z};
-    return result;
-}
-
-function V3f
-v3fsub(V3f v1, V3f v2) {
-    V3f result = {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z};
-    return result;
-}
-
-function V3f
-v3fmul(V3f v1, f32 by) {
-    V3f result = {v1.x * by, v1.y * by, v1.z * by};
-    return result;
-}
-
-function f32
-v3fdot(V3f v1, V3f v2) {
-    f32 result = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+function bool
+v3feq(V3f v1, V3f v2) {
+    bool result = v1.x == v2.x && v1.y == v2.y && v1.z == v2.z;
     return result;
 }
 
@@ -179,27 +167,57 @@ v2fadd(V2f v1, V2f v2) {
     return result;
 }
 
-function V2f
-v2fmulv2f(V2f v1, V2f v2) {
-    V2f result = {v1.x * v2.x, v1.y * v2.y};
+function V3f
+v3fadd(V3f v1, V3f v2) {
+    V3f result = {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z};
     return result;
 }
 
 function V2f
-v2fmulf32(V2f v1, f32 s1) {
-    V2f result = {v1.x * s1, v1.y * s1};
+v2fsub(V2f v1, V2f v2) {
+    V2f result = {v1.x - v2.x, v1.y - v2.y};
     return result;
 }
 
-function V2f
-v2fdiv(V2f v1, V2f v2) {
-    V2f result = {v1.x / v2.x, v1.y / v2.y};
+function V3f
+v3fsub(V3f v1, V3f v2) {
+    V3f result = {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z};
     return result;
 }
 
 function V2f
 v2fhadamard(V2f v1, V2f v2) {
     V2f result = {v1.x * v2.x, v1.y * v2.y};
+    return result;
+}
+
+function V3f
+v3fhadamard(V3f v1, V3f v2) {
+    V3f result = {v1.x * v2.x, v1.y * v2.y, v1.z * v2.z};
+    return result;
+}
+
+function V2f
+v2fscale(V2f v1, f32 by) {
+    V2f result = {v1.x * by, v1.y * by};
+    return result;
+}
+
+function V3f
+v3fscale(V3f v1, f32 by) {
+    V3f result = {v1.x * by, v1.y * by, v1.z * by};
+    return result;
+}
+
+function f32
+v2fdot(V2f v1, V2f v2) {
+    f32 result = v1.x * v2.x + v1.y * v2.y;
+    return result;
+}
+
+function f32
+v3fdot(V3f v1, V3f v2) {
+    f32 result = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
     return result;
 }
 
@@ -218,7 +236,7 @@ createRotor3f(void) {
 
 function Rotor3f
 createRotor3fAnglePlane(f32 angleDegrees, f32 xy, f32 xz, f32 yz) {
-    f32 area = sqrtf(xy * xy + xz * xz + yz * yz);
+    f32 area = sqrtf(squaref(xy) + squaref(xz) + squaref(yz));
     f32 angleRadians = degreesToRadians(angleDegrees);
     f32 halfa = angleRadians / 2;
     f32 sina = sinf(halfa);
@@ -233,9 +251,15 @@ createRotor3fAnglePlane(f32 angleDegrees, f32 xy, f32 xz, f32 yz) {
     return result;
 }
 
+function bool
+rotor3fEq(Rotor3f r1, Rotor3f r2) {
+    bool result = r1.dt == r2.dt && r1.xy == r2.xy && r1.xz == r2.xz && r1.yz == r2.yz;
+    return result;
+}
+
 function Rotor3f
 rotor3fNormalise(Rotor3f r) {
-    f32 l = sqrtf(r.dt * r.dt + r.xy * r.xy + r.xz * r.xz + r.yz * r.yz);
+    f32 l = sqrtf(squaref(r.dt) + squaref(r.xy) + squaref(r.xz) + squaref(r.yz));
     assert(l > 0);
     Rotor3f result = {
         .dt = r.dt / l,
@@ -279,52 +303,6 @@ rotor3fRotateV3f(Rotor3f r, V3f v) {
     return result;
 }
 
-function Rotor3f
-rotor3fRotateRotor3f(Rotor3f r, Rotor3f by) {
-    Rotor3f ba = by;
-    Rotor3f ab = {.dt = ba.dt, .xy = -ba.xy, .xz = -ba.xz, .yz = -ba.yz};
-    Rotor3f bar = rotor3fMulRotor3f(ba, r);
-    Rotor3f result = rotor3fMulRotor3f(bar, ab);
-    return result;
-}
-
-// clang-format off
-typedef struct M3x3f {
-    f32 m11, m12, m13;
-    f32 m21, m22, m23;
-    f32 m31, m32, m33;
-} M3x3f;
-// clang-format on
-
-function M3x3f
-getRotationMat(f32 by, V3f axis) {
-    f32 s = sinf(by);
-    f32 c = cosf(by);
-    f32 x = axis.x;
-    f32 y = axis.y;
-    f32 z = axis.z;
-
-    // clang-format off
-    M3x3f mat = {
-        c + x * x * (1 - c),     x * y * (1 - c) - z * s, x * z * (1 - c) + y * s,
-        y * x * (1 - c) + z * s, c + y * y * (1 - c),     y * z * (1 - c) - x * s,
-        z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c),
-    };
-    // clang-format on
-
-    return mat;
-}
-
-function V3f
-m3x3fmulv3f(M3x3f m, V3f v) {
-    V3f result = {
-        .x = m.m11 * v.x + m.m12 * v.y + m.m13 * v.z,
-        .y = m.m21 * v.x + m.m22 * v.y + m.m23 * v.z,
-        .z = m.m31 * v.x + m.m32 * v.y + m.m33 * v.z,
-    };
-    return result;
-}
-
 typedef struct Rect2f {
     V2f topleft;
     V2f dim;
@@ -332,7 +310,13 @@ typedef struct Rect2f {
 
 function Rect2f
 rect2fCenterDim(V2f center, V2f dim) {
-    Rect2f result = {v2fsub(center, v2fmulv2f(dim, (V2f) {0.5, 0.5})), dim};
+    Rect2f result = {v2fsub(center, v2fhadamard(dim, (V2f) {0.5, 0.5})), dim};
+    return result;
+}
+
+function bool
+rect2fEq(Rect2f r1, Rect2f r2) {
+    bool result = v2feq(r1.topleft, r2.topleft) && v2feq(r1.dim, r2.dim);
     return result;
 }
 
@@ -385,7 +369,14 @@ color01to255(Color01 color) {
         .r = (u8)(color.r * 255.0f + 0.5f),
         .g = (u8)(color.g * 255.0f + 0.5f),
         .b = (u8)(color.b * 255.0f + 0.5f),
-        .a = (u8)(color.a * 255.0f + 0.5f)};
+        .a = (u8)(color.a * 255.0f + 0.5f),
+    };
+    return result;
+}
+
+function bool
+color01eq(Color01 c1, Color01 c2) {
+    bool result = c1.a == c2.a && c1.r == c2.r && c1.g == c2.g && c1.b == c2.b;
     return result;
 }
 
@@ -510,7 +501,7 @@ endMesh(MeshBuilder builder, V3f pos, Rotor3f orientation) {
     assert(mesh.vertices.len >= 0);
     assert(mesh.indices.len >= 0);
     for (i32 ind = 0; ind < mesh.indices.len; ind++) {
-        mesh.indices.ptr[ind] -= builder.indexLenBefore;
+        mesh.indices.ptr[ind] -= builder.vertexLenBefore;
     }
     return mesh;
 }
@@ -563,6 +554,46 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
     Mesh cube = endMesh(cubeBuilder, pos, orientation);
     return cube;
 }
+
+//
+// SECTION Camera
+//
+
+typedef struct Camera {
+    V3f     pos;
+    f32     fovDegreesX;
+    Rotor3f orientation;
+} Camera;
+
+function Camera
+createCamera(V3f pos) {
+    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f()};
+    return camera;
+}
+
+//
+// SECTION Input
+//
+
+typedef enum InputKey {
+    InputKey_Forward,
+    InputKey_Back,
+    InputKey_Left,
+    InputKey_Right,
+    InputKey_Up,
+    InputKey_Down,
+    InputKey_RotateXY,
+    InputKey_RotateYX,
+    InputKey_RotateXZ,
+    InputKey_RotateZX,
+    InputKey_RotateYZ,
+    InputKey_RotateZY,
+    InputKey_Count,
+} InputKey;
+
+typedef struct Input {
+    bool keysDown[InputKey_Count];
+} Input;
 
 //
 // SECTION Renderer
@@ -671,8 +702,10 @@ fillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
     f32 dcross2y = v3.x - v2.x;
     f32 dcross3y = v1.x - v3.x;
 
-    i32 ystart = (i32)ymin;
-    i32 xstart = (i32)xmin;
+    i32 ystart = max((i32)ymin, 0);
+    i32 xstart = max((i32)xmin, 0);
+    i32 yend = min((i32)ymax, renderer->image.height - 1);
+    i32 xend = min((i32)xmax, renderer->image.width - 1);
 
     // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
     V2f topleft = {(f32)(xstart), (f32)(ystart)};
@@ -680,50 +713,46 @@ fillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
     f32 cross2topleft = edgeWedge(v2, v3, topleft);
     f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
-    for (i32 ycoord = ystart; ycoord <= (i32)ymax; ycoord++) {
-        if (ycoord >= 0 && ycoord < renderer->image.height) {
-            f32 yinc = (f32)(ycoord - ystart);
-            f32 cross1row = cross1topleft + yinc * dcross1y;
-            f32 cross2row = cross2topleft + yinc * dcross2y;
-            f32 cross3row = cross3topleft + yinc * dcross3y;
+    for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
+        f32 yinc = (f32)(ycoord - ystart);
+        f32 cross1row = cross1topleft + yinc * dcross1y;
+        f32 cross2row = cross2topleft + yinc * dcross2y;
+        f32 cross3row = cross3topleft + yinc * dcross3y;
 
-            for (i32 xcoord = xstart; xcoord <= (i32)xmax; xcoord++) {
-                if (xcoord >= 0 && xcoord < renderer->image.width) {
-                    f32 xinc = (f32)(xcoord - xstart);
-                    f32 cross1 = cross1row + xinc * dcross1x;
-                    f32 cross2 = cross2row + xinc * dcross2x;
-                    f32 cross3 = cross3row + xinc * dcross3x;
+        for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
+            f32 xinc = (f32)(xcoord - xstart);
+            f32 cross1 = cross1row + xinc * dcross1x;
+            f32 cross2 = cross2row + xinc * dcross2x;
+            f32 cross3 = cross3row + xinc * dcross3x;
 
-                    bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
-                    bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
-                    bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
+            bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
+            bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
+            bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
 
-                    if (pass1 && pass2 && pass3) {
-                        f32 cross1scaled = cross1 / area;
-                        f32 cross2scaled = cross2 / area;
-                        f32 cross3scaled = cross3 / area;
+            if (pass1 && pass2 && pass3) {
+                f32 cross1scaled = cross1 / area;
+                f32 cross2scaled = cross2 / area;
+                f32 cross3scaled = cross3 / area;
 
-                        Color01 color01 = color01add(color01add(color01mul(c1, cross2scaled), color01mul(c2, cross3scaled)), color01mul(c3, cross1scaled));
+                Color01 color01 = color01add(color01add(color01mul(c1, cross2scaled), color01mul(c2, cross3scaled)), color01mul(c3, cross1scaled));
 
-                        i32 index = ycoord * renderer->image.width + xcoord;
-                        assert(index < renderer->image.width * renderer->image.height);
+                i32 index = ycoord * renderer->image.width + xcoord;
+                assert(index < renderer->image.width * renderer->image.height);
 
-                        u32      existingColoru32 = renderer->image.ptr[index];
-                        Color255 existingColor255 = coloru32to255(existingColoru32);
-                        Color01  existingColor01 = color255to01(existingColor255);
+                u32      existingColoru32 = renderer->image.ptr[index];
+                Color255 existingColor255 = coloru32to255(existingColoru32);
+                Color01  existingColor01 = color255to01(existingColor255);
 
-                        Color01 blended01 = {
-                            .r = lerp(existingColor01.r, color01.r, color01.a),
-                            .g = lerp(existingColor01.g, color01.g, color01.a),
-                            .b = lerp(existingColor01.b, color01.b, color01.a),
-                            .a = 1,
-                        };
+                Color01 blended01 = {
+                    .r = lerp(existingColor01.r, color01.r, color01.a),
+                    .g = lerp(existingColor01.g, color01.g, color01.a),
+                    .b = lerp(existingColor01.b, color01.b, color01.a),
+                    .a = 1,
+                };
 
-                        Color255 blended255 = color01to255(blended01);
-                        u32      blendedu32 = color255tou32(blended255);
-                        renderer->image.ptr[index] = blendedu32;
-                    }
-                }
+                Color255 blended255 = color01to255(blended01);
+                u32      blendedu32 = color255tou32(blended255);
+                renderer->image.ptr[index] = blendedu32;
             }
         }
     }
@@ -841,6 +870,81 @@ rendererEndMesh(RendererMeshBuilder builder) {
     for (i32 indexIndex = builder.firstIndexIndex; indexIndex < builder.renderer->indices.len; indexIndex++) {
         builder.renderer->indices.ptr[indexIndex] += builder.firstVertexIndex;
     }
+}
+
+function void
+rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
+    RendererMeshBuilder cubeInRendererBuilder = rendererBeginMesh(renderer);
+
+    Color01 colors[] = {
+        {.r = 1, .a = 1},
+        {.g = 1, .a = 1},
+        {.b = 1, .a = 1},
+        {.r = 1, .g = 1, .a = 1},
+        {.r = 1, .b = 1, .a = 1},
+        {.g = 1, .b = 1, .a = 1},
+        {.r = 1, .g = 1, .b = 1, .a = 1},
+        {.r = 0.5, .g = 1, .a = 1},
+    };
+    for (i32 ind = 0; ind < mesh.vertices.len; ind++) {
+        V3f vtxModel = mesh.vertices.ptr[ind];
+
+        V3f vtxWorld = {};
+        {
+            V3f rot = rotor3fRotateV3f(mesh.orientation, vtxModel);
+            V3f trans = v3fadd(rot, mesh.pos);
+            vtxWorld = trans;
+        }
+
+        V3f vtxCamera = {};
+        {
+            V3f     trans = v3fsub(vtxWorld, camera.pos);
+            Rotor3f cameraRotationRev = rotor3fReverse(camera.orientation);
+            V3f     rot = rotor3fRotateV3f(cameraRotationRev, trans);
+            vtxCamera = rot;
+        }
+
+        V2f vtxScreen = {};
+        {
+            V2f plane = {vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z};
+
+            f32 fovRadiansX = degreesToRadians(camera.fovDegreesX);
+
+            f32 planeRight = tan(0.5f * fovRadiansX);
+            f32 planeLeft = -planeRight;
+            f32 planeTop = ((f32)renderer->image.height / (f32)renderer->image.width) * planeRight;
+            f32 planeBottom = -planeTop;
+
+            V2f screen = {
+                (plane.x - planeLeft) / (planeRight - planeLeft),
+                (plane.y - planeTop) / (planeBottom - planeTop),
+            };
+
+            vtxScreen = screen;
+        }
+
+        arrpush(renderer->vertices, vtxScreen);
+        assert(ind < arrayCount(colors));
+        arrpush(renderer->colors, colors[ind]);
+    }
+
+    for (i32 ind = 0; ind < mesh.indices.len; ind += 3) {
+        assert(ind + 2 < mesh.indices.len);
+        i32 cubeIndex1 = mesh.indices.ptr[ind];
+        i32 cubeIndex2 = mesh.indices.ptr[ind + 1];
+        i32 cubeIndex3 = mesh.indices.ptr[ind + 2];
+
+        V2f cubeVertex1 = arrget(renderer->vertices, cubeIndex1 + cubeInRendererBuilder.firstVertexIndex);
+        V2f cubeVertex2 = arrget(renderer->vertices, cubeIndex2 + cubeInRendererBuilder.firstVertexIndex);
+        V2f cubeVertex3 = arrget(renderer->vertices, cubeIndex3 + cubeInRendererBuilder.firstVertexIndex);
+
+        f32 area = edgeWedge(cubeVertex1, cubeVertex2, cubeVertex3);
+        if (area > 0) {
+            rendererPushTriangle(renderer, cubeIndex1, cubeIndex2, cubeIndex3);
+        }
+    }
+
+    rendererEndMesh(cubeInRendererBuilder);
 }
 
 function void
@@ -1015,7 +1119,7 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
     isize imageWidth = 16;
     isize imageHeight = 8;
     for (isize ind = 0; ind < renderer->vertices.len; ind++) {
-        renderer->vertices.ptr[ind] = v2fdiv(renderer->vertices.ptr[ind], (V2f) {(f32)imageWidth, (f32)imageHeight});
+        renderer->vertices.ptr[ind] = v2fhadamard(renderer->vertices.ptr[ind], (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
     }
 
     for (isize ind = 0; ind < renderer->vertices.len; ind += 3) {
@@ -1033,7 +1137,7 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
         isize imageScaleX = finalImageWidth / imageWidth;
         isize imageScaleY = finalImageHeight / imageHeight;
 
-        V2f offset = v2fdiv(v2fmulf32((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {(f32)finalImageWidth, (f32)finalImageHeight});
+        V2f offset = v2fhadamard(v2fscale((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
         for (isize ind = 0; ind < renderer->vertices.len; ind++) {
             renderer->vertices.ptr[ind] = v2fadd(renderer->vertices.ptr[ind], offset);
         }
@@ -1047,40 +1151,150 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
 }
 
 //
-// SECTION Camera
+// SECTION Tests
 //
 
-typedef struct Camera {
-    V3f     pos;
-    f32     fovDegreesX;
-    Rotor3f orientation;
-} Camera;
+function void
+runTests(Arena* arena) {
+    TempMemory temp = beginTempMemory(arena);
 
-function Camera
-createCamera(V3f pos) {
-    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f()};
-    return camera;
+    {
+        assert(!isPowerOf2(0));
+        assert(!isPowerOf2(3));
+        assert(!isPowerOf2(123));
+        assert(!isPowerOf2(6));
+
+        assert(isPowerOf2(1));
+        assert(isPowerOf2(2));
+        assert(isPowerOf2(4));
+        assert(isPowerOf2(8));
+    }
+
+    {
+        assert(getOffsetForAlignment((void*)1, 1) == 0);
+        assert(getOffsetForAlignment((void*)2, 1) == 0);
+        assert(getOffsetForAlignment((void*)3, 1) == 0);
+        assert(getOffsetForAlignment((void*)4, 1) == 0);
+
+        assert(getOffsetForAlignment((void*)11, 2) == 1);
+        assert(getOffsetForAlignment((void*)13, 4) == 3);
+    }
+
+    {
+        Arena arena = {.base = (void*)10, .size = 100};
+        assert(arenaAlloc(&arena, 15, 1) == (void*)10);
+        assert(arena.base == (void*)10);
+        assert(arena.size == 100);
+        assert(arena.used == 15);
+        assert(arenaFreePtr(&arena) == (void*)25);
+        assert(arenaFreeSize(&arena) == 85);
+
+        assert(arenaAlloc(&arena, 16, 4) == (void*)28);
+        assert(arena.base == (void*)10);
+        assert(arena.size == 100);
+        assert(arena.used == 34);
+        assert(arenaFreePtr(&arena) == (void*)44);
+        assert(arenaFreeSize(&arena) == 66);
+
+        TempMemory temp = beginTempMemory(&arena);
+        assert(arena.tempCount == 1);
+        arenaAlloc(&arena, 10, 1);
+        assert(arena.used == 44);
+        endTempMemory(temp);
+        assert(arena.used == 34);
+        assert(arena.tempCount == 0);
+    }
+
+    {
+        assert(squaref(5) == 25);
+        assert(lerp(5, 15, 0.3) == 8);
+
+        assert(degreesToRadians(0) == 0);
+        assert(degreesToRadians(30) < degreesToRadians(60));
+
+        assert(v2feq(v2fadd((V2f) {1, 2}, (V2f) {3, -5}), (V2f) {4, -3}));
+        assert(v3feq(v3fadd((V3f) {1, 2, 3}, (V3f) {3, -5, 10}), (V3f) {4, -3, 13}));
+
+        assert(v2feq(v2fsub((V2f) {1, 2}, (V2f) {3, -5}), (V2f) {-2, 7}));
+        assert(v3feq(v3fsub((V3f) {1, 2, 3}, (V3f) {3, -5, 10}), (V3f) {-2, 7, -7}));
+
+        assert(v2feq(v2fhadamard((V2f) {1, 2}, (V2f) {3, 4}), (V2f) {3, 8}));
+        assert(v3feq(v3fhadamard((V3f) {1, 2, 3}, (V3f) {3, 4, 5}), (V3f) {3, 8, 15}));
+
+        assert(v2feq(v2fscale((V2f) {1, 2}, 5), (V2f) {5, 10}));
+        assert(v3feq(v3fscale((V3f) {1, 2, 3}, 5), (V3f) {5, 10, 15}));
+
+        assert(v2fdot((V2f) {1, 2}, (V2f) {4, 5}) == 14);
+        assert(v3fdot((V3f) {1, 2, 3}, (V3f) {4, 5, 6}) == 32);
+    }
+
+    {
+        assert(rotor3fEq(rotor3fNormalise((Rotor3f) {4, 4, 4, 4}), (Rotor3f) {0.5, 0.5, 0.5, 0.5}));
+        assert(rotor3fEq(rotor3fReverse((Rotor3f) {1, 2, 3, 4}), (Rotor3f) {1, -2, -3, -4}));
+
+        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, 1, 0, 0), (V3f) {1, 0, 0}).y == 1);
+        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, -1, 0, 0), (V3f) {1, 0, 0}).y == -1);
+
+        {
+            Rotor3f r1 = createRotor3fAnglePlane(30, 1, 0, 0);
+            Rotor3f r2 = createRotor3fAnglePlane(60, 1, 0, 0);
+            Rotor3f rmul = rotor3fMulRotor3f(r1, r2);
+            V3f     vrot = rotor3fRotateV3f(rmul, (V3f) {1, 0, 0});
+            assert(absval(vrot.y - 1) < 0.001);
+        }
+    }
+
+    {
+        Rect2f rect = rect2fCenterDim((V2f) {1, 2}, (V2f) {4, 8});
+        assert(v2feq(rect.topleft, (V2f) {-1, -2}));
+        assert(v2feq(rect.dim, (V2f) {4, 8}));
+    }
+
+    {
+        Rect2f rect = {{5, 5}, {10, 200}};
+        Rect2f clip = {{0, 0}, {20, 10}};
+        Rect2f clipped = rect2fClip(rect, clip);
+        assert(rect2fEq(clipped, (Rect2f) {{5, 5}, {10, 5}}));
+    }
+
+    {
+        assert(color01eq(color01add((Color01) {1, 2, 3, 4}, (Color01) {5, 6, 7, 8}), (Color01) {6, 8, 10, 12}));
+        assert(color01eq(color01mul((Color01) {1, 2, 3, 4}, 2), (Color01) {2, 4, 6, 8}));
+    }
+
+    {
+        assert(edgeWedge((V2f) {0, 0}, (V2f) {20, 0}, (V2f) {10, 10}) > 0);
+        assert(edgeWedge((V2f) {0, 0}, (V2f) {20, 0}, (V2f) {-10, -10}) < 0);
+        assert(edgeWedge((V2f) {0, 0}, (V2f) {20, 0}, (V2f) {10, 0}) == 0);
+    }
+
+    {
+        assert(isTopLeft((V2f) {0, 0}, (V2f) {10, 0}));
+        assert(!isTopLeft((V2f) {0, 0}, (V2f) {10, 1}));
+        assert(isTopLeft((V2f) {100, 100}, (V2f) {0, 0}));
+        assert(isTopLeft((V2f) {100, 100}, (V2f) {200, 0}));
+    }
+
+    {
+        MeshStorage store = createMeshStorage(arena, 1024 * 1024);
+
+        Mesh cube1 = createCubeMesh(&store, 2, (V3f) {}, createRotor3f());
+        assert(store.vertices.len == cube1.vertices.len);
+        assert(store.indices.len == cube1.indices.len);
+        assert(v3feq(cube1.vertices.ptr[0], (V3f) {-1, 1, -1}));
+        assert(cube1.indices.ptr[0] == 0);
+
+        Mesh cube2 = createCubeMesh(&store, 4, (V3f) {}, createRotor3f());
+        assert(store.vertices.len == cube1.vertices.len + cube2.vertices.len);
+        assert(store.indices.len == cube1.indices.len + cube2.indices.len);
+        assert(cube2.vertices.ptr == cube1.vertices.ptr + cube1.vertices.len);
+        assert(cube2.indices.ptr == cube1.indices.ptr + cube1.indices.len);
+        assert(v3feq(cube2.vertices.ptr[0], (V3f) {-2, 2, -2}));
+        assert(cube2.indices.ptr[0] == 0);
+    }
+
+    endTempMemory(temp);
 }
-
-typedef enum InputKey {
-    InputKey_Forward,
-    InputKey_Back,
-    InputKey_Left,
-    InputKey_Right,
-    InputKey_Up,
-    InputKey_Down,
-    InputKey_RotateXY,
-    InputKey_RotateYX,
-    InputKey_RotateXZ,
-    InputKey_RotateZX,
-    InputKey_RotateYZ,
-    InputKey_RotateZY,
-    InputKey_Count,
-} InputKey;
-
-typedef struct Input {
-    bool keysDown[InputKey_Count];
-} Input;
 
 //
 // SECTION Platform
@@ -1116,6 +1330,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         assert(memBase);
 
         Arena arena = {.base = memBase, .size = memSize};
+        runTests(&arena);
 
         renderer = createRenderer(&arena, arenaFreeSize(&arena) / 2);
         meshStorage = createMeshStorage(&arena, arenaFreeSize(&arena));
@@ -1167,7 +1382,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     Camera camera = createCamera((V3f) {0, 0, -3});
     Input  input = {};
-    Mesh   cube = createCubeMesh(&meshStorage, 1.5, (V3f) {0, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
+
+    Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
+    Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {-1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
 
     for (;;) {
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1211,22 +1428,22 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             f32 cameraRotationInc = 1;
 
             if (input.keysDown[InputKey_Forward]) {
-                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Back]) {
-                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), -cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Right]) {
-                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Left]) {
-                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), -cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Up]) {
-                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Down]) {
-                camera.pos = v3fadd(v3fmul(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), -cameraMovementInc), camera.pos);
             }
 
             if (input.keysDown[InputKey_RotateXY]) {
@@ -1248,8 +1465,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, -1));
             }
 
-            Rotor3f cubeRotation = createRotor3fAnglePlane(1, 1, 1, 1);
-            cube.orientation = rotor3fMulRotor3f(cube.orientation, cubeRotation);
+            Rotor3f cubeRotation1 = createRotor3fAnglePlane(1, 1, 1, 1);
+            cube1.orientation = rotor3fMulRotor3f(cube1.orientation, cubeRotation1);
+            Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
+            cube2.orientation = rotor3fMulRotor3f(cube2.orientation, cubeRotation2);
         }
 
         rendererClearBuffers(&renderer);
@@ -1258,77 +1477,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         if (showDebugTriangles) {
             drawDebugTriangles(&renderer, windowWidth, windowHeight);
         } else {
-            RendererMeshBuilder cubeInRendererBuilder = rendererBeginMesh(&renderer);
-
-            Color01 colors[] = {
-                {.r = 1, .a = 1},
-                {.g = 1, .a = 1},
-                {.b = 1, .a = 1},
-                {.r = 1, .g = 1, .a = 1},
-                {.r = 1, .b = 1, .a = 1},
-                {.g = 1, .b = 1, .a = 1},
-                {.r = 1, .g = 1, .b = 1, .a = 1},
-                {.r = 0.5, .g = 1, .a = 1},
-            };
-            for (i32 ind = 0; ind < cube.vertices.len; ind++) {
-                V3f vtxModel = cube.vertices.ptr[ind];
-
-                V3f vtxWorld = {};
-                {
-                    V3f rot = rotor3fRotateV3f(cube.orientation, vtxModel);
-                    V3f trans = v3fadd(rot, cube.pos);
-                    vtxWorld = trans;
-                }
-
-                V3f vtxCamera = {};
-                {
-                    V3f     trans = v3fsub(vtxWorld, camera.pos);
-                    Rotor3f cameraRotationRev = rotor3fReverse(camera.orientation);
-                    V3f     rot = rotor3fRotateV3f(cameraRotationRev, trans);
-                    vtxCamera = rot;
-                }
-
-                V2f vtxScreen = {};
-                {
-                    V2f plane = {vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z};
-
-                    f32 fovRadiansX = degreesToRadians(camera.fovDegreesX);
-
-                    f32 planeRight = tan(0.5f * fovRadiansX);
-                    f32 planeLeft = -planeRight;
-                    f32 planeTop = ((f32)windowHeight / (f32)windowWidth) * planeRight;
-                    f32 planeBottom = -planeTop;
-
-                    V2f screen = {
-                        (plane.x - planeLeft) / (planeRight - planeLeft),
-                        (plane.y - planeTop) / (planeBottom - planeTop),
-                    };
-
-                    vtxScreen = screen;
-                }
-
-                arrpush(renderer.vertices, vtxScreen);
-                assert(ind < arrayCount(colors));
-                arrpush(renderer.colors, colors[ind]);
-            }
-
-            for (i32 ind = 0; ind < cube.indices.len; ind += 3) {
-                assert(ind + 2 < cube.indices.len);
-                i32 cubeIndex1 = cube.indices.ptr[ind];
-                i32 cubeIndex2 = cube.indices.ptr[ind + 1];
-                i32 cubeIndex3 = cube.indices.ptr[ind + 2];
-
-                V2f cubeVertex1 = arrget(renderer.vertices, cubeIndex1 + cubeInRendererBuilder.firstVertexIndex);
-                V2f cubeVertex2 = arrget(renderer.vertices, cubeIndex2 + cubeInRendererBuilder.firstVertexIndex);
-                V2f cubeVertex3 = arrget(renderer.vertices, cubeIndex3 + cubeInRendererBuilder.firstVertexIndex);
-
-                f32 area = edgeWedge(cubeVertex1, cubeVertex2, cubeVertex3);
-                if (area > 0) {
-                    rendererPushTriangle(&renderer, cubeIndex1, cubeIndex2, cubeIndex3);
-                }
-            }
-
-            rendererEndMesh(cubeInRendererBuilder);
+            rendererPushMesh(&renderer, cube1, camera);
+            rendererPushMesh(&renderer, cube2, camera);
 
             setImageSize(&renderer, windowWidth, windowHeight);
             clearImage(&renderer);
