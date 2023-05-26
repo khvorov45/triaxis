@@ -1515,19 +1515,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         // TODO(khvorov) Better timing
         Sleep(10);
-
-        // NOTE(khvorov) Move the shape to the cursor
-        if (false) {
-            V2f   refVertex = renderer.vertices.ptr[1];
-            POINT cursor = {};
-            GetCursorPos(&cursor);
-            ScreenToClient(window, &cursor);
-            f32 cursorImageX01 = ((f32)cursor.x / (f32)windowWidth);
-            f32 dref = cursorImageX01 - refVertex.x;
-            for (isize ind = 0; ind < renderer.vertices.len; ind++) {
-                renderer.vertices.ptr[ind].x += dref;
-            }
-        }
     }
 
     return 0;
