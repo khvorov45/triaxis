@@ -33,6 +33,25 @@ typedef float    f32;
 //
 
 function bool
+memeq(void* ptr1, void* ptr2, isize len) {
+    bool result = true;
+    for (isize ind = 0; ind < len; ind++) {
+        if (((u8*)ptr1)[ind] != ((u8*)ptr2)[ind]) {
+            result = false;
+            break;
+        }
+    }
+    return result;
+}
+
+function void
+copymem(void* dest, void* src, isize len) {
+    for (isize ind = 0; ind < len; ind++) {
+        ((u8*)dest)[ind] = ((u8*)src)[ind];
+    }
+}
+
+function bool
 isPowerOf2(isize value) {
     bool result = (value > 0) && ((value & (value - 1)) == 0);
     return result;
@@ -117,6 +136,73 @@ endTempMemory(TempMemory temp) {
     assert(temp.arena->tempCount == temp.tempCountAtBegin + 1);
     temp.arena->used = temp.usedAtBegin;
     temp.arena->tempCount = temp.tempCountAtBegin;
+}
+
+//
+// SECTION Strings
+//
+
+#define STR(x) ((Str) {.ptr = x, .len = sizeof(x) - 1})
+typedef struct Str {
+    char* ptr;
+    isize len;
+} Str;
+
+function bool
+streq(Str s1, Str s2) {
+    bool result = false;
+    if (s1.len == s2.len) {
+        result = memeq(s1.ptr, s2.ptr, s1.len);
+    }
+    return result;
+}
+
+typedef struct StrBuilder {
+    char* ptr;
+    isize len;
+    isize cap;
+} StrBuilder;
+
+function void
+fmtStr(StrBuilder* builder, Str str) {
+    assert(builder->len + str.len <= builder->cap);
+    copymem(builder->ptr + builder->len, str.ptr, str.len);
+    builder->len += str.len;
+}
+
+function void
+fmtInt(StrBuilder* builder, isize val) {
+    assert(val >= 0);
+    if (val == 0) {
+        arrpush(*builder, '0');
+    } else {
+        isize pow10 = 1;
+        for (; val / pow10 > 0; pow10 *= 10) {}
+        pow10 /= 10;
+        for (isize curVal = val; pow10 > 0; pow10 /= 10) {
+            isize digit = curVal / pow10;
+            assert(digit >= 0 && digit <= 9);
+            char digitChar = digit + '0';
+            arrpush(*builder, digitChar);
+            curVal -= digit * pow10;
+        }
+    }
+}
+
+function void
+fmtF32(StrBuilder* builder, f32 val) {
+    assert(val >= 0);
+    isize whole = (isize)val;
+    fmtInt(builder, whole);
+    f32   frac = val - (f32)whole;
+    isize fracInt = (isize)(frac * 100 + 0.5f);
+    fmtStr(builder, STR("."));
+    fmtInt(builder, fracInt);
+}
+
+function void
+fmtNull(StrBuilder* builder) {
+    arrpush(*builder, 0);
 }
 
 //
@@ -1316,6 +1402,31 @@ runTests(Arena* arena) {
         assert(cube2.indices.ptr[0] == 0);
     }
 
+    {
+        StrBuilder builder = {};
+        arenaAllocCap(arena, char, 1000, builder);
+
+        fmtStr(&builder, STR("test"));
+        assert(streq((Str) {builder.ptr, builder.len}, STR("test")));
+
+        fmtStr(&builder, STR(" and 2 "));
+        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 ")));
+
+        fmtInt(&builder, 123);
+        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123")));
+        fmtStr(&builder, STR(" "));
+
+        fmtInt(&builder, 0);
+        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0")));
+        fmtStr(&builder, STR(" "));
+
+        fmtF32(&builder, 123.4567);
+        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0 123.46")));
+
+        fmtNull(&builder);
+        assert(builder.ptr[builder.len - 1] == '\0');
+    }
+
     endTempMemory(temp);
 }
 
@@ -1327,6 +1438,7 @@ runTests(Arena* arena) {
 #define WIN32_LEAN_AND_MEAN 1
 #define VC_EXTRALEAN 1
 #include <Windows.h>
+#include <timeapi.h>
 
 typedef struct Clock {
     LARGE_INTEGER freqPerSecond;
@@ -1443,6 +1555,16 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     f32         msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
     Clock       clock = getClock();
     ClockMarker frameStart = getClockMarker();
+    f32         lastFrameWorkMs = 0;
+    f32         lastFrameSleepMs = 0;
+    f32         lastFrameSpinMs = 0;
+
+    // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
+    {
+        TIMECAPS caps = {};
+        timeGetDevCaps(&caps, sizeof(TIMECAPS));
+        timeBeginPeriod(caps.wPeriodMin);
+    }
 
     for (;;) {
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1542,6 +1664,28 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             clearImage(&renderer);
             rendererFillTriangles(&renderer);
             rendererOutlineTriangles(&renderer);
+
+            {
+                TempMemory temp = beginTempMemory(&renderer.scratch);
+
+                StrBuilder builder = {};
+                arenaAllocCap(&renderer.scratch, char, 1000, builder);
+
+                fmtStr(&builder, STR("last frame work: "));
+                fmtF32(&builder, lastFrameWorkMs);
+                fmtStr(&builder, STR("ms; sleep: "));
+                fmtF32(&builder, lastFrameSleepMs);
+                fmtStr(&builder, STR("ms; spin: "));
+                fmtF32(&builder, lastFrameSpinMs);
+                fmtStr(&builder, STR("ms; total: "));
+                fmtF32(&builder, lastFrameWorkMs + lastFrameSleepMs + lastFrameSpinMs);
+                fmtStr(&builder, STR("ms\n"));
+                fmtNull(&builder);
+
+                OutputDebugStringA(builder.ptr);
+
+                endTempMemory(temp);
+            }
         }
 
         // NOTE(khvorov) Present the bitmap
@@ -1574,12 +1718,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         // NOTE(khvorov) Frame timing
         {
             f32 msFromStart = getMsFromMarker(clock, frameStart);
+            lastFrameWorkMs = msFromStart;
             f32 msToSleep = msPerFrameTarget - msFromStart;
-            if (msToSleep >= 1) {
-                DWORD msToSleepFloor = (DWORD)msToSleep;
+            // NOTE(khvorov) Need at least 1ms buffer there after sleep because windows likes to oversleep
+            if (msToSleep >= 2) {
+                DWORD msToSleepFloor = (DWORD)msToSleep - 1;
                 Sleep(msToSleepFloor);
             }
+            msFromStart = getMsFromMarker(clock, frameStart);
+            lastFrameSleepMs = msFromStart - lastFrameWorkMs;
             for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(clock, frameStart)) {}
+            lastFrameSpinMs = msFromStart - lastFrameWorkMs - lastFrameSleepMs;
             frameStart = getClockMarker();
         }
     }
