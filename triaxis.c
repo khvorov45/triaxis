@@ -1328,6 +1328,37 @@ runTests(Arena* arena) {
 #define VC_EXTRALEAN 1
 #include <Windows.h>
 
+typedef struct Clock {
+    LARGE_INTEGER freqPerSecond;
+} Clock;
+
+typedef struct ClockMarker {
+    LARGE_INTEGER counter;
+} ClockMarker;
+
+static Clock
+getClock(void) {
+    Clock clock = {};
+    QueryPerformanceFrequency(&clock.freqPerSecond);
+
+    return clock;
+}
+
+static ClockMarker
+getClockMarker(void) {
+    ClockMarker marker = {};
+    QueryPerformanceCounter(&marker.counter);
+    return marker;
+}
+
+static f32
+getMsFromMarker(Clock clock, ClockMarker marker) {
+    ClockMarker now = getClockMarker();
+    LONGLONG    diff = now.counter.QuadPart - marker.counter.QuadPart;
+    f32         result = (f32)diff / (f32)clock.freqPerSecond.QuadPart * 1000.0f;
+    return result;
+}
+
 LRESULT CALLBACK
 windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     LRESULT result = 0;
@@ -1408,6 +1439,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {.x = 1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
     Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {.x = -1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
+
+    f32         msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
+    Clock       clock = getClock();
+    ClockMarker frameStart = getClockMarker();
 
     for (;;) {
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1536,8 +1571,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             );
         }
 
-        // TODO(khvorov) Better timing
-        Sleep(10);
+        // NOTE(khvorov) Frame timing
+        {
+            f32 msFromStart = getMsFromMarker(clock, frameStart);
+            f32 msToSleep = msPerFrameTarget - msFromStart;
+            if (msToSleep >= 1) {
+                DWORD msToSleepFloor = (DWORD)msToSleep;
+                Sleep(msToSleepFloor);
+            }
+            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(clock, frameStart)) {}
+            frameStart = getClockMarker();
+        }
     }
 
     return 0;
