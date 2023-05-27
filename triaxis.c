@@ -145,8 +145,14 @@ typedef struct V2f {
     f32 x, y;
 } V2f;
 
-typedef struct V3f {
-    f32 x, y, z;
+typedef union V3f {
+    struct {
+        f32 x, y, z;
+    };
+    struct {
+        V2f xy;
+        f32 z_;
+    };
 } V3f;
 
 function bool
@@ -169,7 +175,7 @@ v2fadd(V2f v1, V2f v2) {
 
 function V3f
 v3fadd(V3f v1, V3f v2) {
-    V3f result = {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z};
+    V3f result = {.x = v1.x + v2.x, .y = v1.y + v2.y, .z = v1.z + v2.z};
     return result;
 }
 
@@ -181,7 +187,7 @@ v2fsub(V2f v1, V2f v2) {
 
 function V3f
 v3fsub(V3f v1, V3f v2) {
-    V3f result = {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z};
+    V3f result = {.x = v1.x - v2.x, .y = v1.y - v2.y, .z = v1.z - v2.z};
     return result;
 }
 
@@ -193,7 +199,7 @@ v2fhadamard(V2f v1, V2f v2) {
 
 function V3f
 v3fhadamard(V3f v1, V3f v2) {
-    V3f result = {v1.x * v2.x, v1.y * v2.y, v1.z * v2.z};
+    V3f result = {.x = v1.x * v2.x, .y = v1.y * v2.y, .z = v1.z * v2.z};
     return result;
 }
 
@@ -205,7 +211,7 @@ v2fscale(V2f v1, f32 by) {
 
 function V3f
 v3fscale(V3f v1, f32 by) {
-    V3f result = {v1.x * by, v1.y * by, v1.z * by};
+    V3f result = {.x = v1.x * by, .y = v1.y * by, .z = v1.z * by};
     return result;
 }
 
@@ -442,6 +448,12 @@ typedef struct IndexArrDyn {
     isize cap;
 } IndexArrDyn;
 
+typedef struct V3fArrDyn {
+    V3f*  ptr;
+    isize len;
+    isize cap;
+} V3fArrDyn;
+
 typedef struct Mesh {
     struct {
         V3f*  ptr;
@@ -458,13 +470,8 @@ typedef struct Mesh {
 } Mesh;
 
 typedef struct MeshStorage {
-    struct {
-        V3f*  ptr;
-        isize len;
-        isize cap;
-    } vertices;
-
     IndexArrDyn indices;
+    V3fArrDyn   vertices;
 } MeshStorage;
 
 typedef struct MeshBuilder {
@@ -525,15 +532,15 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
     f32         halfdim = dim / 2;
     MeshBuilder cubeBuilder = beginMesh(storage);
 
-    V3f frontTopLeft = {-halfdim, halfdim, -halfdim};
-    V3f frontTopRight = {halfdim, halfdim, -halfdim};
-    V3f frontBottomLeft = {-halfdim, -halfdim, -halfdim};
-    V3f frontBottomRight = {halfdim, -halfdim, -halfdim};
+    V3f frontTopLeft = {.x = -halfdim, .y = halfdim, .z = -halfdim};
+    V3f frontTopRight = {.x = halfdim, .y = halfdim, .z = -halfdim};
+    V3f frontBottomLeft = {.x = -halfdim, .y = -halfdim, .z = -halfdim};
+    V3f frontBottomRight = {.x = halfdim, .y = -halfdim, .z = -halfdim};
 
-    V3f backTopLeft = {-halfdim, halfdim, halfdim};
-    V3f backTopRight = {halfdim, halfdim, halfdim};
-    V3f backBottomLeft = {-halfdim, -halfdim, halfdim};
-    V3f backBottomRight = {halfdim, -halfdim, halfdim};
+    V3f backTopLeft = {.x = -halfdim, .y = halfdim, .z = halfdim};
+    V3f backTopRight = {.x = halfdim, .y = halfdim, .z = halfdim};
+    V3f backBottomLeft = {.x = -halfdim, .y = -halfdim, .z = halfdim};
+    V3f backBottomRight = {.x = halfdim, .y = -halfdim, .z = halfdim};
 
     i32 frontTopLeftIndex = arrpush(storage->vertices, frontTopLeft);
     i32 frontTopRightIndex = arrpush(storage->vertices, frontTopRight);
@@ -608,17 +615,12 @@ typedef struct Renderer {
     } image;
 
     struct {
-        V2f*  ptr;
-        isize len;
-        isize cap;
-    } vertices;
-
-    struct {
         Color01* ptr;
         isize    len;
         isize    cap;
     } colors;
 
+    V3fArrDyn   vertices;
     IndexArrDyn indices;
     Arena       scratch;
 } Renderer;
@@ -631,7 +633,7 @@ createRenderer(Arena* arena, isize bytes) {
     isize bufferSize = bytesForBuffers / 4;
 
     arenaAllocCap(arena, u32, bufferSize, renderer.image);
-    arenaAllocCap(arena, V2f, bufferSize, renderer.vertices);
+    arenaAllocCap(arena, V3f, bufferSize, renderer.vertices);
     arenaAllocCap(arena, Color01, bufferSize, renderer.colors);
     arenaAllocCap(arena, i32, bufferSize, renderer.indices);
 
@@ -672,87 +674,112 @@ rendererPushTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
     arrpush(renderer->indices, i3);
 }
 
-function void
-fillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
+typedef struct Triangle {
+    V2f  v1, v2, v3;
+    f32  area;
+    bool isBehind;
+} Triangle;
+
+function Triangle
+rendererPullTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
+    V3f v1og = arrget(renderer->vertices, i1);
+    V3f v2og = arrget(renderer->vertices, i2);
+    V3f v3og = arrget(renderer->vertices, i3);
+
     V2f imageDim = {(f32)renderer->image.width, (f32)renderer->image.height};
-    V2f v1 = v2fhadamard(arrget(renderer->vertices, i1), imageDim);
-    V2f v2 = v2fhadamard(arrget(renderer->vertices, i2), imageDim);
-    V2f v3 = v2fhadamard(arrget(renderer->vertices, i3), imageDim);
 
-    Color01 c1 = arrget(renderer->colors, i1);
-    Color01 c2 = arrget(renderer->colors, i2);
-    Color01 c3 = arrget(renderer->colors, i3);
-
-    f32 xmin = min(v1.x, min(v2.x, v3.x));
-    f32 ymin = min(v1.y, min(v2.y, v3.y));
-    f32 xmax = max(v1.x, max(v2.x, v3.x));
-    f32 ymax = max(v1.y, max(v2.y, v3.y));
-
-    bool allowZero1 = isTopLeft(v1, v2);
-    bool allowZero2 = isTopLeft(v2, v3);
-    bool allowZero3 = isTopLeft(v3, v1);
+    V2f v1 = v2fhadamard(v1og.xy, imageDim);
+    V2f v2 = v2fhadamard(v2og.xy, imageDim);
+    V2f v3 = v2fhadamard(v3og.xy, imageDim);
 
     f32 area = edgeWedge(v1, v2, v3);
 
-    f32 dcross1x = v1.y - v2.y;
-    f32 dcross2x = v2.y - v3.y;
-    f32 dcross3x = v3.y - v1.y;
+    Triangle result = {v1, v2, v3, area, v1og.z < 0 || v2og.z < 0 || v3og.z < 0};
+    return result;
+}
 
-    f32 dcross1y = v2.x - v1.x;
-    f32 dcross2y = v3.x - v2.x;
-    f32 dcross3y = v1.x - v3.x;
+function void
+rendererFillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
+    Triangle tr = rendererPullTriangle(renderer, i1, i2, i3);
 
-    i32 ystart = max((i32)ymin, 0);
-    i32 xstart = max((i32)xmin, 0);
-    i32 yend = min((i32)ymax, renderer->image.height - 1);
-    i32 xend = min((i32)xmax, renderer->image.width - 1);
+    V2f v1 = tr.v1;
+    V2f v2 = tr.v2;
+    V2f v3 = tr.v3;
 
-    // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
-    V2f topleft = {(f32)(xstart), (f32)(ystart)};
-    f32 cross1topleft = edgeWedge(v1, v2, topleft);
-    f32 cross2topleft = edgeWedge(v2, v3, topleft);
-    f32 cross3topleft = edgeWedge(v3, v1, topleft);
+    if (tr.area > 0 && !tr.isBehind) {
+        Color01 c1 = arrget(renderer->colors, i1);
+        Color01 c2 = arrget(renderer->colors, i2);
+        Color01 c3 = arrget(renderer->colors, i3);
 
-    for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
-        f32 yinc = (f32)(ycoord - ystart);
-        f32 cross1row = cross1topleft + yinc * dcross1y;
-        f32 cross2row = cross2topleft + yinc * dcross2y;
-        f32 cross3row = cross3topleft + yinc * dcross3y;
+        f32 xmin = min(v1.x, min(v2.x, v3.x));
+        f32 ymin = min(v1.y, min(v2.y, v3.y));
+        f32 xmax = max(v1.x, max(v2.x, v3.x));
+        f32 ymax = max(v1.y, max(v2.y, v3.y));
 
-        for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
-            f32 xinc = (f32)(xcoord - xstart);
-            f32 cross1 = cross1row + xinc * dcross1x;
-            f32 cross2 = cross2row + xinc * dcross2x;
-            f32 cross3 = cross3row + xinc * dcross3x;
+        bool allowZero1 = isTopLeft(v1, v2);
+        bool allowZero2 = isTopLeft(v2, v3);
+        bool allowZero3 = isTopLeft(v3, v1);
 
-            bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
-            bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
-            bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
+        f32 dcross1x = v1.y - v2.y;
+        f32 dcross2x = v2.y - v3.y;
+        f32 dcross3x = v3.y - v1.y;
 
-            if (pass1 && pass2 && pass3) {
-                f32 cross1scaled = cross1 / area;
-                f32 cross2scaled = cross2 / area;
-                f32 cross3scaled = cross3 / area;
+        f32 dcross1y = v2.x - v1.x;
+        f32 dcross2y = v3.x - v2.x;
+        f32 dcross3y = v1.x - v3.x;
 
-                Color01 color01 = color01add(color01add(color01mul(c1, cross2scaled), color01mul(c2, cross3scaled)), color01mul(c3, cross1scaled));
+        i32 ystart = max((i32)ymin, 0);
+        i32 xstart = max((i32)xmin, 0);
+        i32 yend = min((i32)ymax, renderer->image.height - 1);
+        i32 xend = min((i32)xmax, renderer->image.width - 1);
 
-                i32 index = ycoord * renderer->image.width + xcoord;
-                assert(index < renderer->image.width * renderer->image.height);
+        // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
+        V2f topleft = {(f32)(xstart), (f32)(ystart)};
+        f32 cross1topleft = edgeWedge(v1, v2, topleft);
+        f32 cross2topleft = edgeWedge(v2, v3, topleft);
+        f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
-                u32      existingColoru32 = renderer->image.ptr[index];
-                Color255 existingColor255 = coloru32to255(existingColoru32);
-                Color01  existingColor01 = color255to01(existingColor255);
+        for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
+            f32 yinc = (f32)(ycoord - ystart);
+            f32 cross1row = cross1topleft + yinc * dcross1y;
+            f32 cross2row = cross2topleft + yinc * dcross2y;
+            f32 cross3row = cross3topleft + yinc * dcross3y;
 
-                Color01 blended01 = {
-                    .r = lerp(existingColor01.r, color01.r, color01.a),
-                    .g = lerp(existingColor01.g, color01.g, color01.a),
-                    .b = lerp(existingColor01.b, color01.b, color01.a),
-                    .a = 1,
-                };
+            for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
+                f32 xinc = (f32)(xcoord - xstart);
+                f32 cross1 = cross1row + xinc * dcross1x;
+                f32 cross2 = cross2row + xinc * dcross2x;
+                f32 cross3 = cross3row + xinc * dcross3x;
 
-                Color255 blended255 = color01to255(blended01);
-                u32      blendedu32 = color255tou32(blended255);
-                renderer->image.ptr[index] = blendedu32;
+                bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
+                bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
+                bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
+
+                if (pass1 && pass2 && pass3) {
+                    f32 cross1scaled = cross1 / tr.area;
+                    f32 cross2scaled = cross2 / tr.area;
+                    f32 cross3scaled = cross3 / tr.area;
+
+                    Color01 color01 = color01add(color01add(color01mul(c1, cross2scaled), color01mul(c2, cross3scaled)), color01mul(c3, cross1scaled));
+
+                    i32 index = ycoord * renderer->image.width + xcoord;
+                    assert(index < renderer->image.width * renderer->image.height);
+
+                    u32      existingColoru32 = renderer->image.ptr[index];
+                    Color255 existingColor255 = coloru32to255(existingColoru32);
+                    Color01  existingColor01 = color255to01(existingColor255);
+
+                    Color01 blended01 = {
+                        .r = lerp(existingColor01.r, color01.r, color01.a),
+                        .g = lerp(existingColor01.g, color01.g, color01.a),
+                        .b = lerp(existingColor01.b, color01.b, color01.a),
+                        .a = 1,
+                    };
+
+                    Color255 blended255 = color01to255(blended01);
+                    u32      blendedu32 = color255tou32(blended255);
+                    renderer->image.ptr[index] = blendedu32;
+                }
             }
         }
     }
@@ -824,25 +851,29 @@ drawContrastRect(Renderer* renderer, Rect2f rect) {
 
 function void
 outlineTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    V2f imageDim = {(f32)renderer->image.width, (f32)renderer->image.height};
-    V2f v1 = v2fhadamard(arrget(renderer->vertices, i1), imageDim);
-    V2f v2 = v2fhadamard(arrget(renderer->vertices, i2), imageDim);
-    V2f v3 = v2fhadamard(arrget(renderer->vertices, i3), imageDim);
+    Triangle tr = rendererPullTriangle(renderer, i1, i2, i3);
 
-    drawContrastLine(renderer, v1, v2);
-    drawContrastLine(renderer, v2, v3);
-    drawContrastLine(renderer, v3, v1);
+    V2f v1 = tr.v1;
+    V2f v2 = tr.v2;
+    V2f v3 = tr.v3;
 
-    V2f vertexRectDim = {10, 10};
-    drawContrastRect(renderer, rect2fCenterDim(v1, vertexRectDim));
-    drawContrastRect(renderer, rect2fCenterDim(v2, vertexRectDim));
-    drawContrastRect(renderer, rect2fCenterDim(v3, vertexRectDim));
+    if (tr.area > 0 && !tr.isBehind) {
+        drawContrastLine(renderer, v1, v2);
+        drawContrastLine(renderer, v2, v3);
+        drawContrastLine(renderer, v3, v1);
+
+        V2f vertexRectDim = {10, 10};
+        drawContrastRect(renderer, rect2fCenterDim(v1, vertexRectDim));
+        drawContrastRect(renderer, rect2fCenterDim(v2, vertexRectDim));
+        drawContrastRect(renderer, rect2fCenterDim(v3, vertexRectDim));
+    }
 }
 
 function void
 rendererFillTriangles(Renderer* renderer) {
     for (i32 start = 0; start < renderer->indices.len; start += 3) {
-        fillTriangle(renderer, arrget(renderer->indices, start), arrget(renderer->indices, start + 1), arrget(renderer->indices, start + 2));
+        assert(start + 2 < renderer->indices.len);
+        rendererFillTriangle(renderer, renderer->indices.ptr[start], renderer->indices.ptr[start + 1], renderer->indices.ptr[start + 2]);
     }
 }
 
@@ -904,7 +935,7 @@ rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
             vtxCamera = rot;
         }
 
-        V2f vtxScreen = {};
+        V3f vtxScreen = {};
         {
             V2f plane = {vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z};
 
@@ -920,7 +951,7 @@ rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
                 (plane.y - planeTop) / (planeBottom - planeTop),
             };
 
-            vtxScreen = screen;
+            vtxScreen = (V3f) {.xy = screen, .z_ = vtxCamera.z};
         }
 
         arrpush(renderer->vertices, vtxScreen);
@@ -933,15 +964,7 @@ rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
         i32 cubeIndex1 = mesh.indices.ptr[ind];
         i32 cubeIndex2 = mesh.indices.ptr[ind + 1];
         i32 cubeIndex3 = mesh.indices.ptr[ind + 2];
-
-        V2f cubeVertex1 = arrget(renderer->vertices, cubeIndex1 + cubeInRendererBuilder.firstVertexIndex);
-        V2f cubeVertex2 = arrget(renderer->vertices, cubeIndex2 + cubeInRendererBuilder.firstVertexIndex);
-        V2f cubeVertex3 = arrget(renderer->vertices, cubeIndex3 + cubeInRendererBuilder.firstVertexIndex);
-
-        f32 area = edgeWedge(cubeVertex1, cubeVertex2, cubeVertex3);
-        if (area > 0) {
-            rendererPushTriangle(renderer, cubeIndex1, cubeIndex2, cubeIndex3);
-        }
+        rendererPushTriangle(renderer, cubeIndex1, cubeIndex2, cubeIndex3);
     }
 
     rendererEndMesh(cubeInRendererBuilder);
@@ -1009,107 +1032,107 @@ function void
 drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHeight) {
     // NOTE(khvorov) Debug triangles from
     // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
-    arrpush(renderer->vertices, ((V2f) {0.5, 0.5}));
-    arrpush(renderer->vertices, ((V2f) {5.5, 1.5}));
-    arrpush(renderer->vertices, ((V2f) {1.5, 3.5}));
+    arrpush(renderer->vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 5.5, .y = 1.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 1.5, .y = 3.5, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {4, 0}));
-    arrpush(renderer->vertices, ((V2f) {4, 0}));
-    arrpush(renderer->vertices, ((V2f) {4, 0}));
+    arrpush(renderer->vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {5.75, -0.25}));
-    arrpush(renderer->vertices, ((V2f) {5.75, 0.75}));
-    arrpush(renderer->vertices, ((V2f) {4.75, 0.75}));
+    arrpush(renderer->vertices, ((V3f) {.x = 5.75, .y = -0.25, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 5.75, .y = 0.75, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 4.75, .y = 0.75, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {7, 0}));
-    arrpush(renderer->vertices, ((V2f) {7, 1}));
-    arrpush(renderer->vertices, ((V2f) {6, 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 7, .y = 0, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 7, .y = 1, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 6, .y = 1, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {7.25, 2}));
-    arrpush(renderer->vertices, ((V2f) {9.25, 0.25}));
-    arrpush(renderer->vertices, ((V2f) {11.25, 2}));
+    arrpush(renderer->vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 9.25, .y = 0.25, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {7.25, 2}));
-    arrpush(renderer->vertices, ((V2f) {11.25, 2}));
-    arrpush(renderer->vertices, ((V2f) {9, 4.75}));
+    arrpush(renderer->vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 4.75, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {13, 1}));
-    arrpush(renderer->vertices, ((V2f) {14.5, -0.5}));
-    arrpush(renderer->vertices, ((V2f) {14, 2}));
+    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 14.5, .y = -0.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {13, 1}));
-    arrpush(renderer->vertices, ((V2f) {14, 2}));
-    arrpush(renderer->vertices, ((V2f) {14, 4}));
+    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 14, .y = 4, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {0.5, 5.5}));
-    arrpush(renderer->vertices, ((V2f) {6.5, 3.5}));
-    arrpush(renderer->vertices, ((V2f) {4.5, 5.5}));
+    arrpush(renderer->vertices, ((V3f) {.x = 0.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {4.5, 5.5}));
-    arrpush(renderer->vertices, ((V2f) {6.5, 3.5}));
-    arrpush(renderer->vertices, ((V2f) {7.5, 6.5}));
+    arrpush(renderer->vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {6.5, 3.5}));
-    arrpush(renderer->vertices, ((V2f) {9, 5}));
-    arrpush(renderer->vertices, ((V2f) {7.5, 6.5}));
+    arrpush(renderer->vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {9, 7}));
-    arrpush(renderer->vertices, ((V2f) {10, 7}));
-    arrpush(renderer->vertices, ((V2f) {9, 9}));
+    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 7, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 10, .y = 7, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 9, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {11, 4}));
-    arrpush(renderer->vertices, ((V2f) {12, 5}));
-    arrpush(renderer->vertices, ((V2f) {11, 6}));
+    arrpush(renderer->vertices, ((V3f) {.x = 11, .y = 4, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 12, .y = 5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 11, .y = 6, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {13, 5}));
-    arrpush(renderer->vertices, ((V2f) {15, 5}));
-    arrpush(renderer->vertices, ((V2f) {13, 7}));
+    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V2f) {15, 5}));
-    arrpush(renderer->vertices, ((V2f) {15, 7}));
-    arrpush(renderer->vertices, ((V2f) {13, 7}));
+    arrpush(renderer->vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 15, .y = 7, .z = 1}));
+    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
     arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
@@ -1119,7 +1142,7 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
     isize imageWidth = 16;
     isize imageHeight = 8;
     for (isize ind = 0; ind < renderer->vertices.len; ind++) {
-        renderer->vertices.ptr[ind] = v2fhadamard(renderer->vertices.ptr[ind], (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
+        renderer->vertices.ptr[ind].xy = v2fhadamard(renderer->vertices.ptr[ind].xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
     }
 
     for (isize ind = 0; ind < renderer->vertices.len; ind += 3) {
@@ -1139,13 +1162,13 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
 
         V2f offset = v2fhadamard(v2fscale((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
         for (isize ind = 0; ind < renderer->vertices.len; ind++) {
-            renderer->vertices.ptr[ind] = v2fadd(renderer->vertices.ptr[ind], offset);
+            renderer->vertices.ptr[ind].xy = v2fadd(renderer->vertices.ptr[ind].xy, offset);
         }
 
         rendererOutlineTriangles(renderer);
 
         for (isize ind = 0; ind < renderer->vertices.len; ind++) {
-            renderer->vertices.ptr[ind] = v2fsub(renderer->vertices.ptr[ind], offset);
+            renderer->vertices.ptr[ind].xy = v2fsub(renderer->vertices.ptr[ind].xy, offset);
         }
     }
 }
@@ -1213,33 +1236,33 @@ runTests(Arena* arena) {
         assert(degreesToRadians(30) < degreesToRadians(60));
 
         assert(v2feq(v2fadd((V2f) {1, 2}, (V2f) {3, -5}), (V2f) {4, -3}));
-        assert(v3feq(v3fadd((V3f) {1, 2, 3}, (V3f) {3, -5, 10}), (V3f) {4, -3, 13}));
+        assert(v3feq(v3fadd((V3f) {.x = 1, 2, 3}, (V3f) {.x = 3, -5, 10}), (V3f) {.x = 4, -3, 13}));
 
         assert(v2feq(v2fsub((V2f) {1, 2}, (V2f) {3, -5}), (V2f) {-2, 7}));
-        assert(v3feq(v3fsub((V3f) {1, 2, 3}, (V3f) {3, -5, 10}), (V3f) {-2, 7, -7}));
+        assert(v3feq(v3fsub((V3f) {.x = 1, 2, 3}, (V3f) {.x = 3, -5, 10}), (V3f) {.x = -2, 7, -7}));
 
         assert(v2feq(v2fhadamard((V2f) {1, 2}, (V2f) {3, 4}), (V2f) {3, 8}));
-        assert(v3feq(v3fhadamard((V3f) {1, 2, 3}, (V3f) {3, 4, 5}), (V3f) {3, 8, 15}));
+        assert(v3feq(v3fhadamard((V3f) {.x = 1, 2, 3}, (V3f) {.x = 3, 4, 5}), (V3f) {.x = 3, 8, 15}));
 
         assert(v2feq(v2fscale((V2f) {1, 2}, 5), (V2f) {5, 10}));
-        assert(v3feq(v3fscale((V3f) {1, 2, 3}, 5), (V3f) {5, 10, 15}));
+        assert(v3feq(v3fscale((V3f) {.x = 1, 2, 3}, 5), (V3f) {.x = 5, 10, 15}));
 
         assert(v2fdot((V2f) {1, 2}, (V2f) {4, 5}) == 14);
-        assert(v3fdot((V3f) {1, 2, 3}, (V3f) {4, 5, 6}) == 32);
+        assert(v3fdot((V3f) {.x = 1, 2, 3}, (V3f) {.x = 4, 5, 6}) == 32);
     }
 
     {
         assert(rotor3fEq(rotor3fNormalise((Rotor3f) {4, 4, 4, 4}), (Rotor3f) {0.5, 0.5, 0.5, 0.5}));
         assert(rotor3fEq(rotor3fReverse((Rotor3f) {1, 2, 3, 4}), (Rotor3f) {1, -2, -3, -4}));
 
-        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, 1, 0, 0), (V3f) {1, 0, 0}).y == 1);
-        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, -1, 0, 0), (V3f) {1, 0, 0}).y == -1);
+        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, 1, 0, 0), (V3f) {.x = 1, 0, 0}).y == 1);
+        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, -1, 0, 0), (V3f) {.x = 1, 0, 0}).y == -1);
 
         {
             Rotor3f r1 = createRotor3fAnglePlane(30, 1, 0, 0);
             Rotor3f r2 = createRotor3fAnglePlane(60, 1, 0, 0);
             Rotor3f rmul = rotor3fMulRotor3f(r1, r2);
-            V3f     vrot = rotor3fRotateV3f(rmul, (V3f) {1, 0, 0});
+            V3f     vrot = rotor3fRotateV3f(rmul, (V3f) {.x = 1, 0, 0});
             assert(absval(vrot.y - 1) < 0.001);
         }
     }
@@ -1281,7 +1304,7 @@ runTests(Arena* arena) {
         Mesh cube1 = createCubeMesh(&store, 2, (V3f) {}, createRotor3f());
         assert(store.vertices.len == cube1.vertices.len);
         assert(store.indices.len == cube1.indices.len);
-        assert(v3feq(cube1.vertices.ptr[0], (V3f) {-1, 1, -1}));
+        assert(v3feq(cube1.vertices.ptr[0], (V3f) {.x = -1, 1, -1}));
         assert(cube1.indices.ptr[0] == 0);
 
         Mesh cube2 = createCubeMesh(&store, 4, (V3f) {}, createRotor3f());
@@ -1289,7 +1312,7 @@ runTests(Arena* arena) {
         assert(store.indices.len == cube1.indices.len + cube2.indices.len);
         assert(cube2.vertices.ptr == cube1.vertices.ptr + cube1.vertices.len);
         assert(cube2.indices.ptr == cube1.indices.ptr + cube1.indices.len);
-        assert(v3feq(cube2.vertices.ptr[0], (V3f) {-2, 2, -2}));
+        assert(v3feq(cube2.vertices.ptr[0], (V3f) {.x = -2, 2, -2}));
         assert(cube2.indices.ptr[0] == 0);
     }
 
@@ -1380,11 +1403,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
 
-    Camera camera = createCamera((V3f) {0, 0, -3});
+    Camera camera = createCamera((V3f) {.x = 0, 0, -3});
     Input  input = {};
 
-    Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
-    Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {-1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
+    Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {.x = 1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
+    Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {.x = -1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
 
     for (;;) {
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1428,22 +1451,22 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             f32 cameraRotationInc = 1;
 
             if (input.keysDown[InputKey_Forward]) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 0, 1}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Back]) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 0, 1}), -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 0, 1}), -cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Right]) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 1, 0, 0}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Left]) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {1, 0, 0}), -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 1, 0, 0}), -cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Up]) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 1, 0}), cameraMovementInc), camera.pos);
             }
             if (input.keysDown[InputKey_Down]) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {0, 1, 0}), -cameraMovementInc), camera.pos);
+                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 1, 0}), -cameraMovementInc), camera.pos);
             }
 
             if (input.keysDown[InputKey_RotateXY]) {
@@ -1465,7 +1488,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, -1));
             }
 
-            Rotor3f cubeRotation1 = createRotor3fAnglePlane(1, 1, 1, 1);
+            Rotor3f cubeRotation1 = createRotor3fAnglePlane(0, 1, 1, 1);
             cube1.orientation = rotor3fMulRotor3f(cube1.orientation, cubeRotation1);
             Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
             cube2.orientation = rotor3fMulRotor3f(cube2.orientation, cubeRotation2);
