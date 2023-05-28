@@ -1260,6 +1260,86 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
 }
 
 //
+// SECTION Debug
+//
+
+typedef enum FrameTimingID {
+    FrameTimingID_Work,
+    FrameTimingID_Sleep,
+    FrameTimingID_Spin,
+    FrameTimingID_Count,
+} FrameTimingID;
+
+typedef struct FrameTimings {
+    f32 ms[FrameTimingID_Count];
+} FrameTimings;
+
+typedef struct DebugLog {
+    struct {
+        FrameTimings* ptr;
+        isize         len;
+        isize         cap;
+    } timings;
+} DebugLog;
+
+function DebugLog
+createDebugLog(Arena* arena, isize bytes) {
+    DebugLog log = {};
+    arenaAllocCap(arena, FrameTimings, bytes, log.timings);
+    return log;
+}
+
+function void
+debugLogPushTimings(DebugLog* log, FrameTimings timings) {
+    if (log->timings.len == log->timings.cap) {
+        log->timings.len = 0;
+    }
+    arrpush(log->timings, timings);
+}
+
+typedef struct FrameTimingsIter {
+    DebugLog*    log;
+    isize        totalFrames;
+    isize        iterCount;
+    FrameTimings timings;
+} FrameTimingsIter;
+
+function FrameTimingsIter
+createFrameTimingsIter(DebugLog* log, isize frameCount) {
+    assert(frameCount <= log->timings.cap);
+    FrameTimingsIter iter = {.log = log, .totalFrames = frameCount};
+    return iter;
+}
+
+typedef enum IterResult {
+    IterResult_NoMore,
+    IterResult_More,
+} IterResult;
+
+function IterResult
+frameTimingsIterNext(FrameTimingsIter* iter) {
+    IterResult result = IterResult_NoMore;
+    if (iter->iterCount < iter->totalFrames) {
+        result = IterResult_More;
+
+        isize firstIndex = iter->log->timings.len - iter->totalFrames;
+        if (firstIndex < 0) {
+            firstIndex = iter->log->timings.cap + firstIndex;
+        }
+
+        isize thisIndex = firstIndex + iter->iterCount;
+        if (thisIndex >= iter->log->timings.cap) {
+            thisIndex -= iter->log->timings.cap;
+        }
+
+        iter->timings = iter->log->timings.ptr[thisIndex];
+
+        iter->iterCount += 1;
+    }
+    return result;
+}
+
+//
 // SECTION Tests
 //
 
@@ -1427,6 +1507,69 @@ runTests(Arena* arena) {
         assert(builder.ptr[builder.len - 1] == '\0');
     }
 
+    {
+        DebugLog log = createDebugLog(arena, 50);
+
+        for (isize ind = 0; ind < log.timings.cap; ind++) {
+            FrameTimings timings = {
+                .ms = {
+                    [FrameTimingID_Work] = (f32)ind,
+                },
+            };
+            debugLogPushTimings(&log, timings);
+        }
+        assert(log.timings.len == log.timings.cap);
+
+        {
+            f32 expected[] = {0, 1, 2, 3};
+            assert(arrayCount(expected) == log.timings.len);
+            for (isize ind = 0; ind < arrayCount(expected); ind++) {
+                FrameTimings timings = log.timings.ptr[ind];
+                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+            }
+        }
+
+        {
+            FrameTimingsIter iter = createFrameTimingsIter(&log, 4);
+            f32              expected[] = {0, 1, 2, 3};
+            assert(arrayCount(expected) <= log.timings.cap);
+            for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
+                FrameTimings timings = iter.timings;
+                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+            }
+            assert(iter.iterCount == 4);
+        }
+
+        {
+            FrameTimings timings = {
+                .ms = {
+                    [FrameTimingID_Work] = 99,
+                },
+            };
+            debugLogPushTimings(&log, timings);
+        }
+
+        {
+            f32 expected[] = {99, 1, 2, 3};
+            assert(arrayCount(expected) == log.timings.cap);
+            for (isize ind = 0; ind < arrayCount(expected); ind++) {
+                FrameTimings timings = log.timings.ptr[ind];
+                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+            }
+        }
+
+        {
+            FrameTimingsIter iter = createFrameTimingsIter(&log, 3);
+            f32              expected[] = {2, 3, 99};
+            assert(arrayCount(expected) <= log.timings.cap);
+            for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
+                FrameTimings timings = iter.timings;
+                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+            }
+            assert(iter.iterCount == 3);
+        }
+    }
+
     endTempMemory(temp);
 }
 
@@ -1490,6 +1633,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     Renderer    renderer = {};
     MeshStorage meshStorage = {};
+    DebugLog    debug = {};
     {
         isize memSize = 1 * 1024 * 1024 * 1024;
         void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -1498,8 +1642,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         Arena arena = {.base = memBase, .size = memSize};
         runTests(&arena);
 
-        renderer = createRenderer(&arena, arenaFreeSize(&arena) / 2);
-        meshStorage = createMeshStorage(&arena, arenaFreeSize(&arena));
+        isize perSystem = arenaFreeSize(&arena) / 3;
+        renderer = createRenderer(&arena, perSystem);
+        meshStorage = createMeshStorage(&arena, perSystem);
+        debug = createDebugLog(&arena, arenaFreeSize(&arena));
     }
 
     WNDCLASSEXA windowClass = {
@@ -1552,12 +1698,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {.x = 1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
     Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {.x = -1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
 
-    f32         msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
-    Clock       clock = getClock();
-    ClockMarker frameStart = getClockMarker();
-    f32         lastFrameWorkMs = 0;
-    f32         lastFrameSleepMs = 0;
-    f32         lastFrameSpinMs = 0;
+    f32          msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
+    Clock        clock = getClock();
+    ClockMarker  frameStart = getClockMarker();
+    FrameTimings frameTimings = {};
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
     {
@@ -1645,7 +1789,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, -1));
             }
 
-            Rotor3f cubeRotation1 = createRotor3fAnglePlane(0, 1, 1, 1);
+            Rotor3f cubeRotation1 = createRotor3fAnglePlane(1, 1, 1, 1);
             cube1.orientation = rotor3fMulRotor3f(cube1.orientation, cubeRotation1);
             Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
             cube2.orientation = rotor3fMulRotor3f(cube2.orientation, cubeRotation2);
@@ -1665,6 +1809,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             rendererFillTriangles(&renderer);
             rendererOutlineTriangles(&renderer);
 
+            debugLogPushTimings(&debug, frameTimings);
+
             {
                 TempMemory temp = beginTempMemory(&renderer.scratch);
 
@@ -1672,13 +1818,13 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 arenaAllocCap(&renderer.scratch, char, 1000, builder);
 
                 fmtStr(&builder, STR("last frame work: "));
-                fmtF32(&builder, lastFrameWorkMs);
+                fmtF32(&builder, frameTimings.ms[FrameTimingID_Work]);
                 fmtStr(&builder, STR("ms; sleep: "));
-                fmtF32(&builder, lastFrameSleepMs);
+                fmtF32(&builder, frameTimings.ms[FrameTimingID_Sleep]);
                 fmtStr(&builder, STR("ms; spin: "));
-                fmtF32(&builder, lastFrameSpinMs);
+                fmtF32(&builder, frameTimings.ms[FrameTimingID_Spin]);
                 fmtStr(&builder, STR("ms; total: "));
-                fmtF32(&builder, lastFrameWorkMs + lastFrameSleepMs + lastFrameSpinMs);
+                fmtF32(&builder, frameTimings.ms[FrameTimingID_Work] + frameTimings.ms[FrameTimingID_Sleep] + frameTimings.ms[FrameTimingID_Spin]);
                 fmtStr(&builder, STR("ms\n"));
                 fmtNull(&builder);
 
@@ -1718,7 +1864,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         // NOTE(khvorov) Frame timing
         {
             f32 msFromStart = getMsFromMarker(clock, frameStart);
-            lastFrameWorkMs = msFromStart;
+            frameTimings.ms[FrameTimingID_Work] = msFromStart;
             f32 msToSleep = msPerFrameTarget - msFromStart;
             // NOTE(khvorov) Need at least 1ms buffer there after sleep because windows likes to oversleep
             if (msToSleep >= 2) {
@@ -1726,9 +1872,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 Sleep(msToSleepFloor);
             }
             msFromStart = getMsFromMarker(clock, frameStart);
-            lastFrameSleepMs = msFromStart - lastFrameWorkMs;
+            frameTimings.ms[FrameTimingID_Sleep] = msFromStart - frameTimings.ms[FrameTimingID_Work];
             for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(clock, frameStart)) {}
-            lastFrameSpinMs = msFromStart - lastFrameWorkMs - lastFrameSleepMs;
+            frameTimings.ms[FrameTimingID_Spin] = msFromStart - frameTimings.ms[FrameTimingID_Work] - frameTimings.ms[FrameTimingID_Sleep];
             frameStart = getClockMarker();
         }
     }
