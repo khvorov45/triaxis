@@ -771,6 +771,12 @@ inputKeyWasPressed(Input* input, InputKey key) {
 // SECTION Renderer
 //
 
+typedef struct Texture {
+    u32*  ptr;
+    isize width;
+    isize height;
+} Texture;
+
 typedef struct Renderer {
     struct {
         u32*  ptr;
@@ -780,28 +786,19 @@ typedef struct Renderer {
     } image;
 
     MeshStorage triangles;
-    Arena       scratch;
 } Renderer;
 
 function Renderer
 createRenderer(Arena* arena, isize bytes) {
     Renderer renderer = {};
 
-    isize forImage = bytes / 3;
-    isize forTriangles = bytes / 3;
-    isize forScratch = bytes - (forImage + forTriangles);
+    isize forImage = bytes / 4 * 3;
+    isize forTriangles = bytes - forImage;
 
     arenaAllocCap(arena, u32, forImage, renderer.image);
     renderer.triangles = createMeshStorage(arena, forTriangles);
-    renderer.scratch = createArenaFromArena(arena, forScratch);
 
     return renderer;
-}
-
-function void
-rendererClearBuffers(Renderer* renderer) {
-    renderer->scratch.used = 0;
-    meshStorageClearBuffers(&renderer->triangles);
 }
 
 function void
@@ -1106,10 +1103,10 @@ rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
 }
 
 function void
-scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height) {
-    TempMemory temp = beginTempMemory(&renderer->scratch);
+scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height, Arena* scratch) {
+    TempMemory temp = beginTempMemory(scratch);
 
-    u32* currentImageCopy = arenaAllocArray(&renderer->scratch, u32, renderer->image.width * renderer->image.height);
+    u32* currentImageCopy = arenaAllocArray(scratch, u32, renderer->image.width * renderer->image.height);
 
     for (isize ind = 0; ind < renderer->image.width * renderer->image.height; ind++) {
         currentImageCopy[ind] = renderer->image.ptr[ind];
@@ -1164,7 +1161,7 @@ scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height) {
 }
 
 function void
-drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHeight) {
+drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHeight, Arena* scratch) {
     // NOTE(khvorov) Debug triangles from
     // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
@@ -1289,7 +1286,7 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
     setImageSize(renderer, imageWidth, imageHeight);
     clearImage(renderer);
     rendererFillTriangles(renderer);
-    scaleOntoAPixelGrid(renderer, finalImageWidth, finalImageHeight);
+    scaleOntoAPixelGrid(renderer, finalImageWidth, finalImageHeight, scratch);
 
     // NOTE(khvorov) Fill triangles on the pixel grid - vertices have to be shifted to correspond
     // to their positions in the smaller image
@@ -1307,6 +1304,60 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
         for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
             renderer->triangles.vertices.ptr[ind].xy = v2fsub(renderer->triangles.vertices.ptr[ind].xy, offset);
         }
+    }
+}
+
+//
+// SECTION Fonts
+//
+
+typedef struct Glyph {
+    u8* ptr;
+    i32 width;
+    i32 height;
+    i32 advance;
+} Glyph;
+
+typedef struct Font {
+    Glyph ascii[128];
+    Arena arena;
+} Font;
+
+function Font*
+createFont(Arena* arena, isize bytes) {
+    Font* font = arenaAllocArray(arena, Font, 1);
+    font->arena = createArenaFromArena(arena, bytes);
+    return font;
+}
+
+function void
+drawGlyph(Glyph glyph, Texture dest, i32 x, i32 y) {
+    for (i32 row = 0; row < glyph.height; row++) {
+        i32 destRow = y + row;
+        assert(destRow < dest.height);
+        for (i32 col = 0; col < glyph.width; col++) {
+            i32 destCol = x + col;
+            assert(destCol < dest.width);
+
+            i32      index = row * glyph.width + col;
+            u8       alpha = glyph.ptr[index];
+            Color255 color255 = {.r = alpha, .g = alpha, .b = alpha, .a = 255};
+            u32      color32 = color255tou32(color255);
+
+            i32 destIndex = destRow * dest.width + destCol;
+            dest.ptr[destIndex] = color32;
+        }
+    }
+}
+
+function void
+drawStr(Font* font, Str str, Texture dest) {
+    i32 curX = 0;
+    for (isize ind = 0; ind < str.len; ind++) {
+        char  ch = str.ptr[ind];
+        Glyph glyph = font->ascii[(u8)ch];
+        drawGlyph(glyph, dest, curX, 0);
+        curX += glyph.advance;
     }
 }
 
@@ -1685,6 +1736,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Renderer    renderer = {};
     MeshStorage meshStorage = {};
     DebugLog    debug = {};
+    Font*       font = 0;
+    Arena       scratch = {};
     {
         isize memSize = 1 * 1024 * 1024 * 1024;
         void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -1692,6 +1745,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         Arena arena = {.base = memBase, .size = memSize};
         runTests(&arena);
+
+        font = createFont(&arena, 1 * 1024 * 1024);
+        scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
 
         isize perSystem = arenaFreeSize(&arena) / 3;
         renderer = createRenderer(&arena, perSystem);
@@ -1739,6 +1795,66 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         SetWindowPos(window, 0, rect.left, rect.top, windowWidth + dwidth, windowHeight + dheight, 0);
     }
 
+    // NOTE(khvorov) Load font
+    {
+        TempMemory temp = beginTempMemory(&scratch);
+
+        i32     width = 100;
+        i32     height = 100;
+        HDC     fonthdc = CreateCompatibleDC(NULL);
+        HBITMAP bitmap = CreateCompatibleBitmap(fonthdc, width, height);
+        SelectObject(fonthdc, bitmap);
+        SetBkColor(fonthdc, RGB(0, 0, 0));
+        SetTextColor(fonthdc, RGB(255, 255, 255));
+        PatBlt(fonthdc, 0, 0, width, height, BLACKNESS);
+
+        u32* bitmapColors = arenaAllocArray(&scratch, u32, width * height);
+
+        for (u8 ch = 0; ch < 128; ch++) {
+            LPCSTR str = (LPCSTR)&ch;
+            assert(TextOutA(fonthdc, 0, 0, str, 1));
+
+            SIZE size = {};
+            GetTextExtentPoint32A(fonthdc, str, 1, &size);
+
+            ABC metrics = {};
+            GetCharABCWidthsA(fonthdc, ch, ch, &metrics);
+            i32 advance = metrics.abcA + metrics.abcB + metrics.abcC;
+
+            BITMAPINFO bmi = {
+                .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
+                .bmiHeader.biWidth = width,
+                .bmiHeader.biHeight = -height,  // NOTE(khvorov) Top-down
+                .bmiHeader.biPlanes = 1,
+                .bmiHeader.biBitCount = 32,
+                .bmiHeader.biCompression = BI_RGB,
+            };
+
+            ZeroMemory(bitmapColors, sizeof(*bitmapColors) * width * height);
+            GetDIBits(fonthdc, bitmap, 0, height, bitmapColors, &bmi, DIB_RGB_COLORS);
+
+            u8* glyphBitmap = arenaAllocArray(&font->arena, u8, size.cx * size.cy);
+
+            for (i32 row = 0; row < size.cy; row++) {
+                for (i32 col = 0; col < size.cx; col++) {
+                    i32 index = row * width + col;
+                    u32 color = bitmapColors[index];
+                    u8  blue = (u8)(color & 0xFF);
+
+                    i32 glyphIndex = row * size.cx + col;
+                    glyphBitmap[glyphIndex] = blue;
+                }
+            }
+
+            Glyph glyph = {glyphBitmap, size.cx, size.cy, advance};
+            font->ascii[ch] = glyph;
+        }
+        DeleteObject(bitmap);
+        DeleteObject(fonthdc);
+
+        endTempMemory(temp);
+    }
+
     // TODO(khvorov) Hack is debug only
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
@@ -1753,6 +1869,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Clock        clock = getClock();
     ClockMarker  frameStart = getClockMarker();
     FrameTimings frameTimings = {};
+    bool         showDebugTriangles = false;
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
     {
@@ -1761,9 +1878,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         timeBeginPeriod(caps.wPeriodMin);
     }
 
-    bool showDebugTriangles = false;
-
     for (;;) {
+        assert(scratch.tempCount == 0);
+        assert(scratch.used == 0);
+
         inputBeginFrame(&input);
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
             switch (msg.message) {
@@ -1857,10 +1975,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             }
         }
 
-        rendererClearBuffers(&renderer);
+        meshStorageClearBuffers(&renderer.triangles);
 
         if (showDebugTriangles) {
-            drawDebugTriangles(&renderer, windowWidth, windowHeight);
+            drawDebugTriangles(&renderer, windowWidth, windowHeight, &scratch);
         } else {
             rendererPushMesh(&renderer, cube1, camera);
             rendererPushMesh(&renderer, cube2, camera);
@@ -1873,10 +1991,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             debugLogPushTimings(&debug, frameTimings);
 
             {
-                TempMemory temp = beginTempMemory(&renderer.scratch);
+                TempMemory temp = beginTempMemory(&scratch);
 
                 StrBuilder builder = {};
-                arenaAllocCap(&renderer.scratch, char, 1000, builder);
+                arenaAllocCap(&scratch, char, 1000, builder);
 
                 fmtStr(&builder, STR("last frame work: "));
                 fmtF32(&builder, frameTimings.ms[FrameTimingID_Work]);
@@ -1890,6 +2008,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 fmtNull(&builder);
 
                 OutputDebugStringA(builder.ptr);
+                drawStr(font, (Str) {builder.ptr, builder.len}, (Texture) {renderer.image.ptr, renderer.image.width, renderer.image.height});
 
                 endTempMemory(temp);
             }
