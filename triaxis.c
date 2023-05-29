@@ -528,10 +528,14 @@ isTopLeft(V2f v1, V2f v2) {
 // SECTION Meshes
 //
 
+typedef struct TriangleIndices {
+    i32 i1, i2, i3;
+} TriangleIndices;
+
 typedef struct IndexArrDyn {
-    i32*  ptr;
-    isize len;
-    isize cap;
+    TriangleIndices* ptr;
+    isize            len;
+    isize            cap;
 } IndexArrDyn;
 
 typedef struct V3fArrDyn {
@@ -540,6 +544,12 @@ typedef struct V3fArrDyn {
     isize cap;
 } V3fArrDyn;
 
+typedef struct Color01ArrDyn {
+    Color01* ptr;
+    isize    len;
+    isize    cap;
+} Color01ArrDyn;
+
 typedef struct Mesh {
     struct {
         V3f*  ptr;
@@ -547,37 +557,52 @@ typedef struct Mesh {
     } vertices;
 
     struct {
-        i32*  ptr;
-        isize len;
+        TriangleIndices* ptr;
+        isize            len;
     } indices;
+
+    struct {
+        Color01* ptr;
+        isize    len;
+    } colors;
 
     V3f     pos;
     Rotor3f orientation;
 } Mesh;
 
 typedef struct MeshStorage {
-    IndexArrDyn indices;
-    V3fArrDyn   vertices;
+    V3fArrDyn     vertices;
+    IndexArrDyn   indices;
+    Color01ArrDyn colors;
 } MeshStorage;
 
 typedef struct MeshBuilder {
     MeshStorage* storage;
     isize        vertexLenBefore;
     isize        indexLenBefore;
+    isize        colorsLenBefore;
 } MeshBuilder;
 
 function MeshStorage
 createMeshStorage(Arena* arena, isize bytes) {
     MeshStorage storage = {};
-    isize       bytesPerBuffer = bytes / 2;
+    isize       bytesPerBuffer = bytes / 3;
     arenaAllocCap(arena, V3f, bytesPerBuffer, storage.vertices);
-    arenaAllocCap(arena, i32, bytesPerBuffer, storage.indices);
+    arenaAllocCap(arena, TriangleIndices, bytesPerBuffer, storage.indices);
+    arenaAllocCap(arena, Color01, bytesPerBuffer, storage.colors);
     return storage;
+}
+
+function void
+meshStorageClearBuffers(MeshStorage* storage) {
+    storage->vertices.len = 0;
+    storage->colors.len = 0;
+    storage->indices.len = 0;
 }
 
 function MeshBuilder
 beginMesh(MeshStorage* storage) {
-    MeshBuilder builder = {storage, storage->vertices.len, storage->indices.len};
+    MeshBuilder builder = {storage, storage->vertices.len, storage->indices.len, storage->colors.len};
     return builder;
 }
 
@@ -588,29 +613,39 @@ endMesh(MeshBuilder builder, V3f pos, Rotor3f orientation) {
         .vertices.len = builder.storage->vertices.len - builder.vertexLenBefore,
         .indices.ptr = builder.storage->indices.ptr + builder.indexLenBefore,
         .indices.len = builder.storage->indices.len - builder.indexLenBefore,
+        .colors.ptr = builder.storage->colors.ptr + builder.colorsLenBefore,
+        .colors.len = builder.storage->colors.len - builder.colorsLenBefore,
         .pos = pos,
         .orientation = orientation,
     };
     assert(mesh.vertices.len >= 0);
     assert(mesh.indices.len >= 0);
+    assert(mesh.colors.len >= 0);
+    assert(mesh.vertices.len == mesh.colors.len);
     for (i32 ind = 0; ind < mesh.indices.len; ind++) {
-        mesh.indices.ptr[ind] -= builder.vertexLenBefore;
+        TriangleIndices* trig = mesh.indices.ptr + ind;
+        trig->i1 -= builder.vertexLenBefore;
+        trig->i2 -= builder.vertexLenBefore;
+        trig->i3 -= builder.vertexLenBefore;
     }
     return mesh;
 }
 
 function void
-meshStorageAddTriangle(MeshStorage* storage, i32 i1, i32 i2, i32 i3) {
+meshStorageAddTriangle(MeshStorage* storage, TriangleIndices trig) {
+    i32 i1 = trig.i1;
+    i32 i2 = trig.i2;
+    i32 i3 = trig.i3;
+    assert(i1 >= 0 && i2 >= 0 && i3 >= 0);
     assert(i1 < storage->vertices.len && i2 < storage->vertices.len && i3 < storage->vertices.len);
-    arrpush(storage->indices, i1);
-    arrpush(storage->indices, i2);
-    arrpush(storage->indices, i3);
+    assert(i1 < storage->colors.len && i2 < storage->colors.len && i3 < storage->colors.len);
+    arrpush(storage->indices, trig);
 }
 
 function void
 meshStorageAddQuad(MeshStorage* storage, i32 i1, i32 i2, i32 i3, i32 i4) {
-    meshStorageAddTriangle(storage, i1, i2, i3);
-    meshStorageAddTriangle(storage, i1, i3, i4);
+    meshStorageAddTriangle(storage, (TriangleIndices) {i1, i2, i3});
+    meshStorageAddTriangle(storage, (TriangleIndices) {i1, i3, i4});
 }
 
 function Mesh
@@ -636,6 +671,15 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
     i32 backTopRightIndex = arrpush(storage->vertices, backTopRight);
     i32 backBottomLeftIndex = arrpush(storage->vertices, backBottomLeft);
     i32 backBottomRightIndex = arrpush(storage->vertices, backBottomRight);
+
+    arrpush(storage->colors, ((Color01) {.r = 1, .a = 1}));
+    arrpush(storage->colors, ((Color01) {.g = 1, .a = 1}));
+    arrpush(storage->colors, ((Color01) {.b = 1, .a = 1}));
+    arrpush(storage->colors, ((Color01) {.r = 1, .g = 1, .a = 1}));
+    arrpush(storage->colors, ((Color01) {.r = 1, .b = 1, .a = 1}));
+    arrpush(storage->colors, ((Color01) {.g = 1, .b = 1, .a = 1}));
+    arrpush(storage->colors, ((Color01) {.r = 1, .g = 1, .b = 1, .a = 1}));
+    arrpush(storage->colors, ((Color01) {.r = 0.1, .g = 0.5, .b = 0.9, .a = 1}));
 
     meshStorageAddQuad(storage, frontTopLeftIndex, frontTopRightIndex, frontBottomRightIndex, frontBottomLeftIndex);
     meshStorageAddQuad(storage, frontTopRightIndex, backTopRightIndex, backBottomRightIndex, frontBottomRightIndex);
@@ -681,12 +725,47 @@ typedef enum InputKey {
     InputKey_RotateZX,
     InputKey_RotateYZ,
     InputKey_RotateZY,
+    InputKey_ToggleDebugTriangles,
     InputKey_Count,
 } InputKey;
 
+typedef struct KeyState {
+    bool down;
+    i32  halfTransitionCount;
+} KeyState;
+
 typedef struct Input {
-    bool keysDown[InputKey_Count];
+    KeyState keys[InputKey_Count];
 } Input;
+
+function void
+inputBeginFrame(Input* input) {
+    for (i32 keyIndex = 0; keyIndex < InputKey_Count; keyIndex++) {
+        KeyState* state = input->keys + keyIndex;
+        state->halfTransitionCount = 0;
+    }
+}
+
+function void
+inputKeyDown(Input* input, InputKey key) {
+    KeyState* state = input->keys + key;
+    state->down = true;
+    state->halfTransitionCount += 1;
+}
+
+function void
+inputKeyUp(Input* input, InputKey key) {
+    KeyState* state = input->keys + key;
+    state->down = false;
+    state->halfTransitionCount += 1;
+}
+
+function bool
+inputKeyWasPressed(Input* input, InputKey key) {
+    KeyState state = input->keys[key];
+    bool     result = state.halfTransitionCount > 1 || (state.halfTransitionCount == 1 && state.down);
+    return result;
+}
 
 //
 // SECTION Renderer
@@ -700,14 +779,7 @@ typedef struct Renderer {
         isize cap;
     } image;
 
-    struct {
-        Color01* ptr;
-        isize    len;
-        isize    cap;
-    } colors;
-
-    V3fArrDyn   vertices;
-    IndexArrDyn indices;
+    MeshStorage triangles;
     Arena       scratch;
 } Renderer;
 
@@ -715,15 +787,13 @@ function Renderer
 createRenderer(Arena* arena, isize bytes) {
     Renderer renderer = {};
 
-    isize bytesForBuffers = bytes / 2;
-    isize bufferSize = bytesForBuffers / 4;
+    isize forImage = bytes / 3;
+    isize forTriangles = bytes / 3;
+    isize forScratch = bytes - (forImage + forTriangles);
 
-    arenaAllocCap(arena, u32, bufferSize, renderer.image);
-    arenaAllocCap(arena, V3f, bufferSize, renderer.vertices);
-    arenaAllocCap(arena, Color01, bufferSize, renderer.colors);
-    arenaAllocCap(arena, i32, bufferSize, renderer.indices);
-
-    renderer.scratch = createArenaFromArena(arena, bytes - bytesForBuffers);
+    arenaAllocCap(arena, u32, forImage, renderer.image);
+    renderer.triangles = createMeshStorage(arena, forTriangles);
+    renderer.scratch = createArenaFromArena(arena, forScratch);
 
     return renderer;
 }
@@ -731,9 +801,7 @@ createRenderer(Arena* arena, isize bytes) {
 function void
 rendererClearBuffers(Renderer* renderer) {
     renderer->scratch.used = 0;
-    renderer->vertices.len = 0;
-    renderer->colors.len = 0;
-    renderer->indices.len = 0;
+    meshStorageClearBuffers(&renderer->triangles);
 }
 
 function void
@@ -751,15 +819,6 @@ clearImage(Renderer* renderer) {
     }
 }
 
-function void
-rendererPushTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    assert(i1 < renderer->vertices.len && i2 < renderer->vertices.len && i3 < renderer->vertices.len);
-    assert(i1 < renderer->colors.len && i2 < renderer->colors.len && i3 < renderer->colors.len);
-    arrpush(renderer->indices, i1);
-    arrpush(renderer->indices, i2);
-    arrpush(renderer->indices, i3);
-}
-
 typedef struct Triangle {
     V2f  v1, v2, v3;
     f32  area;
@@ -767,10 +826,10 @@ typedef struct Triangle {
 } Triangle;
 
 function Triangle
-rendererPullTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    V3f v1og = arrget(renderer->vertices, i1);
-    V3f v2og = arrget(renderer->vertices, i2);
-    V3f v3og = arrget(renderer->vertices, i3);
+rendererPullTriangle(Renderer* renderer, TriangleIndices trig) {
+    V3f v1og = arrget(renderer->triangles.vertices, trig.i1);
+    V3f v2og = arrget(renderer->triangles.vertices, trig.i2);
+    V3f v3og = arrget(renderer->triangles.vertices, trig.i3);
 
     V2f imageDim = {(f32)renderer->image.width, (f32)renderer->image.height};
 
@@ -785,17 +844,17 @@ rendererPullTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
 }
 
 function void
-rendererFillTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    Triangle tr = rendererPullTriangle(renderer, i1, i2, i3);
+rendererFillTriangle(Renderer* renderer, TriangleIndices trig) {
+    Triangle tr = rendererPullTriangle(renderer, trig);
 
     V2f v1 = tr.v1;
     V2f v2 = tr.v2;
     V2f v3 = tr.v3;
 
     if (tr.area > 0 && !tr.isBehind) {
-        Color01 c1 = arrget(renderer->colors, i1);
-        Color01 c2 = arrget(renderer->colors, i2);
-        Color01 c3 = arrget(renderer->colors, i3);
+        Color01 c1 = arrget(renderer->triangles.colors, trig.i1);
+        Color01 c2 = arrget(renderer->triangles.colors, trig.i2);
+        Color01 c3 = arrget(renderer->triangles.colors, trig.i3);
 
         f32 xmin = min(v1.x, min(v2.x, v3.x));
         f32 ymin = min(v1.y, min(v2.y, v3.y));
@@ -936,8 +995,8 @@ drawContrastRect(Renderer* renderer, Rect2f rect) {
 }
 
 function void
-outlineTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
-    Triangle tr = rendererPullTriangle(renderer, i1, i2, i3);
+rendererOutlineTriangle(Renderer* renderer, TriangleIndices trig) {
+    Triangle tr = rendererPullTriangle(renderer, trig);
 
     V2f v1 = tr.v1;
     V2f v2 = tr.v2;
@@ -957,16 +1016,17 @@ outlineTriangle(Renderer* renderer, i32 i1, i32 i2, i32 i3) {
 
 function void
 rendererFillTriangles(Renderer* renderer) {
-    for (i32 start = 0; start < renderer->indices.len; start += 3) {
-        assert(start + 2 < renderer->indices.len);
-        rendererFillTriangle(renderer, renderer->indices.ptr[start], renderer->indices.ptr[start + 1], renderer->indices.ptr[start + 2]);
+    for (i32 ind = 0; ind < renderer->triangles.indices.len; ind++) {
+        TriangleIndices trig = renderer->triangles.indices.ptr[ind];
+        rendererFillTriangle(renderer, trig);
     }
 }
 
 function void
 rendererOutlineTriangles(Renderer* renderer) {
-    for (i32 start = 0; start < renderer->indices.len; start += 3) {
-        outlineTriangle(renderer, arrget(renderer->indices, start), arrget(renderer->indices, start + 1), arrget(renderer->indices, start + 2));
+    for (i32 ind = 0; ind < renderer->triangles.indices.len; ind++) {
+        TriangleIndices trig = renderer->triangles.indices.ptr[ind];
+        rendererOutlineTriangle(renderer, trig);
     }
 }
 
@@ -978,14 +1038,17 @@ typedef struct RendererMeshBuilder {
 
 function RendererMeshBuilder
 rendererBeginMesh(Renderer* renderer) {
-    RendererMeshBuilder builder = {renderer, renderer->vertices.len, renderer->indices.len};
+    RendererMeshBuilder builder = {renderer, renderer->triangles.vertices.len, renderer->triangles.indices.len};
     return builder;
 }
 
 function void
 rendererEndMesh(RendererMeshBuilder builder) {
-    for (i32 indexIndex = builder.firstIndexIndex; indexIndex < builder.renderer->indices.len; indexIndex++) {
-        builder.renderer->indices.ptr[indexIndex] += builder.firstVertexIndex;
+    for (i32 indexIndex = builder.firstIndexIndex; indexIndex < builder.renderer->triangles.indices.len; indexIndex++) {
+        TriangleIndices* trig = builder.renderer->triangles.indices.ptr + indexIndex;
+        trig->i1 += builder.firstVertexIndex;
+        trig->i2 += builder.firstVertexIndex;
+        trig->i3 += builder.firstVertexIndex;
     }
 }
 
@@ -993,16 +1056,6 @@ function void
 rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
     RendererMeshBuilder cubeInRendererBuilder = rendererBeginMesh(renderer);
 
-    Color01 colors[] = {
-        {.r = 1, .a = 1},
-        {.g = 1, .a = 1},
-        {.b = 1, .a = 1},
-        {.r = 1, .g = 1, .a = 1},
-        {.r = 1, .b = 1, .a = 1},
-        {.g = 1, .b = 1, .a = 1},
-        {.r = 1, .g = 1, .b = 1, .a = 1},
-        {.r = 0.5, .g = 1, .a = 1},
-    };
     for (i32 ind = 0; ind < mesh.vertices.len; ind++) {
         V3f vtxModel = mesh.vertices.ptr[ind];
 
@@ -1040,17 +1093,13 @@ rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
             vtxScreen = (V3f) {.xy = screen, .z_ = vtxCamera.z};
         }
 
-        arrpush(renderer->vertices, vtxScreen);
-        assert(ind < arrayCount(colors));
-        arrpush(renderer->colors, colors[ind]);
+        arrpush(renderer->triangles.vertices, vtxScreen);
+        arrpush(renderer->triangles.colors, arrget(mesh.colors, ind));
     }
 
-    for (i32 ind = 0; ind < mesh.indices.len; ind += 3) {
-        assert(ind + 2 < mesh.indices.len);
-        i32 cubeIndex1 = mesh.indices.ptr[ind];
-        i32 cubeIndex2 = mesh.indices.ptr[ind + 1];
-        i32 cubeIndex3 = mesh.indices.ptr[ind + 2];
-        rendererPushTriangle(renderer, cubeIndex1, cubeIndex2, cubeIndex3);
+    for (i32 ind = 0; ind < mesh.indices.len; ind++) {
+        TriangleIndices trig = mesh.indices.ptr[ind];
+        meshStorageAddTriangle(&renderer->triangles, trig);
     }
 
     rendererEndMesh(cubeInRendererBuilder);
@@ -1118,121 +1167,123 @@ function void
 drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHeight) {
     // NOTE(khvorov) Debug triangles from
     // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
-    arrpush(renderer->vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 5.5, .y = 1.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 1.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.5, .y = 1.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 1.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 5.75, .y = -0.25, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 5.75, .y = 0.75, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 4.75, .y = 0.75, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.75, .y = -0.25, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.75, .y = 0.75, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.75, .y = 0.75, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 7, .y = 0, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 7, .y = 1, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 6, .y = 1, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7, .y = 0, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7, .y = 1, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6, .y = 1, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 9.25, .y = 0.25, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9.25, .y = 0.25, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 4.75, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 4.75, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 14.5, .y = -0.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14.5, .y = -0.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 14, .y = 4, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 4, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 0.5, .y = 5.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 7, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 10, .y = 7, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 9, .y = 9, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 7, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 10, .y = 7, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 9, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 11, .y = 4, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 12, .y = 5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 11, .y = 6, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11, .y = 4, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 12, .y = 5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11, .y = 6, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
 
-    arrpush(renderer->vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 15, .y = 7, .z = 1}));
-    arrpush(renderer->vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 7, .z = 1}));
+    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
 
-    assert(renderer->colors.len == renderer->vertices.len);
+    assert(renderer->triangles.colors.len == renderer->triangles.vertices.len);
+    assert(renderer->triangles.vertices.len % 3 == 0);
 
     isize imageWidth = 16;
     isize imageHeight = 8;
-    for (isize ind = 0; ind < renderer->vertices.len; ind++) {
-        renderer->vertices.ptr[ind].xy = v2fhadamard(renderer->vertices.ptr[ind].xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
+    for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
+        renderer->triangles.vertices.ptr[ind].xy = v2fhadamard(renderer->triangles.vertices.ptr[ind].xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
     }
 
-    for (isize ind = 0; ind < renderer->vertices.len; ind += 3) {
-        rendererPushTriangle(renderer, ind, ind + 1, ind + 2);
+    for (isize ind = 0; ind < renderer->triangles.vertices.len; ind += 3) {
+        TriangleIndices trig = {ind, ind + 1, ind + 2};
+        meshStorageAddTriangle(&renderer->triangles, trig);
     }
 
     setImageSize(renderer, imageWidth, imageHeight);
@@ -1247,14 +1298,14 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
         isize imageScaleY = finalImageHeight / imageHeight;
 
         V2f offset = v2fhadamard(v2fscale((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
-        for (isize ind = 0; ind < renderer->vertices.len; ind++) {
-            renderer->vertices.ptr[ind].xy = v2fadd(renderer->vertices.ptr[ind].xy, offset);
+        for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
+            renderer->triangles.vertices.ptr[ind].xy = v2fadd(renderer->triangles.vertices.ptr[ind].xy, offset);
         }
 
         rendererOutlineTriangles(renderer);
 
-        for (isize ind = 0; ind < renderer->vertices.len; ind++) {
-            renderer->vertices.ptr[ind].xy = v2fsub(renderer->vertices.ptr[ind].xy, offset);
+        for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
+            renderer->triangles.vertices.ptr[ind].xy = v2fsub(renderer->triangles.vertices.ptr[ind].xy, offset);
         }
     }
 }
@@ -1471,7 +1522,7 @@ runTests(Arena* arena) {
         assert(store.vertices.len == cube1.vertices.len);
         assert(store.indices.len == cube1.indices.len);
         assert(v3feq(cube1.vertices.ptr[0], (V3f) {.x = -1, 1, -1}));
-        assert(cube1.indices.ptr[0] == 0);
+        assert(cube1.indices.ptr[0].i1 == 0);
 
         Mesh cube2 = createCubeMesh(&store, 4, (V3f) {}, createRotor3f());
         assert(store.vertices.len == cube1.vertices.len + cube2.vertices.len);
@@ -1479,7 +1530,7 @@ runTests(Arena* arena) {
         assert(cube2.vertices.ptr == cube1.vertices.ptr + cube1.vertices.len);
         assert(cube2.indices.ptr == cube1.indices.ptr + cube1.indices.len);
         assert(v3feq(cube2.vertices.ptr[0], (V3f) {.x = -2, 2, -2}));
-        assert(cube2.indices.ptr[0] == 0);
+        assert(cube2.indices.ptr[0].i1 == 0);
     }
 
     {
@@ -1710,7 +1761,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         timeBeginPeriod(caps.wPeriodMin);
     }
 
+    bool showDebugTriangles = false;
+
     for (;;) {
+        inputBeginFrame(&input);
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
             switch (msg.message) {
                 case WM_QUIT: ExitProcess(0); break;
@@ -1732,11 +1786,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                         case VK_RIGHT: key = InputKey_RotateZX; break;
                         case 'Q': key = InputKey_RotateXY; break;
                         case 'E': key = InputKey_RotateYX; break;
+                        case VK_TAB: key = InputKey_ToggleDebugTriangles; break;
                         default: keyFound = false; break;
                     }
                     if (keyFound) {
-                        bool state = msg.message == WM_KEYDOWN;
-                        input.keysDown[key] = state;
+                        if (msg.message == WM_KEYDOWN) {
+                            inputKeyDown(&input, key);
+                        } else {
+                            inputKeyUp(&input, key);
+                        }
                     }
                 } break;
 
@@ -1751,41 +1809,41 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             f32 cameraMovementInc = 0.1;
             f32 cameraRotationInc = 1;
 
-            if (input.keysDown[InputKey_Forward]) {
+            if (input.keys[InputKey_Forward].down) {
                 camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 0, 1}), cameraMovementInc), camera.pos);
             }
-            if (input.keysDown[InputKey_Back]) {
+            if (input.keys[InputKey_Back].down) {
                 camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 0, 1}), -cameraMovementInc), camera.pos);
             }
-            if (input.keysDown[InputKey_Right]) {
+            if (input.keys[InputKey_Right].down) {
                 camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 1, 0, 0}), cameraMovementInc), camera.pos);
             }
-            if (input.keysDown[InputKey_Left]) {
+            if (input.keys[InputKey_Left].down) {
                 camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 1, 0, 0}), -cameraMovementInc), camera.pos);
             }
-            if (input.keysDown[InputKey_Up]) {
+            if (input.keys[InputKey_Up].down) {
                 camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 1, 0}), cameraMovementInc), camera.pos);
             }
-            if (input.keysDown[InputKey_Down]) {
+            if (input.keys[InputKey_Down].down) {
                 camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 1, 0}), -cameraMovementInc), camera.pos);
             }
 
-            if (input.keysDown[InputKey_RotateXY]) {
+            if (input.keys[InputKey_RotateXY].down) {
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 1, 0, 0));
             }
-            if (input.keysDown[InputKey_RotateYX]) {
+            if (input.keys[InputKey_RotateYX].down) {
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, -1, 0, 0));
             }
-            if (input.keysDown[InputKey_RotateXZ]) {
+            if (input.keys[InputKey_RotateXZ].down) {
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 1, 0));
             }
-            if (input.keysDown[InputKey_RotateZX]) {
+            if (input.keys[InputKey_RotateZX].down) {
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, -1, 0));
             }
-            if (input.keysDown[InputKey_RotateYZ]) {
+            if (input.keys[InputKey_RotateYZ].down) {
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, 1));
             }
-            if (input.keysDown[InputKey_RotateZY]) {
+            if (input.keys[InputKey_RotateZY].down) {
                 camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, -1));
             }
 
@@ -1793,11 +1851,14 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             cube1.orientation = rotor3fMulRotor3f(cube1.orientation, cubeRotation1);
             Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
             cube2.orientation = rotor3fMulRotor3f(cube2.orientation, cubeRotation2);
+
+            if (inputKeyWasPressed(&input, InputKey_ToggleDebugTriangles)) {
+                showDebugTriangles = !showDebugTriangles;
+            }
         }
 
         rendererClearBuffers(&renderer);
 
-        bool showDebugTriangles = false;
         if (showDebugTriangles) {
             drawDebugTriangles(&renderer, windowWidth, windowHeight);
         } else {
