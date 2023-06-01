@@ -172,15 +172,24 @@ fmtStr(StrBuilder* builder, Str str) {
 }
 
 function void
-fmtInt(StrBuilder* builder, isize val) {
+fmtInt(StrBuilder* builder, isize val, isize boxSize) {
     assert(val >= 0);
     if (val == 0) {
+        while (boxSize > 1) {
+            arrpush(*builder, ' ');
+            boxSize -= 1;
+        }
         arrpush(*builder, '0');
     } else {
         isize pow10 = 1;
-        for (; val / pow10 > 0; pow10 *= 10) {}
+        isize digitCount = 0;
+        for (; val / pow10 > 0; pow10 *= 10, digitCount++) {}
         pow10 /= 10;
-        for (isize curVal = val; pow10 > 0; pow10 /= 10) {
+        while (boxSize > digitCount) {
+            arrpush(*builder, ' ');
+            boxSize -= 1;
+        }
+        for (isize curVal = val; pow10 > 0 && boxSize > 0; pow10 /= 10, boxSize--) {
             isize digit = curVal / pow10;
             assert(digit >= 0 && digit <= 9);
             char digitChar = digit + '0';
@@ -191,14 +200,27 @@ fmtInt(StrBuilder* builder, isize val) {
 }
 
 function void
-fmtF32(StrBuilder* builder, f32 val) {
+fmtF32(StrBuilder* builder, f32 val, isize boxSize) {
     assert(val >= 0);
+    assert(boxSize > 1 && ((boxSize & 1) == 1));
+
+    isize boxForDigits = boxSize - 1;
+    isize boxPerSide = boxForDigits / 2;
+    isize maxVal = 1;
+    for (isize ind = 0; ind < boxPerSide; ind++) {
+        maxVal *= 10;
+    }
+
     isize whole = (isize)val;
-    fmtInt(builder, whole);
-    f32   frac = val - (f32)whole;
-    isize fracInt = (isize)(frac * 100 + 0.5f);
-    fmtStr(builder, STR("."));
-    fmtInt(builder, fracInt);
+    if (whole > maxVal - 1) {
+        assert(!"unimplemented");
+    } else {
+        fmtInt(builder, whole, boxPerSide);
+        f32   frac = val - (f32)whole;
+        isize fracInt = (isize)(frac * (f32)(maxVal) + 0.5f);
+        fmtStr(builder, STR("."));
+        fmtInt(builder, fracInt, boxPerSide);
+    }
 }
 
 function void
@@ -474,14 +496,31 @@ color01eq(Color01 c1, Color01 c2) {
 }
 
 function Color01
+color01Lerp(Color01 c1, Color01 c2, f32 by) {
+    Color01 result = {
+        .r = lerp(c1.r, c2.r, by),
+        .g = lerp(c1.g, c2.g, by),
+        .b = lerp(c1.b, c2.b, by),
+        .a = lerp(c1.a, c2.a, by),
+    };
+    return result;
+}
+
+function Color01
 color01add(Color01 c1, Color01 c2) {
     Color01 result = {.r = c1.r + c2.r, .g = c1.g + c2.g, .b = c1.b + c2.b, .a = c1.a + c2.a};
     return result;
 }
 
 function Color01
-color01mul(Color01 c1, f32 by) {
+color01scale(Color01 c1, f32 by) {
     Color01 result = {.r = c1.r * by, .g = c1.g * by, .b = c1.b * by, .a = c1.a * by};
+    return result;
+}
+
+function Color01
+color01mul(Color01 c1, Color01 c2) {
+    Color01 result = {.r = c1.r * c2.r, .g = c1.g * c2.g, .b = c1.b * c2.b, .a = c1.a * c2.a};
     return result;
 }
 
@@ -903,7 +942,7 @@ rendererFillTriangle(Renderer* renderer, TriangleIndices trig) {
                     f32 cross2scaled = cross2 / tr.area;
                     f32 cross3scaled = cross3 / tr.area;
 
-                    Color01 color01 = color01add(color01add(color01mul(c1, cross2scaled), color01mul(c2, cross3scaled)), color01mul(c3, cross1scaled));
+                    Color01 color01 = color01add(color01add(color01scale(c1, cross2scaled), color01scale(c2, cross3scaled)), color01scale(c3, cross1scaled));
 
                     i32 index = ycoord * renderer->image.width + xcoord;
                     assert(index < renderer->image.width * renderer->image.height);
@@ -1360,6 +1399,7 @@ typedef struct Glyph {
 
 typedef struct Font {
     Glyph ascii[128];
+    i32   lineAdvance;
     Arena arena;
 } Font;
 
@@ -1371,7 +1411,7 @@ createFont(Arena* arena, isize bytes) {
 }
 
 function void
-drawGlyph(Glyph glyph, Texture dest, i32 x, i32 y) {
+drawGlyph(Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) {
     for (i32 row = 0; row < glyph.height; row++) {
         i32 destRow = y + row;
         assert(destRow < dest.height);
@@ -1381,22 +1421,25 @@ drawGlyph(Glyph glyph, Texture dest, i32 x, i32 y) {
 
             i32      index = row * glyph.width + col;
             u8       alpha = glyph.ptr[index];
-            Color255 color255 = {.r = alpha, .g = alpha, .b = alpha, .a = 255};
-            u32      color32 = color255tou32(color255);
+            Color255 og255 = {.r = alpha, .g = alpha, .b = alpha, .a = 255};
+            Color01  og01 = color255to01(og255);
+            Color01  dest01 = color01mul(og01, color);
+            Color255 dest255 = color01to255(dest01);
+            u32      dest32 = color255tou32(dest255);
 
             i32 destIndex = destRow * dest.width + destCol;
-            dest.ptr[destIndex] = color32;
+            dest.ptr[destIndex] = dest32;
         }
     }
 }
 
 function void
-drawStr(Font* font, Str str, Texture dest) {
+drawStr(Font* font, Str str, Texture dest, i32 top, Color01 color) {
     i32 curX = 0;
     for (isize ind = 0; ind < str.len; ind++) {
         char  ch = str.ptr[ind];
         Glyph glyph = font->ascii[(u8)ch];
-        drawGlyph(glyph, dest, curX, 0);
+        drawGlyph(glyph, dest, curX, top, color);
         curX += glyph.advance;
     }
 }
@@ -1439,44 +1482,66 @@ debugLogPushTimings(DebugLog* log, FrameTimings timings) {
     arrpush(log->timings, timings);
 }
 
+typedef enum IterResult {
+    IterResult_NoMore,
+    IterResult_More,
+} IterResult;
+
+typedef struct CircleIter {
+    isize mostRecentIndex;
+    isize totalEntries;
+    isize windowSize;
+    isize iterCount;
+    isize currentIndex;
+} CircleIter;
+
+function CircleIter
+createCircleIter(isize mostRecentIndex, isize totalEntries, isize windowSize) {
+    CircleIter iter = {.mostRecentIndex = mostRecentIndex, .totalEntries = totalEntries, .windowSize = windowSize};
+    return iter;
+}
+
+function IterResult
+circleIterNext(CircleIter* iter) {
+    IterResult result = IterResult_NoMore;
+    if (iter->iterCount < iter->windowSize) {
+        result = IterResult_More;
+
+        isize firstIndex = (iter->mostRecentIndex + 1) - iter->windowSize;
+        if (firstIndex < 0) {
+            firstIndex = iter->totalEntries + firstIndex;
+        }
+
+        isize thisIndex = firstIndex + iter->iterCount;
+        if (thisIndex >= iter->totalEntries) {
+            thisIndex -= iter->totalEntries;
+        }
+
+        iter->currentIndex = thisIndex;
+
+        iter->iterCount += 1;
+    }
+    return result;
+}
+
 typedef struct FrameTimingsIter {
     DebugLog*    log;
-    isize        totalFrames;
-    isize        iterCount;
+    CircleIter   circle;
     FrameTimings timings;
 } FrameTimingsIter;
 
 function FrameTimingsIter
 createFrameTimingsIter(DebugLog* log, isize frameCount) {
     assert(frameCount <= log->timings.cap);
-    FrameTimingsIter iter = {.log = log, .totalFrames = frameCount};
+    FrameTimingsIter iter = {.log = log, .circle = createCircleIter(log->timings.len - 1, log->timings.cap, frameCount)};
     return iter;
 }
 
-typedef enum IterResult {
-    IterResult_NoMore,
-    IterResult_More,
-} IterResult;
-
 function IterResult
 frameTimingsIterNext(FrameTimingsIter* iter) {
-    IterResult result = IterResult_NoMore;
-    if (iter->iterCount < iter->totalFrames) {
-        result = IterResult_More;
-
-        isize firstIndex = iter->log->timings.len - iter->totalFrames;
-        if (firstIndex < 0) {
-            firstIndex = iter->log->timings.cap + firstIndex;
-        }
-
-        isize thisIndex = firstIndex + iter->iterCount;
-        if (thisIndex >= iter->log->timings.cap) {
-            thisIndex -= iter->log->timings.cap;
-        }
-
-        iter->timings = iter->log->timings.ptr[thisIndex];
-
-        iter->iterCount += 1;
+    IterResult result = circleIterNext(&iter->circle);
+    if (result) {
+        iter->timings = iter->log->timings.ptr[iter->circle.currentIndex];
     }
     return result;
 }
@@ -1590,7 +1655,7 @@ runTests(Arena* arena) {
 
     {
         assert(color01eq(color01add((Color01) {1, 2, 3, 4}, (Color01) {5, 6, 7, 8}), (Color01) {6, 8, 10, 12}));
-        assert(color01eq(color01mul((Color01) {1, 2, 3, 4}, 2), (Color01) {2, 4, 6, 8}));
+        assert(color01eq(color01scale((Color01) {1, 2, 3, 4}, 2), (Color01) {2, 4, 6, 8}));
     }
 
     {
@@ -1634,16 +1699,16 @@ runTests(Arena* arena) {
         fmtStr(&builder, STR(" and 2 "));
         assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 ")));
 
-        fmtInt(&builder, 123);
+        fmtInt(&builder, 123, 3);
         assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123")));
         fmtStr(&builder, STR(" "));
 
-        fmtInt(&builder, 0);
+        fmtInt(&builder, 0, 1);
         assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0")));
         fmtStr(&builder, STR(" "));
 
-        fmtF32(&builder, 123.4567);
-        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0 123.46")));
+        fmtF32(&builder, 23.4567, 5);
+        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0 23.46")));
 
         fmtNull(&builder);
         assert(builder.ptr[builder.len - 1] == '\0');
@@ -1679,7 +1744,7 @@ runTests(Arena* arena) {
                 FrameTimings timings = iter.timings;
                 assert(timings.ms[FrameTimingID_Work] == expected[ind]);
             }
-            assert(iter.iterCount == 4);
+            assert(iter.circle.iterCount == 4);
         }
 
         {
@@ -1708,7 +1773,7 @@ runTests(Arena* arena) {
                 FrameTimings timings = iter.timings;
                 assert(timings.ms[FrameTimingID_Work] == expected[ind]);
             }
-            assert(iter.iterCount == 3);
+            assert(iter.circle.iterCount == 3);
         }
     }
 
@@ -1836,6 +1901,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     }
 
     // NOTE(khvorov) Load font
+    font->lineAdvance = 16;
     for (u8 ch = 0; ch < 128; ch++) {
         Glyph* glyph = font->ascii + ch;
         glyph->width = 8;
@@ -1873,6 +1939,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ClockMarker  frameStart = getClockMarker();
     FrameTimings frameTimings = {};
     bool         showDebugTriangles = false;
+    CircleIter   debugLines = createCircleIter(0, 10, 10);
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
     {
@@ -1994,24 +2061,43 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             debugLogPushTimings(&debug, frameTimings);
 
             {
-                TempMemory temp = beginTempMemory(&scratch);
+                Texture dest = {renderer.image.ptr, renderer.image.width, renderer.image.height};
+                drawStr(font, STR("work  sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
 
-                StrBuilder builder = {};
-                arenaAllocCap(&scratch, char, 1000, builder);
+                for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug, debugLines.windowSize); frameTimingsIterNext(&timingsIter);) {
+                    TempMemory temp = beginTempMemory(&scratch);
 
-                fmtStr(&builder, STR("last frame work: "));
-                fmtF32(&builder, frameTimings.ms[FrameTimingID_Work]);
-                fmtStr(&builder, STR("ms; sleep: "));
-                fmtF32(&builder, frameTimings.ms[FrameTimingID_Sleep]);
-                fmtStr(&builder, STR("ms; spin: "));
-                fmtF32(&builder, frameTimings.ms[FrameTimingID_Spin]);
-                fmtStr(&builder, STR("ms; total: "));
-                fmtF32(&builder, frameTimings.ms[FrameTimingID_Work] + frameTimings.ms[FrameTimingID_Sleep] + frameTimings.ms[FrameTimingID_Spin]);
-                fmtStr(&builder, STR("ms"));
+                    assert(circleIterNext(&debugLines));
 
-                drawStr(font, (Str) {builder.ptr, builder.len}, (Texture) {renderer.image.ptr, renderer.image.width, renderer.image.height});
+                    StrBuilder builder = {};
+                    arenaAllocCap(&scratch, char, 1000, builder);
 
-                endTempMemory(temp);
+                    FrameTimings tm = timingsIter.timings;
+
+                    i32 charsPerNumber = 5;
+                    fmtF32(&builder, tm.ms[FrameTimingID_Work], charsPerNumber);
+                    fmtStr(&builder, STR(" "));
+                    fmtF32(&builder, tm.ms[FrameTimingID_Sleep], charsPerNumber);
+                    fmtStr(&builder, STR(" "));
+                    fmtF32(&builder, tm.ms[FrameTimingID_Spin], charsPerNumber);
+                    fmtStr(&builder, STR(" "));
+                    fmtF32(&builder, tm.ms[FrameTimingID_Work] + tm.ms[FrameTimingID_Sleep] + tm.ms[FrameTimingID_Spin], charsPerNumber);
+
+                    Color01 start = {.r = 1, .g = 1, .b = 1, .a = 1};
+                    Color01 end = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
+                    f32     by = (f32)(debugLines.iterCount - 1) / (f32)(debugLines.windowSize - 1);
+                    Color01 color = color01Lerp(start, end, by);
+
+                    drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.windowSize - debugLines.currentIndex + 1), color);
+
+                    endTempMemory(temp);
+                }
+
+                debugLines.iterCount = 0;
+                debugLines.mostRecentIndex -= 1;
+                if (debugLines.mostRecentIndex < 0) {
+                    debugLines.mostRecentIndex = debugLines.windowSize - 1;
+                }
             }
         }
 
