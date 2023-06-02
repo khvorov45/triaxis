@@ -171,55 +171,96 @@ fmtStr(StrBuilder* builder, Str str) {
     builder->len += str.len;
 }
 
+typedef enum FmtAlign {
+    FmtAlign_Left,
+    FmtAlign_Right,
+} FmtAlign;
+
+typedef struct FmtInt {
+    isize    chars;
+    FmtAlign align;
+    bool     disallowOverflow;
+    char     padChar;
+} FmtInt;
+
 function void
-fmtInt(StrBuilder* builder, isize val, isize boxSize) {
+fmtInt(StrBuilder* builder, isize val, FmtInt spec) {
+    assert(spec.chars >= 0);
     assert(val >= 0);
-    if (val == 0) {
-        while (boxSize > 1) {
-            arrpush(*builder, ' ');
-            boxSize -= 1;
+
+    if (spec.padChar == '\0') {
+        spec.padChar = ' ';
+    }
+
+    isize pow10 = 1;
+    isize digitCount = 1;
+    for (isize valCopy = val / 10; valCopy / pow10 > 0; pow10 *= 10, digitCount++) {}
+
+    if (spec.disallowOverflow && spec.chars < digitCount) {
+        assert(!"overflow");
+    }
+
+    if (spec.align == FmtAlign_Right) {
+        while (spec.chars > digitCount) {
+            arrpush(*builder, spec.padChar);
+            spec.chars -= 1;
         }
-        arrpush(*builder, '0');
-    } else {
-        isize pow10 = 1;
-        isize digitCount = 0;
-        for (; val / pow10 > 0; pow10 *= 10, digitCount++) {}
-        pow10 /= 10;
-        while (boxSize > digitCount) {
-            arrpush(*builder, ' ');
-            boxSize -= 1;
-        }
-        for (isize curVal = val; pow10 > 0 && boxSize > 0; pow10 /= 10, boxSize--) {
-            isize digit = curVal / pow10;
-            assert(digit >= 0 && digit <= 9);
-            char digitChar = digit + '0';
-            arrpush(*builder, digitChar);
-            curVal -= digit * pow10;
+    }
+
+    for (isize curVal = val; pow10 > 0 && spec.chars > 0; pow10 /= 10, spec.chars--) {
+        isize digit = curVal / pow10;
+        assert(digit >= 0 && digit <= 9);
+        char digitChar = digit + '0';
+        arrpush(*builder, digitChar);
+        curVal -= digit * pow10;
+    }
+
+    if (spec.align == FmtAlign_Left) {
+        while (spec.chars > 0) {
+            arrpush(*builder, spec.padChar);
+            spec.chars -= 1;
         }
     }
 }
 
-function void
-fmtF32(StrBuilder* builder, f32 val, isize boxSize) {
-    assert(val >= 0);
-    assert(boxSize > 1 && ((boxSize & 1) == 1));
+typedef struct FmtF32 {
+    isize charsLeft;
+    isize charsRight;
+} FmtF32;
 
-    isize boxForDigits = boxSize - 1;
-    isize boxPerSide = boxForDigits / 2;
-    isize maxVal = 1;
-    for (isize ind = 0; ind < boxPerSide; ind++) {
-        maxVal *= 10;
+function void
+fmtF32(StrBuilder* builder, f32 val, FmtF32 spec) {
+    assert(val >= 0);
+
+    isize maxValLeft = 1;
+    for (isize ind = 0; ind < spec.charsLeft; ind++) {
+        maxValLeft *= 10;
     }
 
+    isize maxValRight = 1;
+    for (isize ind = 0; ind < spec.charsRight; ind++) {
+        maxValRight *= 10;
+    }
+
+    bool  overflow = false;
     isize whole = (isize)val;
-    if (whole > maxVal - 1) {
-        assert(!"unimplemented");
-    } else {
-        fmtInt(builder, whole, boxPerSide);
-        f32   frac = val - (f32)whole;
-        isize fracInt = (isize)(frac * (f32)(maxVal) + 0.5f);
-        fmtStr(builder, STR("."));
-        fmtInt(builder, fracInt, boxPerSide);
+    if (whole > maxValLeft - 1) {
+        overflow = true;
+        f32 epsilon = 1.0f / (f32)maxValRight;
+        val = maxValLeft - epsilon;
+        whole = (isize)val;
+    }
+    assert(whole <= maxValLeft - 1);
+
+    f32   frac = val - (f32)whole;
+    isize fracInt = (isize)((frac * (f32)(maxValRight)) + 0.5f);
+
+    fmtInt(builder, whole, (FmtInt) {.chars = spec.charsLeft, .align = FmtAlign_Right, .disallowOverflow = true});
+    fmtStr(builder, STR("."));
+    fmtInt(builder, fracInt, (FmtInt) {.chars = spec.charsRight, .align = FmtAlign_Left, .padChar = '0'});
+
+    if (overflow) {
+        builder->ptr[builder->len - 1] = '+';
     }
 }
 
@@ -1699,19 +1740,27 @@ runTests(Arena* arena) {
         fmtStr(&builder, STR(" and 2 "));
         assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 ")));
 
-        fmtInt(&builder, 123, 3);
+        fmtInt(&builder, 123, (FmtInt) {.chars = 3});
         assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123")));
         fmtStr(&builder, STR(" "));
 
-        fmtInt(&builder, 0, 1);
+        fmtInt(&builder, 0, (FmtInt) {.chars = 1});
         assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0")));
         fmtStr(&builder, STR(" "));
 
-        fmtF32(&builder, 23.4567, 5);
-        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0 23.46")));
+        fmtF32(&builder, 123.4567, (FmtF32) {.charsLeft = 3, .charsRight = 2});
+        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0 123.46")));
 
         fmtNull(&builder);
         assert(builder.ptr[builder.len - 1] == '\0');
+
+        builder.len = 0;
+        fmtInt(&builder, 123, (FmtInt) {.chars = 5, .align = FmtAlign_Left});
+        assert(streq((Str) {builder.ptr, builder.len}, STR("123  ")));
+
+        builder.len = 0;
+        fmtF32(&builder, 123.0f, (FmtF32) {.charsLeft = 2, .charsRight = 2});
+        assert(streq((Str) {builder.ptr, builder.len}, STR("99.9+")));
     }
 
     {
@@ -2074,21 +2123,21 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
                     FrameTimings tm = timingsIter.timings;
 
-                    i32 charsPerNumber = 5;
-                    fmtF32(&builder, tm.ms[FrameTimingID_Work], charsPerNumber);
+                    FmtF32 fmtSpec = {.charsLeft = 2, .charsRight = 2};
+                    fmtF32(&builder, tm.ms[FrameTimingID_Work], fmtSpec);
                     fmtStr(&builder, STR(" "));
-                    fmtF32(&builder, tm.ms[FrameTimingID_Sleep], charsPerNumber);
+                    fmtF32(&builder, tm.ms[FrameTimingID_Sleep], fmtSpec);
                     fmtStr(&builder, STR(" "));
-                    fmtF32(&builder, tm.ms[FrameTimingID_Spin], charsPerNumber);
+                    fmtF32(&builder, tm.ms[FrameTimingID_Spin], fmtSpec);
                     fmtStr(&builder, STR(" "));
-                    fmtF32(&builder, tm.ms[FrameTimingID_Work] + tm.ms[FrameTimingID_Sleep] + tm.ms[FrameTimingID_Spin], charsPerNumber);
+                    fmtF32(&builder, tm.ms[FrameTimingID_Work] + tm.ms[FrameTimingID_Sleep] + tm.ms[FrameTimingID_Spin], fmtSpec);
 
                     Color01 start = {.r = 1, .g = 1, .b = 1, .a = 1};
                     Color01 end = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
                     f32     by = (f32)(debugLines.iterCount - 1) / (f32)(debugLines.windowSize - 1);
                     Color01 color = color01Lerp(start, end, by);
 
-                    drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.windowSize - debugLines.currentIndex + 1), color);
+                    drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.windowSize - debugLines.currentIndex), color);
 
                     endTempMemory(temp);
                 }
