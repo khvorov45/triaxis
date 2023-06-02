@@ -1532,6 +1532,7 @@ typedef struct CircleIter {
     isize mostRecentIndex;
     isize totalEntries;
     isize windowSize;
+    isize stride;
     isize iterCount;
     isize currentIndex;
 } CircleIter;
@@ -1565,16 +1566,45 @@ circleIterNext(CircleIter* iter) {
     return result;
 }
 
+function void
+circleIterSetMostRecent(CircleIter* iter, isize newMostRecent) {
+    if (newMostRecent < 0) {
+        newMostRecent = iter->totalEntries + newMostRecent;
+    }
+    if (newMostRecent >= iter->totalEntries) {
+        newMostRecent = iter->totalEntries - newMostRecent;
+    }
+    assert(newMostRecent >= 0 && newMostRecent < iter->totalEntries);
+    iter->mostRecentIndex = newMostRecent;
+}
+
+typedef struct LagCircleIter {
+    CircleIter circle;
+    isize      lag;
+    isize      timesAdvanced;
+} LagCircleIter;
+
+function void
+lagCircleIterResetAndSetMostRecent(LagCircleIter* iter, isize newMostRecent) {
+    iter->circle.iterCount = 0;
+    iter->timesAdvanced += 1;
+    if (iter->timesAdvanced == iter->lag) {
+        iter->timesAdvanced = 0;
+        circleIterSetMostRecent(&iter->circle, newMostRecent);
+    }
+}
+
 typedef struct FrameTimingsIter {
     DebugLog*    log;
     CircleIter   circle;
+    isize        stride;
     FrameTimings timings;
 } FrameTimingsIter;
 
 function FrameTimingsIter
-createFrameTimingsIter(DebugLog* log, isize frameCount) {
+createFrameTimingsIter(DebugLog* log, isize frameCount, isize stride) {
     assert(frameCount <= log->timings.cap);
-    FrameTimingsIter iter = {.log = log, .circle = createCircleIter(log->timings.len - 1, log->timings.cap, frameCount)};
+    FrameTimingsIter iter = {.log = log, .circle = createCircleIter((log->timings.len - 1) / stride, log->timings.cap / stride, frameCount), .stride = stride};
     return iter;
 }
 
@@ -1582,7 +1612,9 @@ function IterResult
 frameTimingsIterNext(FrameTimingsIter* iter) {
     IterResult result = circleIterNext(&iter->circle);
     if (result) {
-        iter->timings = iter->log->timings.ptr[iter->circle.currentIndex];
+        isize index = iter->circle.currentIndex * iter->stride;
+        assert(index < iter->log->timings.cap);
+        iter->timings = iter->log->timings.ptr[index];
     }
     return result;
 }
@@ -1786,7 +1818,7 @@ runTests(Arena* arena) {
         }
 
         {
-            FrameTimingsIter iter = createFrameTimingsIter(&log, 4);
+            FrameTimingsIter iter = createFrameTimingsIter(&log, 4, 1);
             f32              expected[] = {0, 1, 2, 3};
             assert(arrayCount(expected) <= log.timings.cap);
             for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
@@ -1815,7 +1847,7 @@ runTests(Arena* arena) {
         }
 
         {
-            FrameTimingsIter iter = createFrameTimingsIter(&log, 3);
+            FrameTimingsIter iter = createFrameTimingsIter(&log, 3, 1);
             f32              expected[] = {2, 3, 99};
             assert(arrayCount(expected) <= log.timings.cap);
             for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
@@ -1983,12 +2015,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {.x = 1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
     Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {.x = -1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
 
-    f32          msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
-    Clock        clock = getClock();
-    ClockMarker  frameStart = getClockMarker();
-    FrameTimings frameTimings = {};
-    bool         showDebugTriangles = false;
-    CircleIter   debugLines = createCircleIter(0, 10, 10);
+    f32           msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
+    Clock         clock = getClock();
+    ClockMarker   frameStart = getClockMarker();
+    FrameTimings  frameTimings = {};
+    bool          showDebugTriangles = false;
+    LagCircleIter debugLines = {.circle = createCircleIter(0, 10, 10), .lag = 10};
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
     {
@@ -2113,10 +2145,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 Texture dest = {renderer.image.ptr, renderer.image.width, renderer.image.height};
                 drawStr(font, STR("work  sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
 
-                for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug, debugLines.windowSize); frameTimingsIterNext(&timingsIter);) {
+                for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug, debugLines.circle.windowSize, debugLines.lag); frameTimingsIterNext(&timingsIter);) {
                     TempMemory temp = beginTempMemory(&scratch);
 
-                    assert(circleIterNext(&debugLines));
+                    assert(circleIterNext(&debugLines.circle));
 
                     StrBuilder builder = {};
                     arenaAllocCap(&scratch, char, 1000, builder);
@@ -2132,21 +2164,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                     fmtStr(&builder, STR(" "));
                     fmtF32(&builder, tm.ms[FrameTimingID_Work] + tm.ms[FrameTimingID_Sleep] + tm.ms[FrameTimingID_Spin], fmtSpec);
 
-                    Color01 start = {.r = 1, .g = 1, .b = 1, .a = 1};
-                    Color01 end = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
-                    f32     by = (f32)(debugLines.iterCount - 1) / (f32)(debugLines.windowSize - 1);
+                    Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
+                    Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
+                    f32     by = (f32)(debugLines.circle.iterCount - 1) / (f32)(debugLines.circle.windowSize - 1);
                     Color01 color = color01Lerp(start, end, by);
 
-                    drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.windowSize - debugLines.currentIndex), color);
+                    drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.circle.currentIndex + 1), color);
 
                     endTempMemory(temp);
                 }
 
-                debugLines.iterCount = 0;
-                debugLines.mostRecentIndex -= 1;
-                if (debugLines.mostRecentIndex < 0) {
-                    debugLines.mostRecentIndex = debugLines.windowSize - 1;
-                }
+                lagCircleIterResetAndSetMostRecent(&debugLines, debugLines.circle.mostRecentIndex + 1);
             }
         }
 
