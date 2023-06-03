@@ -1500,6 +1500,15 @@ typedef struct FrameTimings {
     f32 ms[FrameTimingID_Count];
 } FrameTimings;
 
+function f32
+frameTimingsSum(FrameTimings timings) {
+    f32 result = 0;
+    for (isize ind = 0; ind < FrameTimingID_Count; ind++) {
+        result += timings.ms[ind];
+    }
+    return result;
+}
+
 typedef struct DebugLog {
     struct {
         FrameTimings* ptr;
@@ -1511,7 +1520,13 @@ typedef struct DebugLog {
 function DebugLog
 createDebugLog(Arena* arena, isize bytes) {
     DebugLog log = {};
-    arenaAllocCap(arena, FrameTimings, bytes, log.timings);
+    isize    ntimings = bytes / sizeof(FrameTimings);
+    if (ntimings > 1000) {
+        ntimings = ntimings - (ntimings % 1000);
+    }
+    assert(ntimings > 0);
+    log.timings.cap = ntimings;
+    log.timings.ptr = arenaAllocArray(arena, FrameTimings, log.timings.cap);
     return log;
 }
 
@@ -1532,13 +1547,13 @@ typedef struct CircleIter {
     isize mostRecentIndex;
     isize totalEntries;
     isize windowSize;
-    isize stride;
     isize iterCount;
     isize currentIndex;
 } CircleIter;
 
 function CircleIter
 createCircleIter(isize mostRecentIndex, isize totalEntries, isize windowSize) {
+    assert(windowSize <= totalEntries && windowSize >= 0);
     CircleIter iter = {.mostRecentIndex = mostRecentIndex, .totalEntries = totalEntries, .windowSize = windowSize};
     return iter;
 }
@@ -1558,7 +1573,7 @@ circleIterNext(CircleIter* iter) {
         if (thisIndex >= iter->totalEntries) {
             thisIndex -= iter->totalEntries;
         }
-
+        assert(thisIndex >= 0 && thisIndex < iter->totalEntries);
         iter->currentIndex = thisIndex;
 
         iter->iterCount += 1;
@@ -1604,6 +1619,7 @@ typedef struct FrameTimingsIter {
 function FrameTimingsIter
 createFrameTimingsIter(DebugLog* log, isize frameCount, isize stride) {
     assert(frameCount <= log->timings.cap);
+    assert(log->timings.cap % stride == 0);
     FrameTimingsIter iter = {.log = log, .circle = createCircleIter((log->timings.len - 1) / stride, log->timings.cap / stride, frameCount), .stride = stride};
     return iter;
 }
@@ -1612,9 +1628,21 @@ function IterResult
 frameTimingsIterNext(FrameTimingsIter* iter) {
     IterResult result = circleIterNext(&iter->circle);
     if (result) {
-        isize index = iter->circle.currentIndex * iter->stride;
-        assert(index < iter->log->timings.cap);
-        iter->timings = iter->log->timings.ptr[index];
+        isize firstIndex = iter->circle.currentIndex * iter->stride;
+        isize lastIndex = firstIndex + iter->stride - 1;
+        assert(firstIndex >= 0 && firstIndex < iter->log->timings.cap);
+        assert(lastIndex >= 0 && lastIndex < iter->log->timings.cap && lastIndex >= firstIndex);
+        f32          maxTotal = 0;
+        FrameTimings frameToReport = iter->log->timings.ptr[firstIndex];
+        for (isize ind = firstIndex; ind <= lastIndex; ind++) {
+            FrameTimings timings = iter->log->timings.ptr[ind];
+            f32          total = frameTimingsSum(timings);
+            if (total > maxTotal) {
+                maxTotal = total;
+                frameToReport = timings;
+            }
+        }
+        iter->timings = frameToReport;
     }
     return result;
 }
@@ -1855,6 +1883,15 @@ runTests(Arena* arena) {
                 assert(timings.ms[FrameTimingID_Work] == expected[ind]);
             }
             assert(iter.circle.iterCount == 3);
+        }
+
+        {
+            FrameTimingsIter iter = createFrameTimingsIter(&log, 2, 2);
+            f32              expected[] = {3, 99};
+            for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
+                FrameTimings timings = iter.timings;
+                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+            }
         }
     }
 
@@ -2162,7 +2199,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                     fmtStr(&builder, STR(" "));
                     fmtF32(&builder, tm.ms[FrameTimingID_Spin], fmtSpec);
                     fmtStr(&builder, STR(" "));
-                    fmtF32(&builder, tm.ms[FrameTimingID_Work] + tm.ms[FrameTimingID_Sleep] + tm.ms[FrameTimingID_Spin], fmtSpec);
+                    fmtF32(&builder, frameTimingsSum(tm), fmtSpec);
 
                     Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
                     Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
