@@ -1682,19 +1682,19 @@ runTests(Arena* arena) {
         assert(degreesToRadians(30) < degreesToRadians(60));
 
         assert(v2feq(v2fadd((V2f) {1, 2}, (V2f) {3, -5}), (V2f) {4, -3}));
-        assert(v3feq(v3fadd((V3f) {.x = 1, 2, 3}, (V3f) {.x = 3, -5, 10}), (V3f) {.x = 4, -3, 13}));
+        assert(v3feq(v3fadd((V3f) {.x = 1, .y = 2, .z = 3}, (V3f) {.x = 3, .y = -5, .z = 10}), (V3f) {.x = 4, .y = -3, .z = 13}));
 
         assert(v2feq(v2fsub((V2f) {1, 2}, (V2f) {3, -5}), (V2f) {-2, 7}));
-        assert(v3feq(v3fsub((V3f) {.x = 1, 2, 3}, (V3f) {.x = 3, -5, 10}), (V3f) {.x = -2, 7, -7}));
+        assert(v3feq(v3fsub((V3f) {.x = 1, .y = 2, .z = 3}, (V3f) {.x = 3, .y = -5, .z = 10}), (V3f) {.x = -2, .y = 7, .z = -7}));
 
         assert(v2feq(v2fhadamard((V2f) {1, 2}, (V2f) {3, 4}), (V2f) {3, 8}));
-        assert(v3feq(v3fhadamard((V3f) {.x = 1, 2, 3}, (V3f) {.x = 3, 4, 5}), (V3f) {.x = 3, 8, 15}));
+        assert(v3feq(v3fhadamard((V3f) {.x = 1, .y = 2, .z = 3}, (V3f) {.x = 3, .y = 4, .z = 5}), (V3f) {.x = 3, .y = 8, .z = 15}));
 
         assert(v2feq(v2fscale((V2f) {1, 2}, 5), (V2f) {5, 10}));
-        assert(v3feq(v3fscale((V3f) {.x = 1, 2, 3}, 5), (V3f) {.x = 5, 10, 15}));
+        assert(v3feq(v3fscale((V3f) {.x = 1, .y = 2, .z = 3}, 5), (V3f) {.x = 5, .y = 10, .z = 15}));
 
         assert(v2fdot((V2f) {1, 2}, (V2f) {4, 5}) == 14);
-        assert(v3fdot((V3f) {.x = 1, 2, 3}, (V3f) {.x = 4, 5, 6}) == 32);
+        assert(v3fdot((V3f) {.x = 1, .y = 2, .z = 3}, (V3f) {.x = 4, .y = 5, .z = 6}) == 32);
     }
 
     {
