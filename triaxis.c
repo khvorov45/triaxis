@@ -1490,7 +1490,11 @@ drawStr(Font* font, Str str, Texture dest, i32 top, Color01 color) {
 //
 
 typedef enum FrameTimingID {
-    FrameTimingID_Work,
+    FrameTimingID_Input,
+    FrameTimingID_Update,
+    FrameTimingID_Render,
+    FrameTimingID_DebugOverlay,
+    FrameTimingID_Present,
     FrameTimingID_Sleep,
     FrameTimingID_Spin,
     FrameTimingID_Count,
@@ -1827,12 +1831,12 @@ runTests(Arena* arena) {
     }
 
     {
-        DebugLog log = createDebugLog(arena, 50);
+        DebugLog log = createDebugLog(arena, sizeof(FrameTimings) * 4);
 
         for (isize ind = 0; ind < log.timings.cap; ind++) {
             FrameTimings timings = {
                 .ms = {
-                    [FrameTimingID_Work] = (f32)ind,
+                    [0] = (f32)ind,
                 },
             };
             debugLogPushTimings(&log, timings);
@@ -1844,7 +1848,7 @@ runTests(Arena* arena) {
             assert(arrayCount(expected) == log.timings.len);
             for (isize ind = 0; ind < arrayCount(expected); ind++) {
                 FrameTimings timings = log.timings.ptr[ind];
-                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+                assert(timings.ms[0] == expected[ind]);
             }
         }
 
@@ -1854,7 +1858,7 @@ runTests(Arena* arena) {
             assert(arrayCount(expected) <= log.timings.cap);
             for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
                 FrameTimings timings = iter.timings;
-                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+                assert(timings.ms[0] == expected[ind]);
             }
             assert(iter.circle.iterCount == 3);
         }
@@ -1862,7 +1866,7 @@ runTests(Arena* arena) {
         {
             FrameTimings timings = {
                 .ms = {
-                    [FrameTimingID_Work] = 99,
+                    [0] = 99,
                 },
             };
             debugLogPushTimings(&log, timings);
@@ -1873,7 +1877,7 @@ runTests(Arena* arena) {
             assert(arrayCount(expected) == log.timings.cap);
             for (isize ind = 0; ind < arrayCount(expected); ind++) {
                 FrameTimings timings = log.timings.ptr[ind];
-                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+                assert(timings.ms[0] == expected[ind]);
             }
         }
 
@@ -1883,23 +1887,23 @@ runTests(Arena* arena) {
             assert(arrayCount(expected) <= log.timings.cap);
             for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
                 FrameTimings timings = iter.timings;
-                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+                assert(timings.ms[0] == expected[ind]);
             }
             assert(iter.circle.iterCount == 3);
         }
     }
 
     {
-        DebugLog log = createDebugLog(arena, 100);
+        DebugLog log = createDebugLog(arena, sizeof(FrameTimings) * 8);
         assert(log.timings.cap == 8);
-        log.timings.ptr[0].ms[FrameTimingID_Work] = 11;
-        log.timings.ptr[1].ms[FrameTimingID_Work] = 12;
-        log.timings.ptr[2].ms[FrameTimingID_Work] = 13;
-        log.timings.ptr[3].ms[FrameTimingID_Work] = 14;
-        log.timings.ptr[4].ms[FrameTimingID_Work] = 15;
-        log.timings.ptr[5].ms[FrameTimingID_Work] = 16;
-        log.timings.ptr[6].ms[FrameTimingID_Work] = 17;
-        log.timings.ptr[7].ms[FrameTimingID_Work] = 18;
+        log.timings.ptr[0].ms[0] = 11;
+        log.timings.ptr[1].ms[0] = 12;
+        log.timings.ptr[2].ms[0] = 13;
+        log.timings.ptr[3].ms[0] = 14;
+        log.timings.ptr[4].ms[0] = 15;
+        log.timings.ptr[5].ms[0] = 16;
+        log.timings.ptr[6].ms[0] = 17;
+        log.timings.ptr[7].ms[0] = 18;
 
         {
             FrameTimingsIter iter = createFrameTimingsIter(&log, 3, 2);
@@ -1907,7 +1911,7 @@ runTests(Arena* arena) {
             assert(arrayCount(expected) <= log.timings.cap);
             for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
                 FrameTimings timings = iter.timings;
-                assert(timings.ms[FrameTimingID_Work] == expected[ind]);
+                assert(timings.ms[0] == expected[ind]);
             }
             assert(iter.circle.iterCount == 3);
         }
@@ -2114,6 +2118,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         assert(scratch.tempCount == 0);
         assert(scratch.used == 0);
 
+        // NOTE(khvorov) Input
         inputBeginFrame(&input);
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
             switch (msg.message) {
@@ -2154,7 +2159,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 } break;
             }
         }
+        timerSection(&timer, FrameTimingID_Input);
 
+        // NOTE(khvorov) Update
         {
             f32 cameraMovementInc = 0.1;
             f32 cameraRotationInc = 1;
@@ -2206,56 +2213,57 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 showDebugTriangles = !showDebugTriangles;
             }
         }
+        timerSection(&timer, FrameTimingID_Update);
 
+        // NOTE(khvorov) Render
         meshStorageClearBuffers(&renderer.triangles);
-
         if (showDebugTriangles) {
             drawDebugTriangles(&renderer, windowWidth, windowHeight, &scratch);
         } else {
             rendererPushMesh(&renderer, cube1, camera);
             rendererPushMesh(&renderer, cube2, camera);
-
             setImageSize(&renderer, windowWidth, windowHeight);
             clearImage(&renderer);
             rendererFillTriangles(&renderer);
             rendererOutlineTriangles(&renderer);
-
-            {
-                Texture dest = {renderer.image.ptr, renderer.image.width, renderer.image.height};
-                drawStr(font, STR("work  sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
-
-                for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug, debugLines.circle.windowSize, debugLines.lag); frameTimingsIterNext(&timingsIter);) {
-                    TempMemory temp = beginTempMemory(&scratch);
-
-                    assert(circleIterNext(&debugLines.circle));
-
-                    StrBuilder builder = {};
-                    arenaAllocCap(&scratch, char, 1000, builder);
-
-                    FrameTimings tm = timingsIter.timings;
-
-                    FmtF32 fmtSpec = {.charsLeft = 2, .charsRight = 2};
-                    fmtF32(&builder, tm.ms[FrameTimingID_Work], fmtSpec);
-                    fmtStr(&builder, STR(" "));
-                    fmtF32(&builder, tm.ms[FrameTimingID_Sleep], fmtSpec);
-                    fmtStr(&builder, STR(" "));
-                    fmtF32(&builder, tm.ms[FrameTimingID_Spin], fmtSpec);
-                    fmtStr(&builder, STR(" "));
-                    fmtF32(&builder, frameTimingsSum(tm), fmtSpec);
-
-                    Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
-                    Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
-                    f32     by = (f32)(debugLines.circle.iterCount - 1) / (f32)(debugLines.circle.windowSize - 1);
-                    Color01 color = color01Lerp(start, end, by);
-
-                    drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.circle.currentIndex + 1), color);
-
-                    endTempMemory(temp);
-                }
-
-                lagCircleIterResetAndSetMostRecent(&debugLines, debugLines.circle.mostRecentIndex + 1);
-            }
         }
+        timerSection(&timer, FrameTimingID_Render);
+
+        // NOTE(khvorov) Debug overlay
+        {
+            Texture dest = {renderer.image.ptr, renderer.image.width, renderer.image.height};
+            drawStr(font, STR("input updat rendr debug prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
+
+            for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug, debugLines.circle.windowSize, debugLines.lag); frameTimingsIterNext(&timingsIter);) {
+                TempMemory temp = beginTempMemory(&scratch);
+
+                assert(circleIterNext(&debugLines.circle));
+
+                StrBuilder builder = {};
+                arenaAllocCap(&scratch, char, 1000, builder);
+
+                FrameTimings tm = timingsIter.timings;
+
+                FmtF32 fmtSpec = {.charsLeft = 2, .charsRight = 2};
+                for (isize ind = 0; ind < FrameTimingID_Count; ind++) {
+                    fmtF32(&builder, tm.ms[ind], fmtSpec);
+                    fmtStr(&builder, STR(" "));
+                }
+                fmtF32(&builder, frameTimingsSum(tm), fmtSpec);
+
+                Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
+                Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
+                f32     by = (f32)(debugLines.circle.iterCount - 1) / (f32)(debugLines.circle.windowSize - 1);
+                Color01 color = color01Lerp(start, end, by);
+
+                drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.circle.currentIndex + 1), color);
+
+                endTempMemory(temp);
+            }
+
+            lagCircleIterResetAndSetMostRecent(&debugLines, debugLines.circle.mostRecentIndex + 1);
+        }
+        timerSection(&timer, FrameTimingID_DebugOverlay);
 
         // NOTE(khvorov) Present the bitmap
         {
@@ -2286,7 +2294,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         // NOTE(khvorov) Frame timing
         {
-            f32 msFromStart = timerSection(&timer, FrameTimingID_Work);
+            f32 msFromStart = timerSection(&timer, FrameTimingID_Present);
             f32 msToSleep = msPerFrameTarget - msFromStart;
             // NOTE(khvorov) Need at least 1ms buffer there after sleep because windows likes to oversleep
             if (msToSleep >= 2) {
