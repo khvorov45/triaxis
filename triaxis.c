@@ -1551,10 +1551,23 @@ typedef struct CircleIter {
     isize currentIndex;
 } CircleIter;
 
+function void
+circleIterSetMostRecent(CircleIter* iter, isize newMostRecent) {
+    if (newMostRecent < 0) {
+        newMostRecent = iter->totalEntries + newMostRecent;
+    }
+    if (newMostRecent >= iter->totalEntries) {
+        newMostRecent = iter->totalEntries - newMostRecent;
+    }
+    assert(newMostRecent >= 0 && newMostRecent < iter->totalEntries);
+    iter->mostRecentIndex = newMostRecent;
+}
+
 function CircleIter
 createCircleIter(isize mostRecentIndex, isize totalEntries, isize windowSize) {
     assert(windowSize <= totalEntries && windowSize >= 0);
-    CircleIter iter = {.mostRecentIndex = mostRecentIndex, .totalEntries = totalEntries, .windowSize = windowSize};
+    CircleIter iter = {.totalEntries = totalEntries, .windowSize = windowSize};
+    circleIterSetMostRecent(&iter, mostRecentIndex);
     return iter;
 }
 
@@ -1579,18 +1592,6 @@ circleIterNext(CircleIter* iter) {
         iter->iterCount += 1;
     }
     return result;
-}
-
-function void
-circleIterSetMostRecent(CircleIter* iter, isize newMostRecent) {
-    if (newMostRecent < 0) {
-        newMostRecent = iter->totalEntries + newMostRecent;
-    }
-    if (newMostRecent >= iter->totalEntries) {
-        newMostRecent = iter->totalEntries - newMostRecent;
-    }
-    assert(newMostRecent >= 0 && newMostRecent < iter->totalEntries);
-    iter->mostRecentIndex = newMostRecent;
 }
 
 typedef struct LagCircleIter {
@@ -1618,9 +1619,11 @@ typedef struct FrameTimingsIter {
 
 function FrameTimingsIter
 createFrameTimingsIter(DebugLog* log, isize frameCount, isize stride) {
-    assert(frameCount <= log->timings.cap);
+    assert(frameCount >= 0 && frameCount <= log->timings.cap);
     assert(log->timings.cap % stride == 0);
-    FrameTimingsIter iter = {.log = log, .circle = createCircleIter((log->timings.len - 1) / stride, log->timings.cap / stride, frameCount), .stride = stride};
+    isize strideSections = log->timings.cap / stride;
+    assert(frameCount < strideSections);
+    FrameTimingsIter iter = {.log = log, .circle = createCircleIter((log->timings.len / stride) - 1, strideSections, frameCount), .stride = stride};
     return iter;
 }
 
@@ -1846,14 +1849,14 @@ runTests(Arena* arena) {
         }
 
         {
-            FrameTimingsIter iter = createFrameTimingsIter(&log, 4, 1);
-            f32              expected[] = {0, 1, 2, 3};
+            FrameTimingsIter iter = createFrameTimingsIter(&log, 3, 1);
+            f32              expected[] = {1, 2, 3};
             assert(arrayCount(expected) <= log.timings.cap);
             for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
                 FrameTimings timings = iter.timings;
                 assert(timings.ms[FrameTimingID_Work] == expected[ind]);
             }
-            assert(iter.circle.iterCount == 4);
+            assert(iter.circle.iterCount == 3);
         }
 
         {
@@ -1884,14 +1887,29 @@ runTests(Arena* arena) {
             }
             assert(iter.circle.iterCount == 3);
         }
+    }
+
+    {
+        DebugLog log = createDebugLog(arena, 100);
+        assert(log.timings.cap == 8);
+        log.timings.ptr[0].ms[FrameTimingID_Work] = 11;
+        log.timings.ptr[1].ms[FrameTimingID_Work] = 12;
+        log.timings.ptr[2].ms[FrameTimingID_Work] = 13;
+        log.timings.ptr[3].ms[FrameTimingID_Work] = 14;
+        log.timings.ptr[4].ms[FrameTimingID_Work] = 15;
+        log.timings.ptr[5].ms[FrameTimingID_Work] = 16;
+        log.timings.ptr[6].ms[FrameTimingID_Work] = 17;
+        log.timings.ptr[7].ms[FrameTimingID_Work] = 18;
 
         {
-            FrameTimingsIter iter = createFrameTimingsIter(&log, 2, 2);
-            f32              expected[] = {3, 99};
+            FrameTimingsIter iter = createFrameTimingsIter(&log, 3, 2);
+            f32              expected[] = {14, 16, 18};
+            assert(arrayCount(expected) <= log.timings.cap);
             for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
                 FrameTimings timings = iter.timings;
                 assert(timings.ms[FrameTimingID_Work] == expected[ind]);
             }
+            assert(iter.circle.iterCount == 3);
         }
     }
 
@@ -1937,6 +1955,34 @@ getMsFromMarker(Clock clock, ClockMarker marker) {
     LONGLONG    diff = now.counter.QuadPart - marker.counter.QuadPart;
     f32         result = (f32)diff / (f32)clock.freqPerSecond.QuadPart * 1000.0f;
     return result;
+}
+
+typedef struct Timer {
+    FrameTimings  timings;
+    FrameTimingID next;
+    Clock         clock;
+    ClockMarker   frameStart;
+} Timer;
+
+static void
+timerNewFrame(Timer* timer) {
+    assert(timer->next == FrameTimingID_Count);
+    timer->next = 0;
+    timer->frameStart = getClockMarker();
+}
+
+static f32
+timerSection(Timer* timer, FrameTimingID section) {
+    assert(section == timer->next);
+    timer->next += 1;
+    assert(section < FrameTimingID_Count && section >= 0);
+    f32 fromStart = getMsFromMarker(timer->clock, timer->frameStart);
+    f32 thisSectionOnly = fromStart;
+    for (isize ind = 0; ind < section; ind++) {
+        thisSectionOnly -= timer->timings.ms[ind];
+    }
+    timer->timings.ms[section] = thisSectionOnly;
+    return fromStart;
 }
 
 LRESULT CALLBACK
@@ -2053,9 +2099,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {.x = -1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
 
     f32           msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
-    Clock         clock = getClock();
-    ClockMarker   frameStart = getClockMarker();
-    FrameTimings  frameTimings = {};
+    Timer         timer = {.clock = getClock(), .frameStart = getClockMarker()};
     bool          showDebugTriangles = false;
     LagCircleIter debugLines = {.circle = createCircleIter(0, 10, 10), .lag = 10};
 
@@ -2176,8 +2220,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             rendererFillTriangles(&renderer);
             rendererOutlineTriangles(&renderer);
 
-            debugLogPushTimings(&debug, frameTimings);
-
             {
                 Texture dest = {renderer.image.ptr, renderer.image.width, renderer.image.height};
                 drawStr(font, STR("work  sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
@@ -2244,19 +2286,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         // NOTE(khvorov) Frame timing
         {
-            f32 msFromStart = getMsFromMarker(clock, frameStart);
-            frameTimings.ms[FrameTimingID_Work] = msFromStart;
+            f32 msFromStart = timerSection(&timer, FrameTimingID_Work);
             f32 msToSleep = msPerFrameTarget - msFromStart;
             // NOTE(khvorov) Need at least 1ms buffer there after sleep because windows likes to oversleep
             if (msToSleep >= 2) {
                 DWORD msToSleepFloor = (DWORD)msToSleep - 1;
                 Sleep(msToSleepFloor);
             }
-            msFromStart = getMsFromMarker(clock, frameStart);
-            frameTimings.ms[FrameTimingID_Sleep] = msFromStart - frameTimings.ms[FrameTimingID_Work];
-            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(clock, frameStart)) {}
-            frameTimings.ms[FrameTimingID_Spin] = msFromStart - frameTimings.ms[FrameTimingID_Work] - frameTimings.ms[FrameTimingID_Sleep];
-            frameStart = getClockMarker();
+            msFromStart = timerSection(&timer, FrameTimingID_Sleep);
+            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(timer.clock, timer.frameStart)) {}
+            timerSection(&timer, FrameTimingID_Spin);
+            debugLogPushTimings(&debug, timer.timings);
+            timerNewFrame(&timer);
         }
     }
 
