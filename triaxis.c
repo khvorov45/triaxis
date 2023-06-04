@@ -1513,18 +1513,18 @@ frameTimingsSum(FrameTimings timings) {
     return result;
 }
 
-typedef struct DebugLog {
+typedef struct FrameTimingsLog {
     struct {
         FrameTimings* ptr;
         isize         len;
         isize         cap;
     } timings;
-} DebugLog;
+} FrameTimingsLog;
 
-function DebugLog
-createDebugLog(Arena* arena, isize bytes) {
-    DebugLog log = {};
-    isize    ntimings = bytes / sizeof(FrameTimings);
+function FrameTimingsLog
+createFrameTimingsLog(Arena* arena, isize bytes) {
+    FrameTimingsLog log = {};
+    isize           ntimings = bytes / sizeof(FrameTimings);
     if (ntimings > 1000) {
         ntimings = ntimings - (ntimings % 1000);
     }
@@ -1535,7 +1535,7 @@ createDebugLog(Arena* arena, isize bytes) {
 }
 
 function void
-debugLogPushTimings(DebugLog* log, FrameTimings timings) {
+pushFrameTimings(FrameTimingsLog* log, FrameTimings timings) {
     if (log->timings.len == log->timings.cap) {
         log->timings.len = 0;
     }
@@ -1615,14 +1615,14 @@ lagCircleIterResetAndSetMostRecent(LagCircleIter* iter, isize newMostRecent) {
 }
 
 typedef struct FrameTimingsIter {
-    DebugLog*    log;
-    CircleIter   circle;
-    isize        stride;
-    FrameTimings timings;
+    FrameTimingsLog* log;
+    CircleIter       circle;
+    isize            stride;
+    FrameTimings     timings;
 } FrameTimingsIter;
 
 function FrameTimingsIter
-createFrameTimingsIter(DebugLog* log, isize frameCount, isize stride) {
+createFrameTimingsIter(FrameTimingsLog* log, isize frameCount, isize stride) {
     assert(frameCount >= 0 && frameCount <= log->timings.cap);
     assert(log->timings.cap % stride == 0);
     isize strideSections = log->timings.cap / stride;
@@ -1831,7 +1831,7 @@ runTests(Arena* arena) {
     }
 
     {
-        DebugLog log = createDebugLog(arena, sizeof(FrameTimings) * 4);
+        FrameTimingsLog log = createFrameTimingsLog(arena, sizeof(FrameTimings) * 4);
 
         for (isize ind = 0; ind < log.timings.cap; ind++) {
             FrameTimings timings = {
@@ -1839,7 +1839,7 @@ runTests(Arena* arena) {
                     [0] = (f32)ind,
                 },
             };
-            debugLogPushTimings(&log, timings);
+            pushFrameTimings(&log, timings);
         }
         assert(log.timings.len == log.timings.cap);
 
@@ -1869,7 +1869,7 @@ runTests(Arena* arena) {
                     [0] = 99,
                 },
             };
-            debugLogPushTimings(&log, timings);
+            pushFrameTimings(&log, timings);
         }
 
         {
@@ -1894,7 +1894,7 @@ runTests(Arena* arena) {
     }
 
     {
-        DebugLog log = createDebugLog(arena, sizeof(FrameTimings) * 8);
+        FrameTimingsLog log = createFrameTimingsLog(arena, sizeof(FrameTimings) * 8);
         assert(log.timings.cap == 8);
         log.timings.ptr[0].ms[0] = 11;
         log.timings.ptr[1].ms[0] = 12;
@@ -1989,6 +1989,12 @@ timerSection(Timer* timer, FrameTimingID section) {
     return fromStart;
 }
 
+typedef struct Debug {
+    Timer           timer;
+    FrameTimingsLog timingsLog;
+    LagCircleIter   displayTimingsLines;
+} Debug;
+
 LRESULT CALLBACK
 windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     LRESULT result = 0;
@@ -2008,7 +2014,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     Renderer    renderer = {};
     MeshStorage meshStorage = {};
-    DebugLog    debug = {};
+    Debug       debug = {};
     Font*       font = 0;
     Arena       scratch = {};
     {
@@ -2025,7 +2031,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         isize perSystem = arenaFreeSize(&arena) / 3;
         renderer = createRenderer(&arena, perSystem);
         meshStorage = createMeshStorage(&arena, perSystem);
-        debug = createDebugLog(&arena, arenaFreeSize(&arena));
+        debug = (Debug) {
+            .timer = {.clock = getClock(), .frameStart = getClockMarker()},
+            .displayTimingsLines = {.circle = createCircleIter(0, 10, 10), .lag = 10},
+            .timingsLog = createFrameTimingsLog(&arena, arenaFreeSize(&arena)),
+        };
     }
 
     WNDCLASSEXA windowClass = {
@@ -2102,10 +2112,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {.x = 1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
     Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {.x = -1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
 
-    f32           msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
-    Timer         timer = {.clock = getClock(), .frameStart = getClockMarker()};
-    bool          showDebugTriangles = false;
-    LagCircleIter debugLines = {.circle = createCircleIter(0, 10, 10), .lag = 10};
+    f32  msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
+    bool showDebugTriangles = false;
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
     {
@@ -2159,7 +2167,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 } break;
             }
         }
-        timerSection(&timer, FrameTimingID_Input);
+        timerSection(&debug.timer, FrameTimingID_Input);
 
         // NOTE(khvorov) Update
         {
@@ -2213,7 +2221,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 showDebugTriangles = !showDebugTriangles;
             }
         }
-        timerSection(&timer, FrameTimingID_Update);
+        timerSection(&debug.timer, FrameTimingID_Update);
 
         // NOTE(khvorov) Render
         meshStorageClearBuffers(&renderer.triangles);
@@ -2227,17 +2235,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             rendererFillTriangles(&renderer);
             rendererOutlineTriangles(&renderer);
         }
-        timerSection(&timer, FrameTimingID_Render);
+        timerSection(&debug.timer, FrameTimingID_Render);
 
         // NOTE(khvorov) Debug overlay
         {
             Texture dest = {renderer.image.ptr, renderer.image.width, renderer.image.height};
             drawStr(font, STR("input updat rendr debug prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
 
-            for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug, debugLines.circle.windowSize, debugLines.lag); frameTimingsIterNext(&timingsIter);) {
+            for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug.timingsLog, debug.displayTimingsLines.circle.windowSize, debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
                 TempMemory temp = beginTempMemory(&scratch);
 
-                assert(circleIterNext(&debugLines.circle));
+                assert(circleIterNext(&debug.displayTimingsLines.circle));
 
                 StrBuilder builder = {};
                 arenaAllocCap(&scratch, char, 1000, builder);
@@ -2253,17 +2261,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
                 Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
                 Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
-                f32     by = (f32)(debugLines.circle.iterCount - 1) / (f32)(debugLines.circle.windowSize - 1);
+                f32     by = (f32)(debug.displayTimingsLines.circle.iterCount - 1) / (f32)(debug.displayTimingsLines.circle.windowSize - 1);
                 Color01 color = color01Lerp(start, end, by);
 
-                drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debugLines.circle.currentIndex + 1), color);
+                drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debug.displayTimingsLines.circle.currentIndex + 1), color);
 
                 endTempMemory(temp);
             }
 
-            lagCircleIterResetAndSetMostRecent(&debugLines, debugLines.circle.mostRecentIndex + 1);
+            lagCircleIterResetAndSetMostRecent(&debug.displayTimingsLines, debug.displayTimingsLines.circle.mostRecentIndex + 1);
         }
-        timerSection(&timer, FrameTimingID_DebugOverlay);
+        timerSection(&debug.timer, FrameTimingID_DebugOverlay);
 
         // NOTE(khvorov) Present the bitmap
         {
@@ -2294,18 +2302,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         // NOTE(khvorov) Frame timing
         {
-            f32 msFromStart = timerSection(&timer, FrameTimingID_Present);
+            f32 msFromStart = timerSection(&debug.timer, FrameTimingID_Present);
             f32 msToSleep = msPerFrameTarget - msFromStart;
             // NOTE(khvorov) Need at least 1ms buffer there after sleep because windows likes to oversleep
             if (msToSleep >= 2) {
                 DWORD msToSleepFloor = (DWORD)msToSleep - 1;
                 Sleep(msToSleepFloor);
             }
-            msFromStart = timerSection(&timer, FrameTimingID_Sleep);
-            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(timer.clock, timer.frameStart)) {}
-            timerSection(&timer, FrameTimingID_Spin);
-            debugLogPushTimings(&debug, timer.timings);
-            timerNewFrame(&timer);
+            msFromStart = timerSection(&debug.timer, FrameTimingID_Sleep);
+            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(debug.timer.clock, debug.timer.frameStart)) {}
+            timerSection(&debug.timer, FrameTimingID_Spin);
+            pushFrameTimings(&debug.timingsLog, debug.timer.timings);
+            timerNewFrame(&debug.timer);
         }
     }
 
