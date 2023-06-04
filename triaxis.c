@@ -2079,6 +2079,20 @@ render(State* state) {
 #include <Windows.h>
 #include <timeapi.h>
 
+#define COBJMACROS
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <d3dcompiler.h>
+
+#pragma comment(lib, "gdi32")
+#pragma comment(lib, "user32")
+#pragma comment(lib, "Winmm")
+#pragma comment(lib, "d3d11")
+#pragma comment(lib, "dxguid")
+#pragma comment(lib, "d3dcompiler")
+
+#define asserthr(x) assert(SUCCEEDED(x))
+
 typedef struct Clock {
     LARGE_INTEGER freqPerSecond;
 } Clock;
@@ -2174,7 +2188,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     assert(RegisterClassExW(&windowClass) != 0);
 
     HWND window = CreateWindowExW(
-        0,
+        WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
         windowClass.lpszClassName,
         L"Triaxis",
         WS_OVERLAPPEDWINDOW,
@@ -2188,7 +2202,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         NULL
     );
     assert(window);
-    HDC hdc = GetDC(window);
+
+    // TODO(khvorov) Handle resizing
 
     // NOTE(khvorov) Adjust window size such that it's the client area that's the specified size, not the whole window with decorations
     {
@@ -2200,6 +2215,280 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         isize dheight = state->windowHeight - height;
         SetWindowPos(window, 0, rect.left, rect.top, state->windowWidth + dwidth, state->windowHeight + dheight, 0);
     }
+
+    ID3D11Device*        device = 0;
+    ID3D11DeviceContext* context = 0;
+    {
+        UINT flags = 0;
+        flags |= D3D11_CREATE_DEVICE_DEBUG;
+        D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0};
+        asserthr(D3D11CreateDevice(
+            NULL,
+            D3D_DRIVER_TYPE_HARDWARE,
+            NULL,
+            flags,
+            levels,
+            ARRAYSIZE(levels),
+            D3D11_SDK_VERSION,
+            &device,
+            NULL,
+            &context
+        ));
+    }
+
+    {
+        ID3D11InfoQueue* info = 0;
+        ID3D11Device_QueryInterface(device, &IID_ID3D11InfoQueue, (void**)&info);
+        ID3D11InfoQueue_SetBreakOnSeverity(info, D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+        ID3D11InfoQueue_SetBreakOnSeverity(info, D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
+        ID3D11InfoQueue_Release(info);
+    }
+
+    IDXGISwapChain1* swapChain = 0;
+    {
+        IDXGIDevice* dxgiDevice = 0;
+        asserthr(ID3D11Device_QueryInterface(device, &IID_IDXGIDevice, (void**)&dxgiDevice));
+
+        IDXGIAdapter* dxgiAdapter = 0;
+        asserthr(IDXGIDevice_GetAdapter(dxgiDevice, &dxgiAdapter));
+
+        IDXGIFactory2* factory = 0;
+        asserthr(IDXGIAdapter_GetParent(dxgiAdapter, &IID_IDXGIFactory2, (void**)&factory));
+
+        DXGI_SWAP_CHAIN_DESC1 desc = {
+            .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+            .SampleDesc = {.Count = 1, .Quality = 0},
+            .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            .BufferCount = 2,
+            .Scaling = DXGI_SCALING_NONE,
+            .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
+        };
+
+        asserthr(IDXGIFactory2_CreateSwapChainForHwnd(factory, (IUnknown*)device, window, &desc, NULL, NULL, &swapChain));
+
+        IDXGIFactory_MakeWindowAssociation(factory, window, DXGI_MWA_NO_ALT_ENTER);
+
+        IDXGIFactory2_Release(factory);
+        IDXGIAdapter_Release(dxgiAdapter);
+        IDXGIDevice_Release(dxgiDevice);
+    }
+
+    struct Vertex {
+        float position[2];
+        float uv[2];
+        float color[3];
+    };
+
+    ID3D11Buffer* vbuffer = 0;
+    {
+        struct Vertex data[] = {
+            {{-1.00f, +1.00f}, {0.0f, 1.0f}, {1, 1, 1}},
+            {{+1.00f, +1.00f}, {1.0f, 1.0f}, {1, 1, 1}},
+            {{-1.00f, -1.00f}, {0.0f, 0.0f}, {1, 1, 1}},
+            {{+1.00f, -1.00f}, {1.0f, 0.0f}, {1, 1, 1}},
+        };
+
+        D3D11_BUFFER_DESC desc = {
+            .ByteWidth = sizeof(data),
+            .Usage = D3D11_USAGE_IMMUTABLE,
+            .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+        };
+
+        D3D11_SUBRESOURCE_DATA initial = {.pSysMem = data};
+        ID3D11Device_CreateBuffer(device, &desc, &initial, &vbuffer);
+    }
+
+    ID3D11InputLayout*  layout = 0;
+    ID3D11VertexShader* vshader = 0;
+    ID3D11PixelShader*  pshader = 0;
+    {
+        // these must match vertex shader input layout (VS_INPUT in vertex shader source below)
+        D3D11_INPUT_ELEMENT_DESC desc[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(struct Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+
+        const char hlsl[] =
+            // "#line " STR(__LINE__)
+            "                                  \n\n"  // actual line number in this file for nicer error messages
+            "                                                           \n"
+            "struct VS_INPUT                                            \n"
+            "{                                                          \n"
+            "     float2 pos   : POSITION;                              \n"  // these names must match D3D11_INPUT_ELEMENT_DESC array
+            "     float2 uv    : TEXCOORD;                              \n"
+            "     float3 color : COLOR;                                 \n"
+            "};                                                         \n"
+            "                                                           \n"
+            "struct PS_INPUT                                            \n"
+            "{                                                          \n"
+            "  float4 pos   : SV_POSITION;                              \n"  // these names do not matter, except SV_... ones
+            "  float2 uv    : TEXCOORD;                                 \n"
+            "  float4 color : COLOR;                                    \n"
+            "};                                                         \n"
+            "                                                           \n"
+            "cbuffer cbuffer0 : register(b0)                            \n"  // b0 = constant buffer bound to slot 0
+            "{                                                          \n"
+            "    float4x4 uTransform;                                   \n"
+            "}                                                          \n"
+            "                                                           \n"
+            "sampler sampler0 : register(s0);                           \n"  // s0 = sampler bound to slot 0
+            "                                                           \n"
+            "Texture2D<float4> texture0 : register(t0);                 \n"  // t0 = shader resource bound to slot 0
+            "                                                           \n"
+            "PS_INPUT vs(VS_INPUT input)                                \n"
+            "{                                                          \n"
+            "    PS_INPUT output;                                       \n"
+            "    output.pos = float4(input.pos, 0, 1); \n"
+            "    output.uv = input.uv;                                  \n"
+            "    output.color = float4(input.color, 1);                 \n"
+            "    return output;                                         \n"
+            "}                                                          \n"
+            "                                                           \n"
+            "float4 ps(PS_INPUT input) : SV_TARGET                      \n"
+            "{                                                          \n"
+            "    float4 tex = texture0.Sample(sampler0, input.uv);      \n"
+            "    return input.color * tex;                              \n"
+            "}                                                          \n";
+        ;
+
+        UINT flags = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
+        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+
+        ID3DBlob* error;
+
+        ID3DBlob* vblob = 0;
+        asserthr(D3DCompile(hlsl, sizeof(hlsl), NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &error));
+
+        ID3DBlob* pblob = 0;
+        asserthr(D3DCompile(hlsl, sizeof(hlsl), NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &error));
+
+        ID3D11Device_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob), NULL, &vshader);
+        ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(pblob), ID3D10Blob_GetBufferSize(pblob), NULL, &pshader);
+        ID3D11Device_CreateInputLayout(device, desc, ARRAYSIZE(desc), ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob), &layout);
+
+        ID3D10Blob_Release(pblob);
+        ID3D10Blob_Release(vblob);
+    }
+
+    // TODO(khvorov) Figure out how to update the texture
+    setImageSize(&state->renderer, state->windowWidth, state->windowHeight);
+    render(state);
+
+    ID3D11ShaderResourceView* textureView = 0;
+    {
+        D3D11_TEXTURE2D_DESC desc = {
+            .Width = state->renderer.image.width,
+            .Height = state->renderer.image.height,
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+            .SampleDesc = {.Count = 1, .Quality = 0},
+            .Usage = D3D11_USAGE_DYNAMIC,
+            .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+            .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
+        };
+
+        D3D11_SUBRESOURCE_DATA data = {
+            .pSysMem = state->renderer.image.ptr,
+            .SysMemPitch = state->renderer.image.width * sizeof(u32),
+        };
+
+        ID3D11Texture2D* texture = 0;
+        ID3D11Device_CreateTexture2D(device, &desc, &data, &texture);
+        ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource*)texture, NULL, &textureView);
+        ID3D11Texture2D_Release(texture);
+    }
+
+    ID3D11SamplerState* sampler = 0;
+    {
+        D3D11_SAMPLER_DESC desc = {
+            .Filter = D3D11_FILTER_MIN_MAG_MIP_POINT,
+            .AddressU = D3D11_TEXTURE_ADDRESS_WRAP,
+            .AddressV = D3D11_TEXTURE_ADDRESS_WRAP,
+            .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
+        };
+
+        ID3D11Device_CreateSamplerState(device, &desc, &sampler);
+    }
+
+    // TODO(khvorov) Disable?
+    ID3D11BlendState* blendState = 0;
+    {
+        D3D11_BLEND_DESC desc = {
+            .RenderTarget[0] = {
+                .BlendEnable = TRUE,
+                .SrcBlend = D3D11_BLEND_SRC_ALPHA,
+                .DestBlend = D3D11_BLEND_INV_SRC_ALPHA,
+                .BlendOp = D3D11_BLEND_OP_ADD,
+                .SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA,
+                .DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA,
+                .BlendOpAlpha = D3D11_BLEND_OP_ADD,
+                .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
+            },
+        };
+        ID3D11Device_CreateBlendState(device, &desc, &blendState);
+    }
+
+    ID3D11RasterizerState* rasterizerState = 0;
+    {
+        D3D11_RASTERIZER_DESC desc = {
+            .FillMode = D3D11_FILL_SOLID,
+            .CullMode = D3D11_CULL_NONE,
+        };
+        ID3D11Device_CreateRasterizerState(device, &desc, &rasterizerState);
+    }
+
+    ID3D11DepthStencilState* depthState = 0;
+    {
+        D3D11_DEPTH_STENCIL_DESC desc = {
+            .DepthEnable = FALSE,
+            .DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL,
+            .DepthFunc = D3D11_COMPARISON_LESS,
+            .StencilEnable = FALSE,
+            .StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
+            .StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
+        };
+        ID3D11Device_CreateDepthStencilState(device, &desc, &depthState);
+    }
+
+    ID3D11RenderTargetView* rtView = 0;
+    ID3D11DepthStencilView* dsView = 0;
+    {
+        asserthr(IDXGISwapChain1_ResizeBuffers(swapChain, 0, state->windowWidth, state->windowHeight, DXGI_FORMAT_UNKNOWN, 0));
+
+        // create RenderTarget view for new backbuffer texture
+        ID3D11Texture2D* backbuffer;
+        IDXGISwapChain1_GetBuffer(swapChain, 0, &IID_ID3D11Texture2D, (void**)&backbuffer);
+        ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource*)backbuffer, NULL, &rtView);
+        assert(rtView);
+        ID3D11Texture2D_Release(backbuffer);
+
+        D3D11_TEXTURE2D_DESC depthDesc = {
+            .Width = state->windowWidth,
+            .Height = state->windowHeight,
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = DXGI_FORMAT_D32_FLOAT,
+            .SampleDesc = {.Count = 1, .Quality = 0},
+            .Usage = D3D11_USAGE_DEFAULT,
+            .BindFlags = D3D11_BIND_DEPTH_STENCIL,
+        };
+
+        ID3D11Texture2D* depth = 0;
+        ID3D11Device_CreateTexture2D(device, &depthDesc, NULL, &depth);
+        ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource*)depth, NULL, &dsView);
+        ID3D11Texture2D_Release(depth);
+    }
+
+    D3D11_VIEWPORT viewport = {
+        .TopLeftX = 0,
+        .TopLeftY = 0,
+        .Width = (FLOAT)state->windowWidth,
+        .Height = (FLOAT)state->windowHeight,
+        .MinDepth = 0,
+        .MaxDepth = 1,
+    };
 
     // TODO(khvorov) Hack is debug only
     ShowWindow(window, SW_SHOWMINIMIZED);
@@ -2303,31 +2592,43 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         }
         timerSection(&timer, FrameTimingID_DebugOverlay);
 
-        // NOTE(khvorov) Present the bitmap
+        // NOTE(khvorov) Present
         {
-            BITMAPINFO bmi = {
-                .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
-                .bmiHeader.biWidth = state->renderer.image.width,
-                .bmiHeader.biHeight = -state->renderer.image.height,  // NOTE(khvorov) Top-down
-                .bmiHeader.biPlanes = 1,
-                .bmiHeader.biBitCount = 32,
-                .bmiHeader.biCompression = BI_RGB,
-            };
-            StretchDIBits(
-                hdc,
-                0,
-                0,
-                state->windowWidth,
-                state->windowHeight,
-                0,
-                0,
-                state->renderer.image.width,
-                state->renderer.image.height,
-                state->renderer.image.ptr,
-                &bmi,
-                DIB_RGB_COLORS,
-                SRCCOPY
-            );
+            {
+                FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
+                ID3D11DeviceContext_ClearRenderTargetView(context, rtView, color);
+                ID3D11DeviceContext_ClearDepthStencilView(context, dsView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
+            }
+
+            {
+                ID3D11DeviceContext_IASetInputLayout(context, layout);
+                ID3D11DeviceContext_IASetPrimitiveTopology(context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                UINT stride = sizeof(struct Vertex);
+                UINT offset = 0;
+                ID3D11DeviceContext_IASetVertexBuffers(context, 0, 1, &vbuffer, &stride, &offset);
+            }
+
+            ID3D11DeviceContext_VSSetShader(context, vshader, NULL, 0);
+
+            ID3D11DeviceContext_RSSetViewports(context, 1, &viewport);
+            ID3D11DeviceContext_RSSetState(context, rasterizerState);
+
+            ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler);
+            ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &textureView);
+            ID3D11DeviceContext_PSSetShader(context, pshader, NULL, 0);
+
+            ID3D11DeviceContext_OMSetBlendState(context, blendState, NULL, ~0U);
+            ID3D11DeviceContext_OMSetDepthStencilState(context, depthState, 0);
+            ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtView, dsView);
+
+            ID3D11DeviceContext_IASetPrimitiveTopology(context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            ID3D11DeviceContext_Draw(context, 4, 0);
+
+            HRESULT presentResult = IDXGISwapChain1_Present(swapChain, 1, 0);
+            asserthr(presentResult);
+            if (presentResult == DXGI_STATUS_OCCLUDED) {
+                Sleep(10);
+            }
         }
 
         // NOTE(khvorov) Frame timing
