@@ -781,11 +781,13 @@ typedef struct Camera {
     V3f     pos;
     f32     fovDegreesX;
     Rotor3f orientation;
+    f32     movementInc;
+    f32     rotationInc;
 } Camera;
 
 function Camera
 createCamera(V3f pos) {
-    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f()};
+    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f(), .movementInc = 0.1, .rotationInc = 1};
     return camera;
 }
 
@@ -1441,14 +1443,32 @@ typedef struct Glyph {
 typedef struct Font {
     Glyph ascii[128];
     i32   lineAdvance;
-    Arena arena;
 } Font;
 
-function Font*
-createFont(Arena* arena, isize bytes) {
-    Font* font = arenaAllocArray(arena, Font, 1);
-    font->arena = createArenaFromArena(arena, bytes);
-    return font;
+function void
+initFont(Font* font, Arena* arena) {
+    font->lineAdvance = 16;
+    for (u8 ch = 0; ch < 128; ch++) {
+        Glyph* glyph = font->ascii + ch;
+        glyph->width = 8;
+        glyph->height = 16;
+        glyph->advance = 8;
+        glyph->ptr = arenaAllocArray(arena, u8, glyph->width * glyph->height);
+
+        u8* glyphBitmap = (u8*)globalFontData + ch * glyph->height;
+        for (isize row = 0; row < glyph->height; row++) {
+            u8 glyphRowBitmap = glyphBitmap[row];
+            for (isize col = 0; col < glyph->width; col++) {
+                u8    mask = 1 << col;
+                u8    glyphRowMasked = glyphRowBitmap & mask;
+                isize glyphIndex = row * glyph->width + col;
+                glyph->ptr[glyphIndex] = 0;
+                if (glyphRowMasked) {
+                    glyph->ptr[glyphIndex] = 0xFF;
+                }
+            }
+        }
+    }
 }
 
 function void
@@ -1921,6 +1941,63 @@ runTests(Arena* arena) {
 }
 
 //
+// SECTION App
+//
+
+typedef struct Debug {
+    FrameTimingsLog timingsLog;
+    LagCircleIter   displayTimingsLines;
+} Debug;
+
+typedef struct State {
+    Renderer    renderer;
+    MeshStorage meshStorage;
+    Font        font;
+    Arena       scratch;
+    Debug       debug;
+
+    Camera camera;
+    Input  input;
+    Mesh   cube1;
+    Mesh   cube2;
+    bool   showDebugTriangles;
+} State;
+
+function State*
+initState(void* mem, isize bytes) {
+    assert(mem);
+    assert(bytes > 0);
+
+    Arena arena = {.base = mem, .size = bytes};
+    runTests(&arena);
+
+    State* state = arenaAllocArray(&arena, State, 1);
+
+    initFont(&state->font, &arena);
+    state->scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
+
+    isize perSystem = arenaFreeSize(&arena) / 3;
+    state->renderer = createRenderer(&arena, perSystem);
+    state->meshStorage = createMeshStorage(&arena, perSystem);
+    state->debug = (Debug) {
+        .displayTimingsLines = {
+            .circle = createCircleIter(0, 10, 10),
+            .lag = 10,
+        },
+        .timingsLog = createFrameTimingsLog(&arena, arenaFreeSize(&arena)),
+    };
+
+    state->camera = createCamera((V3f) {.x = 0, 0, -3});
+    state->input = (Input) {};
+
+    state->cube1 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 0}, createRotor3fAnglePlane(0, 1, 0, 0));
+    state->cube2 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 0}, createRotor3fAnglePlane(0, 0, 1, 0));
+
+    state->showDebugTriangles = false;
+    return state;
+}
+
+//
 // SECTION Platform
 //
 
@@ -1939,10 +2016,9 @@ typedef struct ClockMarker {
 } ClockMarker;
 
 static Clock
-getClock(void) {
+createClock(void) {
     Clock clock = {};
     QueryPerformanceFrequency(&clock.freqPerSecond);
-
     return clock;
 }
 
@@ -1989,12 +2065,6 @@ timerSection(Timer* timer, FrameTimingID section) {
     return fromStart;
 }
 
-typedef struct Debug {
-    Timer           timer;
-    FrameTimingsLog timingsLog;
-    LagCircleIter   displayTimingsLines;
-} Debug;
-
 LRESULT CALLBACK
 windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     LRESULT result = 0;
@@ -2012,30 +2082,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     unused(lpCmdLine);
     unused(nCmdShow);
 
-    Renderer    renderer = {};
-    MeshStorage meshStorage = {};
-    Debug       debug = {};
-    Font*       font = 0;
-    Arena       scratch = {};
+    State* state = 0;
     {
         isize memSize = 1 * 1024 * 1024 * 1024;
         void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         assert(memBase);
-
-        Arena arena = {.base = memBase, .size = memSize};
-        runTests(&arena);
-
-        font = createFont(&arena, 1 * 1024 * 1024);
-        scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
-
-        isize perSystem = arenaFreeSize(&arena) / 3;
-        renderer = createRenderer(&arena, perSystem);
-        meshStorage = createMeshStorage(&arena, perSystem);
-        debug = (Debug) {
-            .timer = {.clock = getClock(), .frameStart = getClockMarker()},
-            .displayTimingsLines = {.circle = createCircleIter(0, 10, 10), .lag = 10},
-            .timingsLog = createFrameTimingsLog(&arena, arenaFreeSize(&arena)),
-        };
+        state = initState(memBase, memSize);
     }
 
     WNDCLASSEXW windowClass = {
@@ -2079,42 +2131,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         SetWindowPos(window, 0, rect.left, rect.top, windowWidth + dwidth, windowHeight + dheight, 0);
     }
 
-    // NOTE(khvorov) Load font
-    font->lineAdvance = 16;
-    for (u8 ch = 0; ch < 128; ch++) {
-        Glyph* glyph = font->ascii + ch;
-        glyph->width = 8;
-        glyph->height = 16;
-        glyph->advance = 8;
-        glyph->ptr = arenaAllocArray(&font->arena, u8, glyph->width * glyph->height);
-
-        u8* glyphBitmap = (u8*)globalFontData + ch * glyph->height;
-        for (isize row = 0; row < glyph->height; row++) {
-            u8 glyphRowBitmap = glyphBitmap[row];
-            for (isize col = 0; col < glyph->width; col++) {
-                u8    mask = 1 << col;
-                u8    glyphRowMasked = glyphRowBitmap & mask;
-                isize glyphIndex = row * glyph->width + col;
-                glyph->ptr[glyphIndex] = 0;
-                if (glyphRowMasked) {
-                    glyph->ptr[glyphIndex] = 0xFF;
-                }
-            }
-        }
-    }
-
     // TODO(khvorov) Hack is debug only
     ShowWindow(window, SW_SHOWMINIMIZED);
     ShowWindow(window, SW_SHOWNORMAL);
-
-    Camera camera = createCamera((V3f) {.x = 0, 0, -3});
-    Input  input = {};
-
-    Mesh cube1 = createCubeMesh(&meshStorage, 1, (V3f) {.x = 1, 0, 0}, createRotor3fAnglePlane(0, 1, 0, 0));
-    Mesh cube2 = createCubeMesh(&meshStorage, 1, (V3f) {.x = -1, 0, 0}, createRotor3fAnglePlane(0, 0, 1, 0));
-
-    f32  msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
-    bool showDebugTriangles = false;
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
     {
@@ -2123,12 +2142,14 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         timeBeginPeriod(caps.wPeriodMin);
     }
 
+    f32   msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
+    Timer timer = {.clock = createClock(), .frameStart = getClockMarker()};
     for (;;) {
-        assert(scratch.tempCount == 0);
-        assert(scratch.used == 0);
+        assert(state->scratch.tempCount == 0);
+        assert(state->scratch.used == 0);
 
         // NOTE(khvorov) Input
-        inputBeginFrame(&input);
+        inputBeginFrame(&state->input);
         for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
             switch (msg.message) {
                 case WM_QUIT: ExitProcess(0); break;
@@ -2155,9 +2176,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                     }
                     if (keyFound) {
                         if (msg.message == WM_KEYDOWN) {
-                            inputKeyDown(&input, key);
+                            inputKeyDown(&state->input, key);
                         } else {
-                            inputKeyUp(&input, key);
+                            inputKeyUp(&state->input, key);
                         }
                     }
                 } break;
@@ -2168,88 +2189,85 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 } break;
             }
         }
-        timerSection(&debug.timer, FrameTimingID_Input);
+        timerSection(&timer, FrameTimingID_Input);
 
         // NOTE(khvorov) Update
         {
-            f32 cameraMovementInc = 0.1;
-            f32 cameraRotationInc = 1;
-
-            if (input.keys[InputKey_Forward].down) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 0, 1}), cameraMovementInc), camera.pos);
+            if (state->input.keys[InputKey_Forward].down) {
+                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), state->camera.movementInc), state->camera.pos);
             }
-            if (input.keys[InputKey_Back].down) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 0, 1}), -cameraMovementInc), camera.pos);
+            if (state->input.keys[InputKey_Back].down) {
+                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), -state->camera.movementInc), state->camera.pos);
             }
-            if (input.keys[InputKey_Right].down) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 1, 0, 0}), cameraMovementInc), camera.pos);
+            if (state->input.keys[InputKey_Right].down) {
+                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), state->camera.movementInc), state->camera.pos);
             }
-            if (input.keys[InputKey_Left].down) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 1, 0, 0}), -cameraMovementInc), camera.pos);
+            if (state->input.keys[InputKey_Left].down) {
+                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), -state->camera.movementInc), state->camera.pos);
             }
-            if (input.keys[InputKey_Up].down) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 1, 0}), cameraMovementInc), camera.pos);
+            if (state->input.keys[InputKey_Up].down) {
+                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), state->camera.movementInc), state->camera.pos);
             }
-            if (input.keys[InputKey_Down].down) {
-                camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(camera.orientation, (V3f) {.x = 0, 1, 0}), -cameraMovementInc), camera.pos);
+            if (state->input.keys[InputKey_Down].down) {
+                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), -state->camera.movementInc), state->camera.pos);
             }
 
-            if (input.keys[InputKey_RotateXY].down) {
-                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 1, 0, 0));
+            if (state->input.keys[InputKey_RotateXY].down) {
+                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 1, 0, 0));
             }
-            if (input.keys[InputKey_RotateYX].down) {
-                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, -1, 0, 0));
+            if (state->input.keys[InputKey_RotateYX].down) {
+                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, -1, 0, 0));
             }
-            if (input.keys[InputKey_RotateXZ].down) {
-                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 1, 0));
+            if (state->input.keys[InputKey_RotateXZ].down) {
+                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 1, 0));
             }
-            if (input.keys[InputKey_RotateZX].down) {
-                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, -1, 0));
+            if (state->input.keys[InputKey_RotateZX].down) {
+                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, -1, 0));
             }
-            if (input.keys[InputKey_RotateYZ].down) {
-                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, 1));
+            if (state->input.keys[InputKey_RotateYZ].down) {
+                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, 1));
             }
-            if (input.keys[InputKey_RotateZY].down) {
-                camera.orientation = rotor3fMulRotor3f(camera.orientation, createRotor3fAnglePlane(cameraRotationInc, 0, 0, -1));
+            if (state->input.keys[InputKey_RotateZY].down) {
+                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, -1));
             }
 
             Rotor3f cubeRotation1 = createRotor3fAnglePlane(1, 1, 1, 1);
-            cube1.orientation = rotor3fMulRotor3f(cube1.orientation, cubeRotation1);
+            state->cube1.orientation = rotor3fMulRotor3f(state->cube1.orientation, cubeRotation1);
             Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
-            cube2.orientation = rotor3fMulRotor3f(cube2.orientation, cubeRotation2);
+            state->cube2.orientation = rotor3fMulRotor3f(state->cube2.orientation, cubeRotation2);
 
-            if (inputKeyWasPressed(&input, InputKey_ToggleDebugTriangles)) {
-                showDebugTriangles = !showDebugTriangles;
+            if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
+                state->showDebugTriangles = !state->showDebugTriangles;
             }
         }
-        timerSection(&debug.timer, FrameTimingID_Update);
+        timerSection(&timer, FrameTimingID_Update);
 
         // NOTE(khvorov) Render
-        meshStorageClearBuffers(&renderer.triangles);
-        if (showDebugTriangles) {
-            drawDebugTriangles(&renderer, windowWidth, windowHeight, &scratch);
+        meshStorageClearBuffers(&state->renderer.triangles);
+        if (state->showDebugTriangles) {
+            drawDebugTriangles(&state->renderer, windowWidth, windowHeight, &state->scratch);
         } else {
-            rendererPushMesh(&renderer, cube1, camera);
-            rendererPushMesh(&renderer, cube2, camera);
-            setImageSize(&renderer, windowWidth, windowHeight);
-            clearImage(&renderer);
-            rendererFillTriangles(&renderer);
-            rendererOutlineTriangles(&renderer);
+            rendererPushMesh(&state->renderer, state->cube1, state->camera);
+            rendererPushMesh(&state->renderer, state->cube2, state->camera);
+            setImageSize(&state->renderer, windowWidth, windowHeight);
+            clearImage(&state->renderer);
+            rendererFillTriangles(&state->renderer);
+            rendererOutlineTriangles(&state->renderer);
         }
-        timerSection(&debug.timer, FrameTimingID_Render);
+        timerSection(&timer, FrameTimingID_Render);
 
         // NOTE(khvorov) Debug overlay
         {
-            Texture dest = {renderer.image.ptr, renderer.image.width, renderer.image.height};
-            drawStr(font, STR("input updat rendr debug prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
+            Texture dest = {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height};
+            drawStr(&state->font, STR("input updat rendr debug prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
 
-            for (FrameTimingsIter timingsIter = createFrameTimingsIter(&debug.timingsLog, debug.displayTimingsLines.circle.windowSize, debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
-                TempMemory temp = beginTempMemory(&scratch);
+            for (FrameTimingsIter timingsIter = createFrameTimingsIter(&state->debug.timingsLog, state->debug.displayTimingsLines.circle.windowSize, state->debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
+                TempMemory temp = beginTempMemory(&state->scratch);
 
-                assert(circleIterNext(&debug.displayTimingsLines.circle));
+                assert(circleIterNext(&state->debug.displayTimingsLines.circle));
 
                 StrBuilder builder = {};
-                arenaAllocCap(&scratch, char, 1000, builder);
+                arenaAllocCap(&state->scratch, char, 1000, builder);
 
                 FrameTimings tm = timingsIter.timings;
 
@@ -2262,24 +2280,24 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
                 Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
                 Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
-                f32     by = (f32)(debug.displayTimingsLines.circle.iterCount - 1) / (f32)(debug.displayTimingsLines.circle.windowSize - 1);
+                f32     by = (f32)(state->debug.displayTimingsLines.circle.iterCount - 1) / (f32)(state->debug.displayTimingsLines.circle.windowSize - 1);
                 Color01 color = color01Lerp(start, end, by);
 
-                drawStr(font, (Str) {builder.ptr, builder.len}, dest, font->lineAdvance * (debug.displayTimingsLines.circle.currentIndex + 1), color);
+                drawStr(&state->font, (Str) {builder.ptr, builder.len}, dest, state->font.lineAdvance * (state->debug.displayTimingsLines.circle.currentIndex + 1), color);
 
                 endTempMemory(temp);
             }
 
-            lagCircleIterResetAndSetMostRecent(&debug.displayTimingsLines, debug.displayTimingsLines.circle.mostRecentIndex + 1);
+            lagCircleIterResetAndSetMostRecent(&state->debug.displayTimingsLines, state->debug.displayTimingsLines.circle.mostRecentIndex + 1);
         }
-        timerSection(&debug.timer, FrameTimingID_DebugOverlay);
+        timerSection(&timer, FrameTimingID_DebugOverlay);
 
         // NOTE(khvorov) Present the bitmap
         {
             BITMAPINFO bmi = {
                 .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
-                .bmiHeader.biWidth = renderer.image.width,
-                .bmiHeader.biHeight = -renderer.image.height,  // NOTE(khvorov) Top-down
+                .bmiHeader.biWidth = state->renderer.image.width,
+                .bmiHeader.biHeight = -state->renderer.image.height,  // NOTE(khvorov) Top-down
                 .bmiHeader.biPlanes = 1,
                 .bmiHeader.biBitCount = 32,
                 .bmiHeader.biCompression = BI_RGB,
@@ -2292,9 +2310,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 windowHeight,
                 0,
                 0,
-                renderer.image.width,
-                renderer.image.height,
-                renderer.image.ptr,
+                state->renderer.image.width,
+                state->renderer.image.height,
+                state->renderer.image.ptr,
                 &bmi,
                 DIB_RGB_COLORS,
                 SRCCOPY
@@ -2303,18 +2321,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         // NOTE(khvorov) Frame timing
         {
-            f32 msFromStart = timerSection(&debug.timer, FrameTimingID_Present);
+            f32 msFromStart = timerSection(&timer, FrameTimingID_Present);
             f32 msToSleep = msPerFrameTarget - msFromStart;
             // NOTE(khvorov) Need at least 1ms buffer there after sleep because windows likes to oversleep
             if (msToSleep >= 2) {
                 DWORD msToSleepFloor = (DWORD)msToSleep - 1;
                 Sleep(msToSleepFloor);
             }
-            msFromStart = timerSection(&debug.timer, FrameTimingID_Sleep);
-            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(debug.timer.clock, debug.timer.frameStart)) {}
-            timerSection(&debug.timer, FrameTimingID_Spin);
-            pushFrameTimings(&debug.timingsLog, debug.timer.timings);
-            timerNewFrame(&debug.timer);
+            msFromStart = timerSection(&timer, FrameTimingID_Sleep);
+            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(timer.clock, timer.frameStart)) {}
+            timerSection(&timer, FrameTimingID_Spin);
+            pushFrameTimings(&state->debug.timingsLog, timer.timings);
+            timerNewFrame(&timer);
         }
     }
 
