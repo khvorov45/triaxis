@@ -2001,7 +2001,7 @@ windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_DESTROY: PostQuitMessage(0); break;
         case WM_ERASEBKGND: result = TRUE; break;  // NOTE(khvorov) Do nothing
-        default: result = DefWindowProc(hwnd, uMsg, wParam, lParam); break;
+        default: result = DefWindowProcW(hwnd, uMsg, wParam, lParam); break;
     }
     return result;
 }
@@ -2038,22 +2038,23 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         };
     }
 
-    WNDCLASSEXA windowClass = {
-        .cbSize = sizeof(WNDCLASSEXA),
+    WNDCLASSEXW windowClass = {
+        .cbSize = sizeof(WNDCLASSEXW),
         .lpfnWndProc = windowProc,
         .hInstance = hInstance,
-        .lpszClassName = "Triaxis",
+        .lpszClassName = L"Triaxis",
         .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH),
         .hCursor = LoadCursorA(NULL, IDC_ARROW),
+        .hIcon = LoadIconA(NULL, IDI_APPLICATION),
     };
-    assert(RegisterClassExA(&windowClass) != 0);
+    assert(RegisterClassExW(&windowClass) != 0);
 
     isize windowWidth = 1600;
     isize windowHeight = 800;
-    HWND  window = CreateWindowExA(
+    HWND  window = CreateWindowExW(
         0,
         windowClass.lpszClassName,
-        "Triaxis",
+        L"Triaxis",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
@@ -2061,7 +2062,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         windowHeight,
         NULL,
         NULL,
-        hInstance,
+        windowClass.hInstance,
         NULL
     );
     assert(window);
