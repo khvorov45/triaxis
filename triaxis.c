@@ -1956,6 +1956,9 @@ typedef struct State {
     Arena       scratch;
     Debug       debug;
 
+    isize windowWidth;
+    isize windowHeight;
+
     Camera camera;
     Input  input;
     Mesh   cube1;
@@ -1994,7 +1997,76 @@ initState(void* mem, isize bytes) {
     state->cube2 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 0}, createRotor3fAnglePlane(0, 0, 1, 0));
 
     state->showDebugTriangles = false;
+
+    state->windowWidth = 1600;
+    state->windowHeight = 800;
+
     return state;
+}
+
+function void
+update(State* state) {
+    if (state->input.keys[InputKey_Forward].down) {
+        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), state->camera.movementInc), state->camera.pos);
+    }
+    if (state->input.keys[InputKey_Back].down) {
+        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), -state->camera.movementInc), state->camera.pos);
+    }
+    if (state->input.keys[InputKey_Right].down) {
+        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), state->camera.movementInc), state->camera.pos);
+    }
+    if (state->input.keys[InputKey_Left].down) {
+        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), -state->camera.movementInc), state->camera.pos);
+    }
+    if (state->input.keys[InputKey_Up].down) {
+        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), state->camera.movementInc), state->camera.pos);
+    }
+    if (state->input.keys[InputKey_Down].down) {
+        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), -state->camera.movementInc), state->camera.pos);
+    }
+
+    if (state->input.keys[InputKey_RotateXY].down) {
+        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 1, 0, 0));
+    }
+    if (state->input.keys[InputKey_RotateYX].down) {
+        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, -1, 0, 0));
+    }
+    if (state->input.keys[InputKey_RotateXZ].down) {
+        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 1, 0));
+    }
+    if (state->input.keys[InputKey_RotateZX].down) {
+        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, -1, 0));
+    }
+    if (state->input.keys[InputKey_RotateYZ].down) {
+        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, 1));
+    }
+    if (state->input.keys[InputKey_RotateZY].down) {
+        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, -1));
+    }
+
+    Rotor3f cubeRotation1 = createRotor3fAnglePlane(1, 1, 1, 1);
+    state->cube1.orientation = rotor3fMulRotor3f(state->cube1.orientation, cubeRotation1);
+    Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
+    state->cube2.orientation = rotor3fMulRotor3f(state->cube2.orientation, cubeRotation2);
+
+    if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
+        state->showDebugTriangles = !state->showDebugTriangles;
+    }
+}
+
+function void
+render(State* state) {
+    meshStorageClearBuffers(&state->renderer.triangles);
+    if (state->showDebugTriangles) {
+        drawDebugTriangles(&state->renderer, state->windowWidth, state->windowHeight, &state->scratch);
+    } else {
+        rendererPushMesh(&state->renderer, state->cube1, state->camera);
+        rendererPushMesh(&state->renderer, state->cube2, state->camera);
+        setImageSize(&state->renderer, state->windowWidth, state->windowHeight);
+        clearImage(&state->renderer);
+        rendererFillTriangles(&state->renderer);
+        rendererOutlineTriangles(&state->renderer);
+    }
 }
 
 //
@@ -2101,17 +2173,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     };
     assert(RegisterClassExW(&windowClass) != 0);
 
-    isize windowWidth = 1600;
-    isize windowHeight = 800;
-    HWND  window = CreateWindowExW(
+    HWND window = CreateWindowExW(
         0,
         windowClass.lpszClassName,
         L"Triaxis",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        windowWidth,
-        windowHeight,
+        state->windowWidth,
+        state->windowHeight,
         NULL,
         NULL,
         windowClass.hInstance,
@@ -2126,9 +2196,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         GetClientRect(window, &rect);
         isize width = rect.right - rect.left;
         isize height = rect.bottom - rect.top;
-        isize dwidth = windowWidth - width;
-        isize dheight = windowHeight - height;
-        SetWindowPos(window, 0, rect.left, rect.top, windowWidth + dwidth, windowHeight + dheight, 0);
+        isize dwidth = state->windowWidth - width;
+        isize dheight = state->windowHeight - height;
+        SetWindowPos(window, 0, rect.left, rect.top, state->windowWidth + dwidth, state->windowHeight + dheight, 0);
     }
 
     // TODO(khvorov) Hack is debug only
@@ -2191,69 +2261,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         }
         timerSection(&timer, FrameTimingID_Input);
 
-        // NOTE(khvorov) Update
-        {
-            if (state->input.keys[InputKey_Forward].down) {
-                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), state->camera.movementInc), state->camera.pos);
-            }
-            if (state->input.keys[InputKey_Back].down) {
-                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), -state->camera.movementInc), state->camera.pos);
-            }
-            if (state->input.keys[InputKey_Right].down) {
-                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), state->camera.movementInc), state->camera.pos);
-            }
-            if (state->input.keys[InputKey_Left].down) {
-                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), -state->camera.movementInc), state->camera.pos);
-            }
-            if (state->input.keys[InputKey_Up].down) {
-                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), state->camera.movementInc), state->camera.pos);
-            }
-            if (state->input.keys[InputKey_Down].down) {
-                state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), -state->camera.movementInc), state->camera.pos);
-            }
-
-            if (state->input.keys[InputKey_RotateXY].down) {
-                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 1, 0, 0));
-            }
-            if (state->input.keys[InputKey_RotateYX].down) {
-                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, -1, 0, 0));
-            }
-            if (state->input.keys[InputKey_RotateXZ].down) {
-                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 1, 0));
-            }
-            if (state->input.keys[InputKey_RotateZX].down) {
-                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, -1, 0));
-            }
-            if (state->input.keys[InputKey_RotateYZ].down) {
-                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, 1));
-            }
-            if (state->input.keys[InputKey_RotateZY].down) {
-                state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, -1));
-            }
-
-            Rotor3f cubeRotation1 = createRotor3fAnglePlane(1, 1, 1, 1);
-            state->cube1.orientation = rotor3fMulRotor3f(state->cube1.orientation, cubeRotation1);
-            Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
-            state->cube2.orientation = rotor3fMulRotor3f(state->cube2.orientation, cubeRotation2);
-
-            if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
-                state->showDebugTriangles = !state->showDebugTriangles;
-            }
-        }
+        update(state);
         timerSection(&timer, FrameTimingID_Update);
 
-        // NOTE(khvorov) Render
-        meshStorageClearBuffers(&state->renderer.triangles);
-        if (state->showDebugTriangles) {
-            drawDebugTriangles(&state->renderer, windowWidth, windowHeight, &state->scratch);
-        } else {
-            rendererPushMesh(&state->renderer, state->cube1, state->camera);
-            rendererPushMesh(&state->renderer, state->cube2, state->camera);
-            setImageSize(&state->renderer, windowWidth, windowHeight);
-            clearImage(&state->renderer);
-            rendererFillTriangles(&state->renderer);
-            rendererOutlineTriangles(&state->renderer);
-        }
+        render(state);
         timerSection(&timer, FrameTimingID_Render);
 
         // NOTE(khvorov) Debug overlay
@@ -2306,8 +2317,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 hdc,
                 0,
                 0,
-                windowWidth,
-                windowHeight,
+                state->windowWidth,
+                state->windowHeight,
                 0,
                 0,
                 state->renderer.image.width,
