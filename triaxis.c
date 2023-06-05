@@ -2117,6 +2117,7 @@ typedef struct State {
     Renderer    renderer;
     MeshStorage meshStorage;
     Font        font;
+    Arena       perm;
     Arena       scratch;
     Debug       debug;
 
@@ -2141,6 +2142,7 @@ initState(void* mem, isize bytes) {
     State* state = arenaAllocArray(&arena, State, 1);
 
     initFont(&state->font, &arena);
+    state->perm = createArenaFromArena(&arena, 10 * 1024 * 1024);
     state->scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
 
     isize perSystem = arenaFreeSize(&arena) / 3;
@@ -2508,59 +2510,29 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(struct Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
 
-        const char hlsl[] =
-            // "#line " STR(__LINE__)
-            "                                  \n\n"  // actual line number in this file for nicer error messages
-            "                                                           \n"
-            "struct VS_INPUT                                            \n"
-            "{                                                          \n"
-            "     float2 pos   : POSITION;                              \n"  // these names must match D3D11_INPUT_ELEMENT_DESC array
-            "     float2 uv    : TEXCOORD;                              \n"
-            "     float3 color : COLOR;                                 \n"
-            "};                                                         \n"
-            "                                                           \n"
-            "struct PS_INPUT                                            \n"
-            "{                                                          \n"
-            "  float4 pos   : SV_POSITION;                              \n"  // these names do not matter, except SV_... ones
-            "  float2 uv    : TEXCOORD;                                 \n"
-            "  float4 color : COLOR;                                    \n"
-            "};                                                         \n"
-            "                                                           \n"
-            "cbuffer cbuffer0 : register(b0)                            \n"  // b0 = constant buffer bound to slot 0
-            "{                                                          \n"
-            "    float4x4 uTransform;                                   \n"
-            "}                                                          \n"
-            "                                                           \n"
-            "sampler sampler0 : register(s0);                           \n"  // s0 = sampler bound to slot 0
-            "                                                           \n"
-            "Texture2D<float4> texture0 : register(t0);                 \n"  // t0 = shader resource bound to slot 0
-            "                                                           \n"
-            "PS_INPUT vs(VS_INPUT input)                                \n"
-            "{                                                          \n"
-            "    PS_INPUT output;                                       \n"
-            "    output.pos = float4(input.pos, 0, 1); \n"
-            "    output.uv = input.uv;                                  \n"
-            "    output.color = float4(input.color, 1);                 \n"
-            "    return output;                                         \n"
-            "}                                                          \n"
-            "                                                           \n"
-            "float4 ps(PS_INPUT input) : SV_TARGET                      \n"
-            "{                                                          \n"
-            "    float4 tex = texture0.Sample(sampler0, input.uv);      \n"
-            "    return input.color * tex;                              \n"
-            "}                                                          \n";
-        ;
-
         UINT flags = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
         flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 
-        ID3DBlob* error;
+        ID3DBlob* error = 0;
+
+        Str hlsl = {};
+        {
+            void*         buf = arenaFreePtr(&state->perm);
+            HANDLE        handle = CreateFileW(L"shader.hlsl", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+            DWORD         bytesRead = 0;
+            LARGE_INTEGER filesize = {};
+            GetFileSizeEx(handle, &filesize);
+            ReadFile(handle, buf, filesize.QuadPart, &bytesRead, 0);
+            assert(bytesRead == filesize.QuadPart);
+            CloseHandle(handle);
+            hlsl = (Str) {(char*)buf, (isize)bytesRead};
+        }
 
         ID3DBlob* vblob = 0;
-        asserthr(D3DCompile(hlsl, sizeof(hlsl), NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &error));
+        asserthr(D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &error));
 
         ID3DBlob* pblob = 0;
-        asserthr(D3DCompile(hlsl, sizeof(hlsl), NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &error));
+        asserthr(D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &error));
 
         ID3D11Device_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob), NULL, &vshader);
         ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(pblob), ID3D10Blob_GetBufferSize(pblob), NULL, &pshader);
