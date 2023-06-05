@@ -1513,7 +1513,6 @@ typedef enum FrameTimingID {
     FrameTimingID_Input,
     FrameTimingID_Update,
     FrameTimingID_Render,
-    FrameTimingID_DebugOverlay,
     FrameTimingID_Present,
     FrameTimingID_Sleep,
     FrameTimingID_Spin,
@@ -2071,7 +2070,7 @@ render(State* state) {
     // NOTE(khvorov) Debug overlay
     {
         Texture dest = {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height};
-        drawStr(&state->font, STR("input updat rendr debug prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
+        drawStr(&state->font, STR("input updat rendr prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
 
         for (FrameTimingsIter timingsIter = createFrameTimingsIter(&state->debug.timingsLog, state->debug.displayTimingsLines.circle.windowSize, state->debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
             TempMemory temp = beginTempMemory(&state->scratch);
@@ -2614,7 +2613,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 ID3D11DeviceContext_Map(context, (ID3D11Resource*)texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
                 u32* pixels = (u32*)mappedTexture.pData;
                 copymem(pixels, state->renderer.image.ptr, state->renderer.image.width * state->renderer.image.height * sizeof(u32));
-                timerSection(&timer, FrameTimingID_DebugOverlay);
 
                 ID3D11DeviceContext_Unmap(context, (ID3D11Resource*)texture, 0);
 
