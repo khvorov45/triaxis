@@ -69,10 +69,49 @@ function void
 zeromem(void* ptr, isize len) {
     isize remaining = len;
 
-    u8* ptr8 = (u8*)ptr;
-    while (remaining > 0) {
+    __m512i* ptr512 = (__m512i*)ptr;
+    __m512i  zero512 = _mm512_setzero_si512();
+    while (remaining >= (isize)sizeof(__m512i)) {
+        _mm512_storeu_si512(ptr512++, zero512);
+        remaining -= sizeof(__m512i);
+    }
+
+    __m256i* ptr256 = (__m256i*)ptr512;
+    __m256i  zero256 = _mm256_setzero_si256();
+    while (remaining >= (isize)sizeof(__m256i)) {
+        _mm256_storeu_si256(ptr256++, zero256);
+        remaining -= sizeof(__m256i);
+    }
+
+    __m128i* ptr128 = (__m128i*)ptr256;
+    __m128i  zero128 = _mm_setzero_si128();
+    while (remaining >= (isize)sizeof(__m128i)) {
+        _mm_storeu_si128(ptr128++, zero128);
+        remaining -= sizeof(__m128i);
+    }
+
+    u64* ptr64 = (u64*)ptr128;
+    while (remaining >= (isize)sizeof(u64)) {
+        *ptr64++ = 0;
+        remaining -= sizeof(u64);
+    }
+
+    u32* ptr32 = (u32*)ptr64;
+    while (remaining >= (isize)sizeof(u32)) {
+        *ptr32++ = 0;
+        remaining -= sizeof(u32);
+    }
+
+    u16* ptr16 = (u16*)ptr32;
+    while (remaining >= (isize)sizeof(u16)) {
+        *ptr16++ = 0;
+        remaining -= sizeof(u16);
+    }
+
+    u8* ptr8 = (u8*)ptr16;
+    while (remaining >= (isize)sizeof(u8)) {
         *ptr8++ = 0;
-        remaining -= 1;
+        remaining -= sizeof(u8);
     }
 }
 
@@ -129,9 +168,9 @@ copymem(void* dest, void* src, isize len) {
 
     u8* src8 = (u8*)src16;
     u8* dest8 = (u8*)dest16;
-    while (remaining > 0) {
+    while (remaining >= (isize)sizeof(u8)) {
         *dest8++ = *src8++;
-        remaining -= 1;
+        remaining -= sizeof(u8);
     }
 }
 
@@ -959,9 +998,7 @@ setImageSize(Renderer* renderer, isize width, isize height) {
 
 function void
 clearImage(Renderer* renderer) {
-    for (isize ind = 0; ind < renderer->image.width * renderer->image.height; ind++) {
-        renderer->image.ptr[ind] = 0;
-    }
+    zeromem(renderer->image.ptr, renderer->image.width * renderer->image.height * sizeof(u32));
 }
 
 typedef struct Triangle {
@@ -1579,8 +1616,6 @@ typedef enum FrameTimingID {
     FrameTimingID_Update,
     FrameTimingID_Render,
     FrameTimingID_Present,
-    FrameTimingID_Sleep,
-    FrameTimingID_Spin,
     FrameTimingID_Count,
 } FrameTimingID;
 
@@ -1769,9 +1804,30 @@ runTests(Arena* arena) {
     }
 
     {
-        isize bufBytes = 2048;
-        void* src = arenaAlloc(arena, 2048, 64);
-        void* dest = arenaAlloc(arena, 2048, 64);
+        isize bytes = 101;
+        void* ptr = arenaAlloc(arena, bytes, 64);
+
+        for (isize misalign = 0; misalign < 100; misalign++) {
+            isize thisBytes = bytes - misalign;
+            void* thisPtr = (u8*)ptr + misalign;
+
+            for (isize byteIndex = 0; byteIndex < thisBytes; byteIndex++) {
+                u8 val = (u8)(byteIndex & 0xFF);
+                ((u8*)thisPtr)[byteIndex] = val;
+            }
+
+            zeromem(thisPtr, thisBytes);
+
+            for (isize byteIndex = 0; byteIndex < thisBytes; byteIndex++) {
+                assert(((u8*)thisPtr)[byteIndex] == 0);
+            }
+        }
+    }
+
+    {
+        isize bufBytes = 1000;
+        void* src = arenaAlloc(arena, bufBytes, 64);
+        void* dest = arenaAlloc(arena, bufBytes, 64);
 
         for (isize byteIndex = 0; byteIndex < bufBytes; byteIndex++) {
             u8 val = (u8)(byteIndex & 0xFF);
@@ -2179,7 +2235,7 @@ render(State* state) {
     // NOTE(khvorov) Debug overlay
     {
         Texture dest = {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height};
-        drawStr(&state->font, STR("input updat rendr prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
+        drawStr(&state->font, STR("input updat rendr prsnt total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
 
         for (FrameTimingsIter timingsIter = createFrameTimingsIter(&state->debug.timingsLog, state->debug.displayTimingsLines.circle.windowSize, state->debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
             TempMemory temp = beginTempMemory(&state->scratch);
@@ -2623,7 +2679,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         timeBeginPeriod(caps.wPeriodMin);
     }
 
-    f32   msPerFrameTarget = 1.0f / 60.0f * 1000.0f;
+    // TODO(khvorov) Handle delta time
     Timer timer = {.clock = createClock(), .frameStart = getClockMarker()};
     for (;;) {
         assert(state->scratch.tempCount == 0);
@@ -2724,22 +2780,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 Sleep(10);
             }
         }
-
-        // NOTE(khvorov) Frame timing
-        {
-            f32 msFromStart = timerSection(&timer, FrameTimingID_Present);
-            f32 msToSleep = msPerFrameTarget - msFromStart;
-            // NOTE(khvorov) Need at least 1ms buffer there after sleep because windows likes to oversleep
-            if (msToSleep >= 2) {
-                DWORD msToSleepFloor = (DWORD)msToSleep - 1;
-                Sleep(msToSleepFloor);
-            }
-            msFromStart = timerSection(&timer, FrameTimingID_Sleep);
-            for (; msFromStart < msPerFrameTarget; msFromStart = getMsFromMarker(timer.clock, timer.frameStart)) {}
-            timerSection(&timer, FrameTimingID_Spin);
-            pushFrameTimings(&state->debug.timingsLog, timer.timings);
-            timerNewFrame(&timer);
-        }
+        timerSection(&timer, FrameTimingID_Present);
+        pushFrameTimings(&state->debug.timingsLog, timer.timings);
+        timerNewFrame(&timer);
     }
 
     return 0;
