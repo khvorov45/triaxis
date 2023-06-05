@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdalign.h>
+#include <immintrin.h>
 
 // TODO(khvorov) Remove
 #include <math.h>
@@ -23,35 +24,16 @@
 // clang-format on
 
 typedef uint8_t  u8;
-typedef int32_t  i32;
+typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
+typedef int32_t  i32;
 typedef intptr_t isize;
 typedef float    f32;
 
 //
 // SECTION Memory
 //
-
-function bool
-memeq(void* ptr1, void* ptr2, isize len) {
-    bool result = true;
-    for (isize ind = 0; ind < len; ind++) {
-        if (((u8*)ptr1)[ind] != ((u8*)ptr2)[ind]) {
-            result = false;
-            break;
-        }
-    }
-    return result;
-}
-
-function void
-copymem(void* dest, void* src, isize len) {
-    assert((src < dest && src + len < dest) || (dest < src && dest + len < src));
-    for (isize ind = 0; ind < len; ind++) {
-        ((u8*)dest)[ind] = ((u8*)src)[ind];
-    }
-}
 
 function bool
 isPowerOf2(isize value) {
@@ -69,6 +51,88 @@ getOffsetForAlignment(void* ptr, isize align) {
         offset = align - misalignment;
     }
     return offset;
+}
+
+function bool
+memeq(void* ptr1, void* ptr2, isize len) {
+    bool result = true;
+    for (isize ind = 0; ind < len; ind++) {
+        if (((u8*)ptr1)[ind] != ((u8*)ptr2)[ind]) {
+            result = false;
+            break;
+        }
+    }
+    return result;
+}
+
+function void
+zeromem(void* ptr, isize len) {
+    isize remaining = len;
+
+    u8* ptr8 = (u8*)ptr;
+    while (remaining > 0) {
+        *ptr8++ = 0;
+        remaining -= 1;
+    }
+}
+
+function void
+copymem(void* dest, void* src, isize len) {
+    assert((src < dest && src + len <= dest) || (dest < src && dest + len <= src));
+
+    isize remaining = len;
+
+    __m512i* src512 = (__m512i*)src;
+    __m512i* dest512 = (__m512i*)dest;
+    while (remaining >= (isize)sizeof(__m512i)) {
+        __m512i val = _mm512_loadu_si512(src512++);
+        _mm512_storeu_si512(dest512++, val);
+        remaining -= sizeof(__m512i);
+    }
+
+    __m256i* src256 = (__m256i*)src512;
+    __m256i* dest256 = (__m256i*)dest512;
+    while (remaining >= (isize)sizeof(__m256i)) {
+        __m256i val = _mm256_loadu_si256(src256++);
+        _mm256_storeu_si256(dest256++, val);
+        remaining -= sizeof(__m256i);
+    }
+
+    __m128i* src128 = (__m128i*)src256;
+    __m128i* dest128 = (__m128i*)dest256;
+    while (remaining >= (isize)sizeof(__m128i)) {
+        __m128i val = _mm_loadu_si128(src128++);
+        _mm_storeu_si128(dest128++, val);
+        remaining -= sizeof(__m128i);
+    }
+
+    u64* src64 = (u64*)src128;
+    u64* dest64 = (u64*)dest128;
+    while (remaining >= (isize)sizeof(u64)) {
+        *dest64++ = *src64++;
+        remaining -= sizeof(u64);
+    }
+
+    u32* src32 = (u32*)src64;
+    u32* dest32 = (u32*)dest64;
+    while (remaining >= (isize)sizeof(u32)) {
+        *dest32++ = *src32++;
+        remaining -= sizeof(u32);
+    }
+
+    u16* src16 = (u16*)src32;
+    u16* dest16 = (u16*)dest32;
+    while (remaining >= (isize)sizeof(u16)) {
+        *dest16++ = *src16++;
+        remaining -= sizeof(u16);
+    }
+
+    u8* src8 = (u8*)src16;
+    u8* dest8 = (u8*)dest16;
+    while (remaining > 0) {
+        *dest8++ = *src8++;
+        remaining -= 1;
+    }
 }
 
 typedef struct Arena {
@@ -1702,6 +1766,50 @@ runTests(Arena* arena) {
 
         assert(getOffsetForAlignment((void*)11, 2) == 1);
         assert(getOffsetForAlignment((void*)13, 4) == 3);
+    }
+
+    {
+        isize bufBytes = 2048;
+        void* src = arenaAlloc(arena, 2048, 64);
+        void* dest = arenaAlloc(arena, 2048, 64);
+
+        for (isize byteIndex = 0; byteIndex < bufBytes; byteIndex++) {
+            u8 val = (u8)(byteIndex & 0xFF);
+            ((u8*)src)[byteIndex] = val;
+        }
+
+        for (isize misalign = 0; misalign < 64; misalign++) {
+            isize thisBufBytes = bufBytes - misalign;
+            void* thisSrc = (u8*)src + misalign;
+            void* thisDest = dest;
+
+            zeromem(thisDest, thisBufBytes);
+            assert(!memeq(thisSrc, thisDest, thisBufBytes));
+            copymem(thisDest, thisSrc, thisBufBytes);
+            assert(memeq(thisSrc, thisDest, thisBufBytes));
+        }
+
+        for (isize misalign = 0; misalign < 64; misalign++) {
+            isize thisBufBytes = bufBytes - misalign;
+            void* thisSrc = src;
+            void* thisDest = (u8*)dest + misalign;
+
+            zeromem(thisDest, thisBufBytes);
+            assert(!memeq(thisSrc, thisDest, thisBufBytes));
+            copymem(thisDest, thisSrc, thisBufBytes);
+            assert(memeq(thisSrc, thisDest, thisBufBytes));
+        }
+
+        for (isize misalign = 0; misalign < 64; misalign++) {
+            isize thisBufBytes = bufBytes - misalign;
+            void* thisSrc = (u8*)src + misalign;
+            void* thisDest = (u8*)dest + misalign;
+
+            zeromem(thisDest, thisBufBytes);
+            assert(!memeq(thisSrc, thisDest, thisBufBytes));
+            copymem(thisDest, thisSrc, thisBufBytes);
+            assert(memeq(thisSrc, thisDest, thisBufBytes));
+        }
     }
 
     {
