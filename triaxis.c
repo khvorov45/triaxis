@@ -2477,16 +2477,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     struct Vertex {
         float position[2];
         float uv[2];
-        float color[3];
     };
 
     ID3D11Buffer* vbuffer = 0;
     {
         struct Vertex data[] = {
-            {{-1.00f, +1.00f}, {0.0f, 0.0f}, {1, 1, 1}},
-            {{+1.00f, +1.00f}, {1.0f, 0.0f}, {1, 1, 1}},
-            {{-1.00f, -1.00f}, {0.0f, 1.0f}, {1, 1, 1}},
-            {{+1.00f, -1.00f}, {1.0f, 1.0f}, {1, 1, 1}},
+            {{-1.00f, +1.00f}, {0.0f, 0.0f}},
+            {{+1.00f, +1.00f}, {1.0f, 0.0f}},
+            {{-1.00f, -1.00f}, {0.0f, 1.0f}},
+            {{+1.00f, -1.00f}, {1.0f, 1.0f}},
         };
 
         D3D11_BUFFER_DESC desc = {
@@ -2507,13 +2506,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(struct Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
 
         UINT flags = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
         flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-
-        ID3DBlob* error = 0;
 
         Str hlsl = {};
         {
@@ -2528,11 +2524,23 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             hlsl = (Str) {(char*)buf, (isize)bytesRead};
         }
 
+        ID3DBlob* verror = 0;
         ID3DBlob* vblob = 0;
-        asserthr(D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &error));
+        HRESULT   vresult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &verror);
+        if (FAILED(vresult)) {
+            char* msg = ID3D10Blob_GetBufferPointer(verror);
+            OutputDebugStringA(msg);
+            assert(!"failed to compile");
+        }
 
+        ID3DBlob* perror = 0;
         ID3DBlob* pblob = 0;
-        asserthr(D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &error));
+        HRESULT   presult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &perror);
+        if (FAILED(presult)) {
+            char* msg = ID3D10Blob_GetBufferPointer(perror);
+            OutputDebugStringA(msg);
+            assert(!"failed to compile");
+        }
 
         ID3D11Device_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob), NULL, &vshader);
         ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(pblob), ID3D10Blob_GetBufferSize(pblob), NULL, &pshader);
