@@ -47,6 +47,7 @@ memeq(void* ptr1, void* ptr2, isize len) {
 
 function void
 copymem(void* dest, void* src, isize len) {
+    assert((src < dest && src + len < dest) || (dest < src && dest + len < src));
     for (isize ind = 0; ind < len; ind++) {
         ((u8*)dest)[ind] = ((u8*)src)[ind];
     }
