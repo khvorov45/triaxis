@@ -2067,6 +2067,41 @@ render(State* state) {
         rendererFillTriangles(&state->renderer);
         rendererOutlineTriangles(&state->renderer);
     }
+
+    // NOTE(khvorov) Debug overlay
+    {
+        Texture dest = {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height};
+        drawStr(&state->font, STR("input updat rendr debug prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
+
+        for (FrameTimingsIter timingsIter = createFrameTimingsIter(&state->debug.timingsLog, state->debug.displayTimingsLines.circle.windowSize, state->debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
+            TempMemory temp = beginTempMemory(&state->scratch);
+
+            assert(circleIterNext(&state->debug.displayTimingsLines.circle));
+
+            StrBuilder builder = {};
+            arenaAllocCap(&state->scratch, char, 1000, builder);
+
+            FrameTimings tm = timingsIter.timings;
+
+            FmtF32 fmtSpec = {.charsLeft = 2, .charsRight = 2};
+            for (isize ind = 0; ind < FrameTimingID_Count; ind++) {
+                fmtF32(&builder, tm.ms[ind], fmtSpec);
+                fmtStr(&builder, STR(" "));
+            }
+            fmtF32(&builder, frameTimingsSum(tm), fmtSpec);
+
+            Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
+            Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
+            f32     by = (f32)(state->debug.displayTimingsLines.circle.iterCount - 1) / (f32)(state->debug.displayTimingsLines.circle.windowSize - 1);
+            Color01 color = color01Lerp(start, end, by);
+
+            drawStr(&state->font, (Str) {builder.ptr, builder.len}, dest, state->font.lineAdvance * (state->debug.displayTimingsLines.circle.currentIndex + 1), color);
+
+            endTempMemory(temp);
+        }
+
+        lagCircleIterResetAndSetMostRecent(&state->debug.displayTimingsLines, state->debug.displayTimingsLines.circle.mostRecentIndex + 1);
+    }
 }
 
 //
@@ -2282,10 +2317,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ID3D11Buffer* vbuffer = 0;
     {
         struct Vertex data[] = {
-            {{-1.00f, +1.00f}, {0.0f, 1.0f}, {1, 1, 1}},
-            {{+1.00f, +1.00f}, {1.0f, 1.0f}, {1, 1, 1}},
-            {{-1.00f, -1.00f}, {0.0f, 0.0f}, {1, 1, 1}},
-            {{+1.00f, -1.00f}, {1.0f, 0.0f}, {1, 1, 1}},
+            {{-1.00f, +1.00f}, {0.0f, 0.0f}, {1, 1, 1}},
+            {{+1.00f, +1.00f}, {1.0f, 0.0f}, {1, 1, 1}},
+            {{-1.00f, -1.00f}, {0.0f, 1.0f}, {1, 1, 1}},
+            {{+1.00f, -1.00f}, {1.0f, 1.0f}, {1, 1, 1}},
         };
 
         D3D11_BUFFER_DESC desc = {
@@ -2371,12 +2406,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         ID3D10Blob_Release(vblob);
     }
 
-    // TODO(khvorov) Figure out how to update the texture
-    setImageSize(&state->renderer, state->windowWidth, state->windowHeight);
-    render(state);
-
     ID3D11ShaderResourceView* textureView = 0;
+    ID3D11Texture2D*          texture = 0;
     {
+        // TODO(khvorov) Resizing
+        setImageSize(&state->renderer, state->windowWidth, state->windowHeight);
         D3D11_TEXTURE2D_DESC desc = {
             .Width = state->renderer.image.width,
             .Height = state->renderer.image.height,
@@ -2394,10 +2428,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             .SysMemPitch = state->renderer.image.width * sizeof(u32),
         };
 
-        ID3D11Texture2D* texture = 0;
         ID3D11Device_CreateTexture2D(device, &desc, &data, &texture);
         ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource*)texture, NULL, &textureView);
-        ID3D11Texture2D_Release(texture);
     }
 
     ID3D11SamplerState* sampler = 0;
@@ -2556,42 +2588,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         render(state);
         timerSection(&timer, FrameTimingID_Render);
 
-        // NOTE(khvorov) Debug overlay
-        {
-            Texture dest = {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height};
-            drawStr(&state->font, STR("input updat rendr debug prsnt sleep spin  total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
-
-            for (FrameTimingsIter timingsIter = createFrameTimingsIter(&state->debug.timingsLog, state->debug.displayTimingsLines.circle.windowSize, state->debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
-                TempMemory temp = beginTempMemory(&state->scratch);
-
-                assert(circleIterNext(&state->debug.displayTimingsLines.circle));
-
-                StrBuilder builder = {};
-                arenaAllocCap(&state->scratch, char, 1000, builder);
-
-                FrameTimings tm = timingsIter.timings;
-
-                FmtF32 fmtSpec = {.charsLeft = 2, .charsRight = 2};
-                for (isize ind = 0; ind < FrameTimingID_Count; ind++) {
-                    fmtF32(&builder, tm.ms[ind], fmtSpec);
-                    fmtStr(&builder, STR(" "));
-                }
-                fmtF32(&builder, frameTimingsSum(tm), fmtSpec);
-
-                Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
-                Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
-                f32     by = (f32)(state->debug.displayTimingsLines.circle.iterCount - 1) / (f32)(state->debug.displayTimingsLines.circle.windowSize - 1);
-                Color01 color = color01Lerp(start, end, by);
-
-                drawStr(&state->font, (Str) {builder.ptr, builder.len}, dest, state->font.lineAdvance * (state->debug.displayTimingsLines.circle.currentIndex + 1), color);
-
-                endTempMemory(temp);
-            }
-
-            lagCircleIterResetAndSetMostRecent(&state->debug.displayTimingsLines, state->debug.displayTimingsLines.circle.mostRecentIndex + 1);
-        }
-        timerSection(&timer, FrameTimingID_DebugOverlay);
-
         // NOTE(khvorov) Present
         {
             {
@@ -2613,9 +2609,19 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             ID3D11DeviceContext_RSSetViewports(context, 1, &viewport);
             ID3D11DeviceContext_RSSetState(context, rasterizerState);
 
-            ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler);
-            ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &textureView);
-            ID3D11DeviceContext_PSSetShader(context, pshader, NULL, 0);
+            {
+                D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
+                ID3D11DeviceContext_Map(context, (ID3D11Resource*)texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
+                u32* pixels = (u32*)mappedTexture.pData;
+                copymem(pixels, state->renderer.image.ptr, state->renderer.image.width * state->renderer.image.height * sizeof(u32));
+                timerSection(&timer, FrameTimingID_DebugOverlay);
+
+                ID3D11DeviceContext_Unmap(context, (ID3D11Resource*)texture, 0);
+
+                ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler);
+                ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &textureView);
+                ID3D11DeviceContext_PSSetShader(context, pshader, NULL, 0);
+            }
 
             ID3D11DeviceContext_OMSetBlendState(context, blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetDepthStencilState(context, depthState, 0);
