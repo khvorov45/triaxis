@@ -2415,7 +2415,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             .Height = state->renderer.image.height,
             .MipLevels = 1,
             .ArraySize = 1,
-            .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+            .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
             .SampleDesc = {.Count = 1, .Quality = 0},
             .Usage = D3D11_USAGE_DYNAMIC,
             .BindFlags = D3D11_BIND_SHADER_RESOURCE,
@@ -2441,24 +2441,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         };
 
         ID3D11Device_CreateSamplerState(device, &desc, &sampler);
-    }
-
-    // TODO(khvorov) Disable?
-    ID3D11BlendState* blendState = 0;
-    {
-        D3D11_BLEND_DESC desc = {
-            .RenderTarget[0] = {
-                .BlendEnable = TRUE,
-                .SrcBlend = D3D11_BLEND_SRC_ALPHA,
-                .DestBlend = D3D11_BLEND_INV_SRC_ALPHA,
-                .BlendOp = D3D11_BLEND_OP_ADD,
-                .SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA,
-                .DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA,
-                .BlendOpAlpha = D3D11_BLEND_OP_ADD,
-                .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
-            },
-        };
-        ID3D11Device_CreateBlendState(device, &desc, &blendState);
     }
 
     ID3D11RasterizerState* rasterizerState = 0;
@@ -2621,7 +2603,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 ID3D11DeviceContext_PSSetShader(context, pshader, NULL, 0);
             }
 
-            ID3D11DeviceContext_OMSetBlendState(context, blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetDepthStencilState(context, depthState, 0);
             ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtView, dsView);
 
