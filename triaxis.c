@@ -955,7 +955,7 @@ inputKeyWasPressed(Input* input, InputKey key) {
 }
 
 //
-// SECTION Renderer
+// SECTION SWRenderer
 //
 
 typedef struct Texture {
@@ -964,7 +964,7 @@ typedef struct Texture {
     isize height;
 } Texture;
 
-typedef struct Renderer {
+typedef struct SWRenderer {
     struct {
         u32*  ptr;
         isize width;
@@ -973,11 +973,11 @@ typedef struct Renderer {
     } image;
 
     MeshStorage triangles;
-} Renderer;
+} SWRenderer;
 
-function Renderer
-createRenderer(Arena* arena, isize bytes) {
-    Renderer renderer = {};
+function SWRenderer
+createSWRenderer(Arena* arena, isize bytes) {
+    SWRenderer renderer = {};
 
     isize forImage = bytes / 4 * 3;
     isize forTriangles = bytes - forImage;
@@ -989,7 +989,7 @@ createRenderer(Arena* arena, isize bytes) {
 }
 
 function void
-setImageSize(Renderer* renderer, isize width, isize height) {
+swRendererSetImageSize(SWRenderer* renderer, isize width, isize height) {
     isize pixelCount = width * height;
     assert(pixelCount <= renderer->image.cap);
     renderer->image.width = width;
@@ -997,7 +997,7 @@ setImageSize(Renderer* renderer, isize width, isize height) {
 }
 
 function void
-clearImage(Renderer* renderer) {
+swRendererClearImage(SWRenderer* renderer) {
     zeromem(renderer->image.ptr, renderer->image.width * renderer->image.height * sizeof(u32));
 }
 
@@ -1008,7 +1008,7 @@ typedef struct Triangle {
 } Triangle;
 
 function Triangle
-rendererPullTriangle(Renderer* renderer, TriangleIndices trig) {
+swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
     V3f v1og = arrget(renderer->triangles.vertices, trig.i1);
     V3f v2og = arrget(renderer->triangles.vertices, trig.i2);
     V3f v3og = arrget(renderer->triangles.vertices, trig.i3);
@@ -1026,8 +1026,8 @@ rendererPullTriangle(Renderer* renderer, TriangleIndices trig) {
 }
 
 function void
-rendererFillTriangle(Renderer* renderer, TriangleIndices trig) {
-    Triangle tr = rendererPullTriangle(renderer, trig);
+swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
+    Triangle tr = swRendererPullTriangle(renderer, trig);
 
     V2f v1 = tr.v1;
     V2f v2 = tr.v2;
@@ -1113,7 +1113,7 @@ rendererFillTriangle(Renderer* renderer, TriangleIndices trig) {
 }
 
 function void
-rendererContrast(Renderer* renderer, isize row, isize col) {
+swRendererContrast(SWRenderer* renderer, isize row, isize col) {
     assert(row >= 0 && col >= 0 && row < renderer->image.height && col < renderer->image.width);
     isize index = row * renderer->image.width + col;
     u32   oldVal = renderer->image.ptr[index];
@@ -1122,7 +1122,7 @@ rendererContrast(Renderer* renderer, isize row, isize col) {
 }
 
 function void
-drawContrastLine(Renderer* renderer, V2f v1, V2f v2) {
+swRendererDrawContrastLine(SWRenderer* renderer, V2f v1, V2f v2) {
     i32 x0 = (i32)(v1.x + 0.5);
     i32 y0 = (i32)(v1.y + 0.5);
     i32 x1 = (i32)(v2.x + 0.5);
@@ -1136,7 +1136,7 @@ drawContrastLine(Renderer* renderer, V2f v1, V2f v2) {
 
     for (;;) {
         if (y0 >= 0 && x0 >= 0 && y0 < renderer->image.height && x0 < renderer->image.width) {
-            rendererContrast(renderer, y0, x0);
+            swRendererContrast(renderer, y0, x0);
         }
         if (x0 == x1 && y0 == y1) {
             break;
@@ -1162,7 +1162,7 @@ drawContrastLine(Renderer* renderer, V2f v1, V2f v2) {
 }
 
 function void
-drawContrastRect(Renderer* renderer, Rect2f rect) {
+swRendererDrawContrastRect(SWRenderer* renderer, Rect2f rect) {
     Rect2f rectClipped = rect2fClip(rect, (Rect2f) {{-0.5, -0.5}, {renderer->image.width, renderer->image.height}});
     i32    x0 = (i32)(rectClipped.topleft.x + 0.5);
     i32    x1 = (i32)(rectClipped.topleft.x + rectClipped.dim.x + 0.5);
@@ -1171,61 +1171,61 @@ drawContrastRect(Renderer* renderer, Rect2f rect) {
 
     for (i32 ycoord = y0; ycoord < y1; ycoord++) {
         for (i32 xcoord = x0; xcoord < x1; xcoord++) {
-            rendererContrast(renderer, ycoord, xcoord);
+            swRendererContrast(renderer, ycoord, xcoord);
         }
     }
 }
 
 function void
-rendererOutlineTriangle(Renderer* renderer, TriangleIndices trig) {
-    Triangle tr = rendererPullTriangle(renderer, trig);
+swRendererOutlineTriangle(SWRenderer* renderer, TriangleIndices trig) {
+    Triangle tr = swRendererPullTriangle(renderer, trig);
 
     V2f v1 = tr.v1;
     V2f v2 = tr.v2;
     V2f v3 = tr.v3;
 
     if (tr.area > 0 && !tr.isBehind) {
-        drawContrastLine(renderer, v1, v2);
-        drawContrastLine(renderer, v2, v3);
-        drawContrastLine(renderer, v3, v1);
+        swRendererDrawContrastLine(renderer, v1, v2);
+        swRendererDrawContrastLine(renderer, v2, v3);
+        swRendererDrawContrastLine(renderer, v3, v1);
 
         V2f vertexRectDim = {10, 10};
-        drawContrastRect(renderer, rect2fCenterDim(v1, vertexRectDim));
-        drawContrastRect(renderer, rect2fCenterDim(v2, vertexRectDim));
-        drawContrastRect(renderer, rect2fCenterDim(v3, vertexRectDim));
+        swRendererDrawContrastRect(renderer, rect2fCenterDim(v1, vertexRectDim));
+        swRendererDrawContrastRect(renderer, rect2fCenterDim(v2, vertexRectDim));
+        swRendererDrawContrastRect(renderer, rect2fCenterDim(v3, vertexRectDim));
     }
 }
 
 function void
-rendererFillTriangles(Renderer* renderer) {
+swRendererFillTriangles(SWRenderer* renderer) {
     for (i32 ind = 0; ind < renderer->triangles.indices.len; ind++) {
         TriangleIndices trig = renderer->triangles.indices.ptr[ind];
-        rendererFillTriangle(renderer, trig);
+        swRendererFillTriangle(renderer, trig);
     }
 }
 
 function void
-rendererOutlineTriangles(Renderer* renderer) {
+swRendererOutlineTriangles(SWRenderer* renderer) {
     for (i32 ind = 0; ind < renderer->triangles.indices.len; ind++) {
         TriangleIndices trig = renderer->triangles.indices.ptr[ind];
-        rendererOutlineTriangle(renderer, trig);
+        swRendererOutlineTriangle(renderer, trig);
     }
 }
 
-typedef struct RendererMeshBuilder {
-    Renderer* renderer;
-    i32       firstVertexIndex;
-    i32       firstIndexIndex;
-} RendererMeshBuilder;
+typedef struct SWRendererMeshBuilder {
+    SWRenderer* renderer;
+    i32         firstVertexIndex;
+    i32         firstIndexIndex;
+} SWRendererMeshBuilder;
 
-function RendererMeshBuilder
-rendererBeginMesh(Renderer* renderer) {
-    RendererMeshBuilder builder = {renderer, renderer->triangles.vertices.len, renderer->triangles.indices.len};
+function SWRendererMeshBuilder
+swRendererBeginMesh(SWRenderer* renderer) {
+    SWRendererMeshBuilder builder = {renderer, renderer->triangles.vertices.len, renderer->triangles.indices.len};
     return builder;
 }
 
 function void
-rendererEndMesh(RendererMeshBuilder builder) {
+swRendererEndMesh(SWRendererMeshBuilder builder) {
     for (i32 indexIndex = builder.firstIndexIndex; indexIndex < builder.renderer->triangles.indices.len; indexIndex++) {
         TriangleIndices* trig = builder.renderer->triangles.indices.ptr + indexIndex;
         trig->i1 += builder.firstVertexIndex;
@@ -1235,8 +1235,8 @@ rendererEndMesh(RendererMeshBuilder builder) {
 }
 
 function void
-rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
-    RendererMeshBuilder cubeInRendererBuilder = rendererBeginMesh(renderer);
+swRendererPushMesh(SWRenderer* renderer, Mesh mesh, Camera camera) {
+    SWRendererMeshBuilder cubeInRendererBuilder = swRendererBeginMesh(renderer);
 
     for (i32 ind = 0; ind < mesh.vertices.len; ind++) {
         V3f vtxModel = mesh.vertices.ptr[ind];
@@ -1284,11 +1284,11 @@ rendererPushMesh(Renderer* renderer, Mesh mesh, Camera camera) {
         meshStorageAddTriangle(&renderer->triangles, trig);
     }
 
-    rendererEndMesh(cubeInRendererBuilder);
+    swRendererEndMesh(cubeInRendererBuilder);
 }
 
 function void
-scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height, Arena* scratch) {
+swRendererScaleOntoAPixelGrid(SWRenderer* renderer, isize width, isize height, Arena* scratch) {
     TempMemory temp = beginTempMemory(scratch);
 
     u32* currentImageCopy = arenaAllocArray(scratch, u32, renderer->image.width * renderer->image.height);
@@ -1302,7 +1302,7 @@ scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height, Arena* scratc
 
     isize oldWidth = renderer->image.width;
     isize oldHeight = renderer->image.height;
-    setImageSize(renderer, width, height);
+    swRendererSetImageSize(renderer, width, height);
 
     // NOTE(khvorov) Copy the scaled up image
     for (isize oldRow = 0; oldRow < oldHeight; oldRow++) {
@@ -1328,16 +1328,16 @@ scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height, Arena* scratc
         for (isize oldCol = 0; oldCol < oldWidth; oldCol++) {
             isize topleftX = oldCol * scaleX;
             for (isize toplineX = topleftX; toplineX < topleftX + scaleX; toplineX++) {
-                rendererContrast(renderer, topleftY, toplineX);
+                swRendererContrast(renderer, topleftY, toplineX);
             }
             for (isize leftlineY = topleftY + 1; leftlineY < topleftY + scaleY; leftlineY++) {
-                rendererContrast(renderer, leftlineY, topleftX);
+                swRendererContrast(renderer, leftlineY, topleftX);
             }
 
             {
                 isize centerY = topleftY + scaleY / 2;
                 isize centerX = topleftX + scaleX / 2;
-                rendererContrast(renderer, centerY, centerX);
+                swRendererContrast(renderer, centerY, centerX);
             }
         }
     }
@@ -1346,7 +1346,7 @@ scaleOntoAPixelGrid(Renderer* renderer, isize width, isize height, Arena* scratc
 }
 
 function void
-drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHeight, Arena* scratch) {
+swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize finalImageHeight, Arena* scratch) {
     // NOTE(khvorov) Debug triangles from
     // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
@@ -1468,10 +1468,10 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
         meshStorageAddTriangle(&renderer->triangles, trig);
     }
 
-    setImageSize(renderer, imageWidth, imageHeight);
-    clearImage(renderer);
-    rendererFillTriangles(renderer);
-    scaleOntoAPixelGrid(renderer, finalImageWidth, finalImageHeight, scratch);
+    swRendererSetImageSize(renderer, imageWidth, imageHeight);
+    swRendererClearImage(renderer);
+    swRendererFillTriangles(renderer);
+    swRendererScaleOntoAPixelGrid(renderer, finalImageWidth, finalImageHeight, scratch);
 
     // NOTE(khvorov) Fill triangles on the pixel grid - vertices have to be shifted to correspond
     // to their positions in the smaller image
@@ -1484,7 +1484,7 @@ drawDebugTriangles(Renderer* renderer, isize finalImageWidth, isize finalImageHe
             renderer->triangles.vertices.ptr[ind].xy = v2fadd(renderer->triangles.vertices.ptr[ind].xy, offset);
         }
 
-        rendererOutlineTriangles(renderer);
+        swRendererOutlineTriangles(renderer);
 
         for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
             renderer->triangles.vertices.ptr[ind].xy = v2fsub(renderer->triangles.vertices.ptr[ind].xy, offset);
@@ -2114,7 +2114,7 @@ typedef struct Debug {
 } Debug;
 
 typedef struct State {
-    Renderer    renderer;
+    SWRenderer  renderer;
     MeshStorage meshStorage;
     Font        font;
     Arena       perm;
@@ -2146,7 +2146,7 @@ initState(void* mem, isize bytes) {
     state->scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
 
     isize perSystem = arenaFreeSize(&arena) / 3;
-    state->renderer = createRenderer(&arena, perSystem);
+    state->renderer = createSWRenderer(&arena, perSystem);
     state->meshStorage = createMeshStorage(&arena, perSystem);
     state->debug = (Debug) {
         .displayTimingsLines = {
@@ -2224,14 +2224,14 @@ function void
 render(State* state) {
     meshStorageClearBuffers(&state->renderer.triangles);
     if (state->showDebugTriangles) {
-        drawDebugTriangles(&state->renderer, state->windowWidth, state->windowHeight, &state->scratch);
+        swRendererDrawDebugTriangles(&state->renderer, state->windowWidth, state->windowHeight, &state->scratch);
     } else {
-        rendererPushMesh(&state->renderer, state->cube1, state->camera);
-        rendererPushMesh(&state->renderer, state->cube2, state->camera);
-        setImageSize(&state->renderer, state->windowWidth, state->windowHeight);
-        clearImage(&state->renderer);
-        rendererFillTriangles(&state->renderer);
-        rendererOutlineTriangles(&state->renderer);
+        swRendererPushMesh(&state->renderer, state->cube1, state->camera);
+        swRendererPushMesh(&state->renderer, state->cube2, state->camera);
+        swRendererSetImageSize(&state->renderer, state->windowWidth, state->windowHeight);
+        swRendererClearImage(&state->renderer);
+        swRendererFillTriangles(&state->renderer);
+        swRendererOutlineTriangles(&state->renderer);
     }
 
     // NOTE(khvorov) Debug overlay
@@ -2554,7 +2554,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ID3D11Texture2D*          texture = 0;
     {
         // TODO(khvorov) Resizing
-        setImageSize(&state->renderer, state->windowWidth, state->windowHeight);
+        swRendererSetImageSize(&state->renderer, state->windowWidth, state->windowHeight);
         D3D11_TEXTURE2D_DESC desc = {
             .Width = state->renderer.image.width,
             .Height = state->renderer.image.height,
