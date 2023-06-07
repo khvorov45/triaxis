@@ -5,6 +5,8 @@
 #include <stdalign.h>
 #include <immintrin.h>
 
+#include "TracyC.h"
+
 // TODO(khvorov) Remove
 #include <math.h>
 
@@ -2755,6 +2757,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             ID3D11DeviceContext_Draw(context, 4, 0);
 
             HRESULT presentResult = IDXGISwapChain1_Present(swapChain, 1, 0);
+            TracyCFrameMark;
+
             asserthr(presentResult);
             if (presentResult == DXGI_STATUS_OCCLUDED) {
                 Sleep(10);
