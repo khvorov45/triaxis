@@ -131,6 +131,8 @@ copymem(void* dest, void* src, isize len) {
         remaining -= sizeof(__m512i);
     }
 
+    // TODO(khvorov) Just do a masked load/store here?
+
     __m256i* src256 = (__m256i*)src512;
     __m256i* dest256 = (__m256i*)dest512;
     while (remaining >= (isize)sizeof(__m256i)) {
@@ -2107,6 +2109,29 @@ runTests(Arena* arena) {
 }
 
 //
+// SECTION Bench
+//
+
+function void
+runBench(Arena* arena) {
+    {
+        for (isize ind = 0; ind < 10; ind++) {
+            TempMemory temp = beginTempMemory(arena);
+
+            isize bytes = arenaFreeSize(arena) / 2;
+            u8*   arr1 = arenaAllocArray(arena, u8, bytes);
+            u8*   arr2 = arenaAllocArray(arena, u8, bytes);
+
+            TracyCZone(tracyCtx, true);
+            copymem(arr1, arr2, bytes);
+            TracyCZoneEnd(tracyCtx);
+
+            endTempMemory(temp);
+        }
+    }
+}
+
+//
 // SECTION App
 //
 
@@ -2140,6 +2165,9 @@ initState(void* mem, isize bytes) {
 
     Arena arena = {.base = mem, .size = bytes};
     runTests(&arena);
+#if TRACY_ENABLE
+    runBench(&arena);
+#endif
 
     State* state = arenaAllocArray(&arena, State, 1);
 
