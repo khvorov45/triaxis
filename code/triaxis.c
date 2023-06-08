@@ -1806,10 +1806,10 @@ runTests(Arena* arena) {
     }
 
     {
-        isize bytes = 101;
+        isize bytes = 255;
         void* ptr = arenaAlloc(arena, bytes, 64);
 
-        for (isize misalign = 0; misalign < 100; misalign++) {
+        for (isize misalign = 0; misalign < 254; misalign++) {
             isize thisBytes = bytes - misalign;
             void* thisPtr = (u8*)ptr + misalign;
 
@@ -1827,7 +1827,7 @@ runTests(Arena* arena) {
     }
 
     {
-        isize bufBytes = 1000;
+        isize bufBytes = 255;
         void* src = arenaAlloc(arena, bufBytes, 64);
         void* dest = arenaAlloc(arena, bufBytes, 64);
 
@@ -1836,7 +1836,7 @@ runTests(Arena* arena) {
             ((u8*)src)[byteIndex] = val;
         }
 
-        for (isize misalign = 0; misalign < 64; misalign++) {
+        for (isize misalign = 0; misalign < 254; misalign++) {
             isize thisBufBytes = bufBytes - misalign;
             void* thisSrc = (u8*)src + misalign;
             void* thisDest = dest;
@@ -1847,7 +1847,7 @@ runTests(Arena* arena) {
             assert(memeq(thisSrc, thisDest, thisBufBytes));
         }
 
-        for (isize misalign = 0; misalign < 64; misalign++) {
+        for (isize misalign = 0; misalign < 254; misalign++) {
             isize thisBufBytes = bufBytes - misalign;
             void* thisSrc = src;
             void* thisDest = (u8*)dest + misalign;
@@ -1858,7 +1858,7 @@ runTests(Arena* arena) {
             assert(memeq(thisSrc, thisDest, thisBufBytes));
         }
 
-        for (isize misalign = 0; misalign < 64; misalign++) {
+        for (isize misalign = 0; misalign < 254; misalign++) {
             isize thisBufBytes = bufBytes - misalign;
             void* thisSrc = (u8*)src + misalign;
             void* thisDest = (u8*)dest + misalign;
