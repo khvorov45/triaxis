@@ -2546,7 +2546,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     }
 
     Timer timer = {.clock = createClock(), .update = getClockMarker()};
-    for (;;) {
+    for (bool running = true; running;) {
         TracyCFrameMark;
         TracyCZoneN(tracyFrameCtx, "frame", true);
 
@@ -2560,7 +2560,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             inputBeginFrame(&state->input);
             for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
                 switch (msg.message) {
-                    case WM_QUIT: ExitProcess(0); break;
+                    case WM_QUIT: running = false; break;
 
                     case WM_KEYDOWN:
                     case WM_KEYUP: {
