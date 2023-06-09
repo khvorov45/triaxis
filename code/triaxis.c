@@ -2239,9 +2239,7 @@ initState(void* mem, isize bytes) {
 
     Arena arena = {.base = mem, .size = bytes};
     runTests(&arena);
-#if TRACY_ENABLE
     runBench(&arena);
-#endif
 
     State* state = arenaAllocArray(&arena, State, 1);
 
@@ -2815,7 +2813,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         update(state);
         timerSection(&timer, FrameTimingID_Update);
 
-        render(state);
+        {
+            TracyCZone(tracyCtx, true);
+            render(state);
+            TracyCZoneEnd(tracyCtx);
+        }
         timerSection(&timer, FrameTimingID_Render);
 
         // NOTE(khvorov) Present
@@ -2843,7 +2845,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
                 ID3D11DeviceContext_Map(context, (ID3D11Resource*)texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
                 u32* pixels = (u32*)mappedTexture.pData;
+                TracyCZone(tracyCtx, true);
                 copymem(pixels, state->renderer.image.ptr, state->renderer.image.width * state->renderer.image.height * sizeof(u32));
+                TracyCZoneEnd(tracyCtx);
 
                 ID3D11DeviceContext_Unmap(context, (ID3D11Resource*)texture, 0);
 
