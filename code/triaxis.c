@@ -2548,6 +2548,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     Timer timer = {.clock = createClock(), .update = getClockMarker()};
     for (;;) {
         TracyCFrameMark;
+        TracyCZoneN(tracyFrameCtx, "frame", true);
 
         assert(state->scratch.tempCount == 0);
         assert(state->scratch.used == 0);
@@ -2662,6 +2663,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 Sleep(10);
             }
         }
+
+        TracyCZoneEnd(tracyFrameCtx);
     }
 
     return 0;
