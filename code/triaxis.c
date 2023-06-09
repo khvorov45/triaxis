@@ -2399,7 +2399,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             Str hlsl = {};
             {
                 void*         buf = arenaFreePtr(&state->scratch);
-                HANDLE        handle = CreateFileW(L"shader.hlsl", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+                HANDLE        handle = CreateFileW(L"code/shader.hlsl", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
                 DWORD         bytesRead = 0;
                 LARGE_INTEGER filesize = {};
                 GetFileSizeEx(handle, &filesize);
