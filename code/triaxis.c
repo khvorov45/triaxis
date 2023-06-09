@@ -2521,8 +2521,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         .MaxDepth = 1,
     };
 
-    // TODO(khvorov) Hack is debug only
+#ifdef TRIAXIS_DEBUGINFO
+    // NOTE(khvorov) To prevent a white flash
     ShowWindow(window, SW_SHOWMINIMIZED);
+#endif
     ShowWindow(window, SW_SHOWNORMAL);
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this

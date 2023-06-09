@@ -60,7 +60,7 @@ main() {
 
     Str alwaysFlags = prb_fmt(arena, "-march=native -I%.*s/public/tracy", LIT(tracyDir));
     Str optFlags = STR("-O3");
-    Str debugInfoFlags = STR("-g");
+    Str debugInfoFlags = STR("-g -DTRIAXIS_DEBUGINFO");
 
     Str tracyEnableFlag = STR("-DTRACY_ENABLE");
     Str tracyClientObj = prb_pathJoin(arena, buildDir, STR("TracyClient.obj"));
