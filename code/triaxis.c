@@ -13,7 +13,6 @@
 // clang-format off
 #define PI 3.14159
 #define function static
-#define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
 #define arrayCount(x) (int)(sizeof(x) / sizeof(x[0]))
 #define unused(x) (x) = (x)
 #define min(x, y) (((x) < (y)) ? (x) : (y))
@@ -23,6 +22,13 @@
 #define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
 #define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = val, (arr).len++) : (__debugbreak(), 0))
 #define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
+
+#ifdef TRIAXIS_ASSERTS
+#define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
+#else
+#pragma clang diagnostic ignored "-Wunused-value"
+#define assert(cond) cond
+#endif
 // clang-format on
 
 typedef uint8_t  u8;
@@ -2054,8 +2060,12 @@ initState(void* mem, isize bytes) {
     assert(bytes > 0);
 
     Arena arena = {.base = mem, .size = bytes};
+#ifdef TRIAXIS_TESTS
     runTests(&arena);
+#endif
+#ifdef TRIAXIS_BENCH
     runBench(&arena);
+#endif
 
     State* state = arenaAllocArray(&arena, State, 1);
 
@@ -2255,6 +2265,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     };
     assert(RegisterClassExW(&windowClass) != 0);
 
+    // TODO(khvorov) Put exe path in the name
     HWND window = CreateWindowExW(
         WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
         windowClass.lpszClassName,

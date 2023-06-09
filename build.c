@@ -37,9 +37,12 @@ main() {
     bool debugInfo = false;
     bool optimise = false;
     bool profile = false;
+    bool asserts = false;
+    bool tests = false;
+    bool bench = false;
     {
         prb_Str* args = prb_getCmdArgs(arena);
-        prb_assert(arrlen(args) == 4);
+        prb_assert(arrlen(args) == 7);
 
         prb_assert(prb_strStartsWith(args[1], STR("debuginfo=")));
         debugInfo = prb_strEndsWith(args[1], STR("yes"));
@@ -49,6 +52,15 @@ main() {
 
         prb_assert(prb_strStartsWith(args[3], STR("profile=")));
         profile = prb_strEndsWith(args[3], STR("yes"));
+
+        prb_assert(prb_strStartsWith(args[4], STR("asserts=")));
+        asserts = prb_strEndsWith(args[4], STR("yes"));
+
+        prb_assert(prb_strStartsWith(args[5], STR("tests=")));
+        tests = prb_strEndsWith(args[5], STR("yes"));
+
+        prb_assert(prb_strStartsWith(args[6], STR("bench=")));
+        bench = prb_strEndsWith(args[6], STR("yes"));
     }
 
     Str rootDir = prb_getParentDir(arena, STR(__FILE__));
@@ -57,6 +69,7 @@ main() {
     Str tracyDir = prb_pathJoin(arena, rootDir, STR("tracy"));
 
     prb_createDirIfNotExists(arena, buildDir);
+    // prb_clearDir(arena, buildDir);
 
     Str alwaysFlags = prb_fmt(arena, "-march=native -I%.*s/public/tracy", LIT(tracyDir));
     Str optFlags = STR("-O3");
@@ -66,7 +79,7 @@ main() {
     Str tracyClientObj = prb_pathJoin(arena, buildDir, STR("TracyClient.obj"));
     if (!prb_isFile(arena, tracyClientObj)) {
         Str src = prb_pathJoin(arena, tracyDir, STR("public/TracyClient.cpp"));
-        Str cmd = prb_fmt(arena, "clang %.*s %.*s %.*s %.*s -c -o %.*s", LIT(alwaysFlags), LIT(optFlags), LIT(tracyEnableFlag), LIT(src), LIT(tracyClientObj));
+        Str cmd = prb_fmt(arena, "clang %.*s %.*s %.*s %.*s -Wno-format -c -o %.*s", LIT(alwaysFlags), LIT(optFlags), LIT(tracyEnableFlag), LIT(src), LIT(tracyClientObj));
         execCmd(arena, cmd);
     }
 
@@ -90,6 +103,18 @@ main() {
             arrput(flags, tracyEnableFlag);
             arrput(src, tracyClientObj);
             outName = prb_fmt(arena, "%.*s_profile", LIT(outName));
+        }
+        if (asserts) {
+            arrput(flags, STR("-DTRIAXIS_ASSERTS"));
+            outName = prb_fmt(arena, "%.*s_asserts", LIT(outName));
+        }
+        if (tests) {
+            arrput(flags, STR("-DTRIAXIS_TESTS"));
+            outName = prb_fmt(arena, "%.*s_tests", LIT(outName));
+        }
+        if (bench) {
+            arrput(flags, STR("-DTRIAXIS_BENCH"));
+            outName = prb_fmt(arena, "%.*s_bench", LIT(outName));
         }
         Str flagsStr = prb_stringsJoin(arena, flags, arrlen(flags), STR(" "));
         outName = prb_fmt(arena, "%.*s.exe", LIT(outName));
