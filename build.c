@@ -6,6 +6,7 @@
 #define function static
 
 typedef int32_t  i32;
+typedef uint64_t u64;
 typedef intptr_t isize;
 
 typedef prb_Arena Arena;
@@ -24,6 +25,14 @@ main() {
 
     Arena  arena_ = prb_createArenaFromVmem(1 * prb_GIGABYTE);
     Arena* arena = &arena_;
+
+    if (false) {
+        for (isize ind = 0; ind < 64; ind++) {
+            u64 pow2 = 1ULL << (u64)ind;
+            u64 mask = pow2 - 1;
+            prb_writeToStdout(prb_fmt(arena, "%016llx\n", mask));
+        }
+    }
 
     bool debugInfo = false;
     bool optimise = false;

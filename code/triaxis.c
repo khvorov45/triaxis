@@ -131,51 +131,79 @@ copymem(void* dest, void* src, isize len) {
         remaining -= sizeof(__m512i);
     }
 
-    // TODO(khvorov) Just do a masked load/store here?
+    __m512i zeros512 = _mm512_set1_epi8(0);
 
-    __m256i* src256 = (__m256i*)src512;
-    __m256i* dest256 = (__m256i*)dest512;
-    while (remaining >= (isize)sizeof(__m256i)) {
-        __m256i val = _mm256_loadu_si256(src256++);
-        _mm256_storeu_si256(dest256++, val);
-        remaining -= sizeof(__m256i);
-    }
+    __mmask64 byteMasks512[64] = {
+        0x0000000000000000,
+        0x0000000000000001,
+        0x0000000000000003,
+        0x0000000000000007,
+        0x000000000000000f,
+        0x000000000000001f,
+        0x000000000000003f,
+        0x000000000000007f,
+        0x00000000000000ff,
+        0x00000000000001ff,
+        0x00000000000003ff,
+        0x00000000000007ff,
+        0x0000000000000fff,
+        0x0000000000001fff,
+        0x0000000000003fff,
+        0x0000000000007fff,
+        0x000000000000ffff,
+        0x000000000001ffff,
+        0x000000000003ffff,
+        0x000000000007ffff,
+        0x00000000000fffff,
+        0x00000000001fffff,
+        0x00000000003fffff,
+        0x00000000007fffff,
+        0x0000000000ffffff,
+        0x0000000001ffffff,
+        0x0000000003ffffff,
+        0x0000000007ffffff,
+        0x000000000fffffff,
+        0x000000001fffffff,
+        0x000000003fffffff,
+        0x000000007fffffff,
+        0x00000000ffffffff,
+        0x00000001ffffffff,
+        0x00000003ffffffff,
+        0x00000007ffffffff,
+        0x0000000fffffffff,
+        0x0000001fffffffff,
+        0x0000003fffffffff,
+        0x0000007fffffffff,
+        0x000000ffffffffff,
+        0x000001ffffffffff,
+        0x000003ffffffffff,
+        0x000007ffffffffff,
+        0x00000fffffffffff,
+        0x00001fffffffffff,
+        0x00003fffffffffff,
+        0x00007fffffffffff,
+        0x0000ffffffffffff,
+        0x0001ffffffffffff,
+        0x0003ffffffffffff,
+        0x0007ffffffffffff,
+        0x000fffffffffffff,
+        0x001fffffffffffff,
+        0x003fffffffffffff,
+        0x007fffffffffffff,
+        0x00ffffffffffffff,
+        0x01ffffffffffffff,
+        0x03ffffffffffffff,
+        0x07ffffffffffffff,
+        0x0fffffffffffffff,
+        0x1fffffffffffffff,
+        0x3fffffffffffffff,
+        0x7fffffffffffffff,
+    };
 
-    __m128i* src128 = (__m128i*)src256;
-    __m128i* dest128 = (__m128i*)dest256;
-    while (remaining >= (isize)sizeof(__m128i)) {
-        __m128i val = _mm_loadu_si128(src128++);
-        _mm_storeu_si128(dest128++, val);
-        remaining -= sizeof(__m128i);
-    }
+    __mmask64 tailMask = byteMasks512[remaining];
 
-    u64* src64 = (u64*)src128;
-    u64* dest64 = (u64*)dest128;
-    while (remaining >= (isize)sizeof(u64)) {
-        *dest64++ = *src64++;
-        remaining -= sizeof(u64);
-    }
-
-    u32* src32 = (u32*)src64;
-    u32* dest32 = (u32*)dest64;
-    while (remaining >= (isize)sizeof(u32)) {
-        *dest32++ = *src32++;
-        remaining -= sizeof(u32);
-    }
-
-    u16* src16 = (u16*)src32;
-    u16* dest16 = (u16*)dest32;
-    while (remaining >= (isize)sizeof(u16)) {
-        *dest16++ = *src16++;
-        remaining -= sizeof(u16);
-    }
-
-    u8* src8 = (u8*)src16;
-    u8* dest8 = (u8*)dest16;
-    while (remaining >= (isize)sizeof(u8)) {
-        *dest8++ = *src8++;
-        remaining -= sizeof(u8);
-    }
+    __m512i tail = _mm512_mask_loadu_epi8(zeros512, tailMask, src512);
+    _mm512_mask_storeu_epi8(dest512, tailMask, tail);
 }
 
 typedef struct Arena {
@@ -1807,9 +1835,19 @@ runTests(Arena* arena) {
         assert(getOffsetForAlignment((void*)13, 4) == 3);
     }
 
+    u64 guardBeforeValue = 0xAAAAAAAAULL;
+    u64 guardBetweenValue = 0xBBBBBBBBULL;
+    u64 guardAfterValue = 0xCCCCCCCCULL;
+
     {
+        u64* guardBefore = (u64*)arenaAlloc(arena, sizeof(u64), 1);
+        guardBefore[0] = guardBeforeValue;
+
         isize bytes = 255;
         void* ptr = arenaAlloc(arena, bytes, 64);
+
+        u64* guardAfter = (u64*)arenaAlloc(arena, sizeof(u64), 1);
+        guardAfter[0] = guardAfterValue;
 
         for (isize misalign = 0; misalign < 254; misalign++) {
             isize thisBytes = bytes - misalign;
@@ -1821,6 +1859,8 @@ runTests(Arena* arena) {
             }
 
             zeromem(thisPtr, thisBytes);
+            assert(guardBefore[0] == guardBeforeValue);
+            assert(guardAfter[0] == guardAfterValue);
 
             for (isize byteIndex = 0; byteIndex < thisBytes; byteIndex++) {
                 assert(((u8*)thisPtr)[byteIndex] == 0);
@@ -1829,9 +1869,20 @@ runTests(Arena* arena) {
     }
 
     {
+        u64* guardBefore = (u64*)arenaAlloc(arena, sizeof(u64), 1);
+        guardBefore[0] = guardBeforeValue;
+
         isize bufBytes = 255;
         void* src = arenaAlloc(arena, bufBytes, 64);
+
+        u64* guardBetween = (u64*)arenaAlloc(arena, sizeof(u64), 1);
+        guardBetween[0] = guardBetweenValue;
+
         void* dest = arenaAlloc(arena, bufBytes, 64);
+        zeromem(dest, bufBytes);
+
+        u64* guardAfter = (u64*)arenaAlloc(arena, sizeof(u64), 1);
+        guardAfter[0] = guardAfterValue;
 
         for (isize byteIndex = 0; byteIndex < bufBytes; byteIndex++) {
             u8 val = (u8)(byteIndex & 0xFF);
@@ -1847,6 +1898,10 @@ runTests(Arena* arena) {
             assert(!memeq(thisSrc, thisDest, thisBufBytes));
             copymem(thisDest, thisSrc, thisBufBytes);
             assert(memeq(thisSrc, thisDest, thisBufBytes));
+
+            assert(guardBefore[0] == guardBeforeValue);
+            assert(guardBetween[0] == guardBetweenValue);
+            assert(guardAfter[0] == guardAfterValue);
         }
 
         for (isize misalign = 0; misalign < 254; misalign++) {
@@ -1858,6 +1913,10 @@ runTests(Arena* arena) {
             assert(!memeq(thisSrc, thisDest, thisBufBytes));
             copymem(thisDest, thisSrc, thisBufBytes);
             assert(memeq(thisSrc, thisDest, thisBufBytes));
+
+            assert(guardBefore[0] == guardBeforeValue);
+            assert(guardBetween[0] == guardBetweenValue);
+            assert(guardAfter[0] == guardAfterValue);
         }
 
         for (isize misalign = 0; misalign < 254; misalign++) {
@@ -1869,6 +1928,10 @@ runTests(Arena* arena) {
             assert(!memeq(thisSrc, thisDest, thisBufBytes));
             copymem(thisDest, thisSrc, thisBufBytes);
             assert(memeq(thisSrc, thisDest, thisBufBytes));
+
+            assert(guardBefore[0] == guardBeforeValue);
+            assert(guardBetween[0] == guardBetweenValue);
+            assert(guardAfter[0] == guardAfterValue);
         }
     }
 
