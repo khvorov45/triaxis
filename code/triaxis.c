@@ -2177,21 +2177,32 @@ runTests(Arena* arena) {
 
 function void
 runBench(Arena* arena) {
+    TempMemory runBenchTemp = beginTempMemory(arena);
+    zeromem(arenaFreePtr(arena), arenaFreeSize(arena));
+
     {
-        for (isize ind = 0; ind < 10; ind++) {
+        isize toCopy = arenaFreeSize(arena) / 2 - 1024;
+#if TRACY_ENABLE
+        isize samples = 10;
+#else
+        isize samples = 1;
+#endif
+
+        for (isize ind = 0; ind < samples; ind++) {
             TempMemory temp = beginTempMemory(arena);
 
-            isize bytes = arenaFreeSize(arena) / 2;
-            u8*   arr1 = arenaAllocArray(arena, u8, bytes);
-            u8*   arr2 = arenaAllocArray(arena, u8, bytes);
+            u8* arr1 = (u8*)arenaAlloc(arena, toCopy, 64);
+            u8* arr2 = (u8*)arenaAlloc(arena, toCopy, 64);
 
             TracyCZone(tracyCtx, true);
-            copymem(arr1, arr2, bytes);
+            copymem(arr1, arr2, toCopy);
             TracyCZoneEnd(tracyCtx);
 
             endTempMemory(temp);
         }
     }
+
+    endTempMemory(runBenchTemp);
 }
 
 //
