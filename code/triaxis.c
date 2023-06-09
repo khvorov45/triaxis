@@ -1640,58 +1640,8 @@ drawStr(Font* font, Str str, Texture dest, i32 top, Color01 color) {
 }
 
 //
-// SECTION Debug
+// SECTION Misc
 //
-
-typedef enum FrameTimingID {
-    FrameTimingID_Input,
-    FrameTimingID_Update,
-    FrameTimingID_Render,
-    FrameTimingID_Present,
-    FrameTimingID_Count,
-} FrameTimingID;
-
-typedef struct FrameTimings {
-    f32 ms[FrameTimingID_Count];
-} FrameTimings;
-
-function f32
-frameTimingsSum(FrameTimings timings) {
-    f32 result = 0;
-    for (isize ind = 0; ind < FrameTimingID_Count; ind++) {
-        result += timings.ms[ind];
-    }
-    return result;
-}
-
-typedef struct FrameTimingsLog {
-    struct {
-        FrameTimings* ptr;
-        isize         len;
-        isize         cap;
-    } timings;
-} FrameTimingsLog;
-
-function FrameTimingsLog
-createFrameTimingsLog(Arena* arena, isize bytes) {
-    FrameTimingsLog log = {};
-    isize           ntimings = bytes / sizeof(FrameTimings);
-    if (ntimings > 1000) {
-        ntimings = ntimings - (ntimings % 1000);
-    }
-    assert(ntimings > 0);
-    log.timings.cap = ntimings;
-    log.timings.ptr = arenaAllocArray(arena, FrameTimings, log.timings.cap);
-    return log;
-}
-
-function void
-pushFrameTimings(FrameTimingsLog* log, FrameTimings timings) {
-    if (log->timings.len == log->timings.cap) {
-        log->timings.len = 0;
-    }
-    arrpush(log->timings, timings);
-}
 
 typedef enum IterResult {
     IterResult_NoMore,
@@ -1763,46 +1713,6 @@ lagCircleIterResetAndSetMostRecent(LagCircleIter* iter, isize newMostRecent) {
         iter->timesAdvanced = 0;
         circleIterSetMostRecent(&iter->circle, newMostRecent);
     }
-}
-
-typedef struct FrameTimingsIter {
-    FrameTimingsLog* log;
-    CircleIter       circle;
-    isize            stride;
-    FrameTimings     timings;
-} FrameTimingsIter;
-
-function FrameTimingsIter
-createFrameTimingsIter(FrameTimingsLog* log, isize frameCount, isize stride) {
-    assert(frameCount >= 0 && frameCount <= log->timings.cap);
-    assert(log->timings.cap % stride == 0);
-    isize strideSections = log->timings.cap / stride;
-    assert(frameCount < strideSections);
-    FrameTimingsIter iter = {.log = log, .circle = createCircleIter((log->timings.len / stride) - 1, strideSections, frameCount), .stride = stride};
-    return iter;
-}
-
-function IterResult
-frameTimingsIterNext(FrameTimingsIter* iter) {
-    IterResult result = circleIterNext(&iter->circle);
-    if (result) {
-        isize firstIndex = iter->circle.currentIndex * iter->stride;
-        isize lastIndex = firstIndex + iter->stride - 1;
-        assert(firstIndex >= 0 && firstIndex < iter->log->timings.cap);
-        assert(lastIndex >= 0 && lastIndex < iter->log->timings.cap && lastIndex >= firstIndex);
-        f32          maxTotal = 0;
-        FrameTimings frameToReport = iter->log->timings.ptr[firstIndex];
-        for (isize ind = firstIndex; ind <= lastIndex; ind++) {
-            FrameTimings timings = iter->log->timings.ptr[ind];
-            f32          total = frameTimingsSum(timings);
-            if (total > maxTotal) {
-                maxTotal = total;
-                frameToReport = timings;
-            }
-        }
-        iter->timings = frameToReport;
-    }
-    return result;
 }
 
 //
@@ -2081,93 +1991,6 @@ runTests(Arena* arena) {
         assert(streq((Str) {builder.ptr, builder.len}, STR("99.9+")));
     }
 
-    {
-        FrameTimingsLog log = createFrameTimingsLog(arena, sizeof(FrameTimings) * 4);
-
-        for (isize ind = 0; ind < log.timings.cap; ind++) {
-            FrameTimings timings = {
-                .ms = {
-                    [0] = (f32)ind,
-                },
-            };
-            pushFrameTimings(&log, timings);
-        }
-        assert(log.timings.len == log.timings.cap);
-
-        {
-            f32 expected[] = {0, 1, 2, 3};
-            assert(arrayCount(expected) == log.timings.len);
-            for (isize ind = 0; ind < arrayCount(expected); ind++) {
-                FrameTimings timings = log.timings.ptr[ind];
-                assert(timings.ms[0] == expected[ind]);
-            }
-        }
-
-        {
-            FrameTimingsIter iter = createFrameTimingsIter(&log, 3, 1);
-            f32              expected[] = {1, 2, 3};
-            assert(arrayCount(expected) <= log.timings.cap);
-            for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
-                FrameTimings timings = iter.timings;
-                assert(timings.ms[0] == expected[ind]);
-            }
-            assert(iter.circle.iterCount == 3);
-        }
-
-        {
-            FrameTimings timings = {
-                .ms = {
-                    [0] = 99,
-                },
-            };
-            pushFrameTimings(&log, timings);
-        }
-
-        {
-            f32 expected[] = {99, 1, 2, 3};
-            assert(arrayCount(expected) == log.timings.cap);
-            for (isize ind = 0; ind < arrayCount(expected); ind++) {
-                FrameTimings timings = log.timings.ptr[ind];
-                assert(timings.ms[0] == expected[ind]);
-            }
-        }
-
-        {
-            FrameTimingsIter iter = createFrameTimingsIter(&log, 3, 1);
-            f32              expected[] = {2, 3, 99};
-            assert(arrayCount(expected) <= log.timings.cap);
-            for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
-                FrameTimings timings = iter.timings;
-                assert(timings.ms[0] == expected[ind]);
-            }
-            assert(iter.circle.iterCount == 3);
-        }
-    }
-
-    {
-        FrameTimingsLog log = createFrameTimingsLog(arena, sizeof(FrameTimings) * 8);
-        assert(log.timings.cap == 8);
-        log.timings.ptr[0].ms[0] = 11;
-        log.timings.ptr[1].ms[0] = 12;
-        log.timings.ptr[2].ms[0] = 13;
-        log.timings.ptr[3].ms[0] = 14;
-        log.timings.ptr[4].ms[0] = 15;
-        log.timings.ptr[5].ms[0] = 16;
-        log.timings.ptr[6].ms[0] = 17;
-        log.timings.ptr[7].ms[0] = 18;
-
-        {
-            FrameTimingsIter iter = createFrameTimingsIter(&log, 3, 2);
-            f32              expected[] = {14, 16, 18};
-            assert(arrayCount(expected) <= log.timings.cap);
-            for (isize ind = 0; frameTimingsIterNext(&iter); ind++) {
-                FrameTimings timings = iter.timings;
-                assert(timings.ms[0] == expected[ind]);
-            }
-            assert(iter.circle.iterCount == 3);
-        }
-    }
-
     endTempMemory(temp);
 }
 
@@ -2194,7 +2017,7 @@ runBench(Arena* arena) {
             u8* arr1 = (u8*)arenaAlloc(arena, toCopy, 64);
             u8* arr2 = (u8*)arenaAlloc(arena, toCopy, 64);
 
-            TracyCZone(tracyCtx, true);
+            TracyCZoneN(tracyCtx, "bench copymem", true);
             copymem(arr1, arr2, toCopy);
             TracyCZoneEnd(tracyCtx);
 
@@ -2209,18 +2032,11 @@ runBench(Arena* arena) {
 // SECTION App
 //
 
-typedef struct Debug {
-    FrameTimingsLog timingsLog;
-    LagCircleIter   displayTimingsLines;
-} Debug;
-
 typedef struct State {
     SWRenderer  renderer;
     MeshStorage meshStorage;
     Font        font;
-    Arena       perm;
     Arena       scratch;
-    Debug       debug;
 
     isize windowWidth;
     isize windowHeight;
@@ -2244,19 +2060,11 @@ initState(void* mem, isize bytes) {
     State* state = arenaAllocArray(&arena, State, 1);
 
     initFont(&state->font, &arena);
-    state->perm = createArenaFromArena(&arena, 10 * 1024 * 1024);
     state->scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
 
     isize perSystem = arenaFreeSize(&arena) / 3;
     state->renderer = createSWRenderer(&arena, perSystem);
     state->meshStorage = createMeshStorage(&arena, perSystem);
-    state->debug = (Debug) {
-        .displayTimingsLines = {
-            .circle = createCircleIter(0, 10, 10),
-            .lag = 10,
-        },
-        .timingsLog = createFrameTimingsLog(&arena, arenaFreeSize(&arena)),
-    };
 
     state->camera = createCamera((V3f) {.x = 0, 0, -3});
     state->input = (Input) {};
@@ -2335,41 +2143,6 @@ render(State* state) {
         swRendererFillTriangles(&state->renderer);
         swRendererOutlineTriangles(&state->renderer);
     }
-
-    // NOTE(khvorov) Debug overlay
-    {
-        Texture dest = {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height};
-        drawStr(&state->font, STR("input updat rendr prsnt total"), dest, 0, (Color01) {.r = 1, .g = 1, .b = 1, .a = 1});
-
-        for (FrameTimingsIter timingsIter = createFrameTimingsIter(&state->debug.timingsLog, state->debug.displayTimingsLines.circle.windowSize, state->debug.displayTimingsLines.lag); frameTimingsIterNext(&timingsIter);) {
-            TempMemory temp = beginTempMemory(&state->scratch);
-
-            assert(circleIterNext(&state->debug.displayTimingsLines.circle));
-
-            StrBuilder builder = {};
-            arenaAllocCap(&state->scratch, char, 1000, builder);
-
-            FrameTimings tm = timingsIter.timings;
-
-            FmtF32 fmtSpec = {.charsLeft = 2, .charsRight = 2};
-            for (isize ind = 0; ind < FrameTimingID_Count; ind++) {
-                fmtF32(&builder, tm.ms[ind], fmtSpec);
-                fmtStr(&builder, STR(" "));
-            }
-            fmtF32(&builder, frameTimingsSum(tm), fmtSpec);
-
-            Color01 start = {.r = 0.5, .g = 0.5, .b = 0.5, .a = 1};
-            Color01 end = {.r = 1, .g = 1, .b = 1, .a = 1};
-            f32     by = (f32)(state->debug.displayTimingsLines.circle.iterCount - 1) / (f32)(state->debug.displayTimingsLines.circle.windowSize - 1);
-            Color01 color = color01Lerp(start, end, by);
-
-            drawStr(&state->font, (Str) {builder.ptr, builder.len}, dest, state->font.lineAdvance * (state->debug.displayTimingsLines.circle.currentIndex + 1), color);
-
-            endTempMemory(temp);
-        }
-
-        lagCircleIterResetAndSetMostRecent(&state->debug.displayTimingsLines, state->debug.displayTimingsLines.circle.mostRecentIndex + 1);
-    }
 }
 
 //
@@ -2427,31 +2200,13 @@ getMsFromMarker(Clock clock, ClockMarker marker) {
 }
 
 typedef struct Timer {
-    FrameTimings  timings;
-    FrameTimingID next;
-    Clock         clock;
-    ClockMarker   frameStart;
+    Clock       clock;
+    ClockMarker frameStart;
 } Timer;
 
 static void
 timerNewFrame(Timer* timer) {
-    assert(timer->next == FrameTimingID_Count);
-    timer->next = 0;
     timer->frameStart = getClockMarker();
-}
-
-static f32
-timerSection(Timer* timer, FrameTimingID section) {
-    assert(section == timer->next);
-    timer->next += 1;
-    assert(section < FrameTimingID_Count && section >= 0);
-    f32 fromStart = getMsFromMarker(timer->clock, timer->frameStart);
-    f32 thisSectionOnly = fromStart;
-    for (isize ind = 0; ind < section; ind++) {
-        thisSectionOnly -= timer->timings.ms[ind];
-    }
-    timer->timings.ms[section] = thisSectionOnly;
-    return fromStart;
 }
 
 LRESULT CALLBACK
@@ -2604,7 +2359,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     ID3D11VertexShader* vshader = 0;
     ID3D11PixelShader*  pshader = 0;
     {
-        // these must match vertex shader input layout (VS_INPUT in vertex shader source below)
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -2613,35 +2367,42 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         UINT flags = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
         flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 
-        Str hlsl = {};
-        {
-            void*         buf = arenaFreePtr(&state->perm);
-            HANDLE        handle = CreateFileW(L"shader.hlsl", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-            DWORD         bytesRead = 0;
-            LARGE_INTEGER filesize = {};
-            GetFileSizeEx(handle, &filesize);
-            ReadFile(handle, buf, filesize.QuadPart, &bytesRead, 0);
-            assert(bytesRead == filesize.QuadPart);
-            CloseHandle(handle);
-            hlsl = (Str) {(char*)buf, (isize)bytesRead};
-        }
-
         ID3DBlob* verror = 0;
         ID3DBlob* vblob = 0;
-        HRESULT   vresult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &verror);
-        if (FAILED(vresult)) {
-            char* msg = ID3D10Blob_GetBufferPointer(verror);
-            OutputDebugStringA(msg);
-            assert(!"failed to compile");
-        }
 
         ID3DBlob* perror = 0;
         ID3DBlob* pblob = 0;
-        HRESULT   presult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &perror);
-        if (FAILED(presult)) {
-            char* msg = ID3D10Blob_GetBufferPointer(perror);
-            OutputDebugStringA(msg);
-            assert(!"failed to compile");
+        {
+            TempMemory temp = beginTempMemory(&state->scratch);
+
+            Str hlsl = {};
+            {
+                void*         buf = arenaFreePtr(&state->scratch);
+                HANDLE        handle = CreateFileW(L"shader.hlsl", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+                DWORD         bytesRead = 0;
+                LARGE_INTEGER filesize = {};
+                GetFileSizeEx(handle, &filesize);
+                ReadFile(handle, buf, filesize.QuadPart, &bytesRead, 0);
+                assert(bytesRead == filesize.QuadPart);
+                CloseHandle(handle);
+                arenaChangeUsed(&state->scratch, bytesRead);
+                hlsl = (Str) {(char*)buf, (isize)bytesRead};
+            }
+
+            HRESULT vresult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &verror);
+            if (FAILED(vresult)) {
+                char* msg = ID3D10Blob_GetBufferPointer(verror);
+                OutputDebugStringA(msg);
+                assert(!"failed to compile");
+            }
+
+            HRESULT presult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &perror);
+            if (FAILED(presult)) {
+                char* msg = ID3D10Blob_GetBufferPointer(perror);
+                OutputDebugStringA(msg);
+                assert(!"failed to compile");
+            }
+            endTempMemory(temp);
         }
 
         ID3D11Device_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob), NULL, &vshader);
@@ -2762,63 +2523,73 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     }
 
     // TODO(khvorov) Handle delta time
-    Timer timer = {.clock = createClock(), .frameStart = getClockMarker()};
+    Timer timer = {.clock = createClock()};
     for (;;) {
+        TracyCFrameMark;
+        timerNewFrame(&timer);
+
         assert(state->scratch.tempCount == 0);
         assert(state->scratch.used == 0);
 
         // NOTE(khvorov) Input
-        inputBeginFrame(&state->input);
-        for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
-            switch (msg.message) {
-                case WM_QUIT: ExitProcess(0); break;
+        {
+            TracyCZoneN(tracyCtx, "input", true);
 
-                case WM_KEYDOWN:
-                case WM_KEYUP: {
-                    InputKey key = 0;
-                    bool     keyFound = true;
-                    switch (msg.wParam) {
-                        case 'W': key = InputKey_Forward; break;
-                        case 'S': key = InputKey_Back; break;
-                        case 'A': key = InputKey_Left; break;
-                        case 'D': key = InputKey_Right; break;
-                        case VK_SHIFT: key = InputKey_Up; break;
-                        case VK_CONTROL: key = InputKey_Down; break;
-                        case VK_UP: key = InputKey_RotateZY; break;
-                        case VK_DOWN: key = InputKey_RotateYZ; break;
-                        case VK_LEFT: key = InputKey_RotateXZ; break;
-                        case VK_RIGHT: key = InputKey_RotateZX; break;
-                        case 'Q': key = InputKey_RotateXY; break;
-                        case 'E': key = InputKey_RotateYX; break;
-                        case VK_TAB: key = InputKey_ToggleDebugTriangles; break;
-                        default: keyFound = false; break;
-                    }
-                    if (keyFound) {
-                        if (msg.message == WM_KEYDOWN) {
-                            inputKeyDown(&state->input, key);
-                        } else {
-                            inputKeyUp(&state->input, key);
+            inputBeginFrame(&state->input);
+            for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
+                switch (msg.message) {
+                    case WM_QUIT: ExitProcess(0); break;
+
+                    case WM_KEYDOWN:
+                    case WM_KEYUP: {
+                        InputKey key = 0;
+                        bool     keyFound = true;
+                        switch (msg.wParam) {
+                            case 'W': key = InputKey_Forward; break;
+                            case 'S': key = InputKey_Back; break;
+                            case 'A': key = InputKey_Left; break;
+                            case 'D': key = InputKey_Right; break;
+                            case VK_SHIFT: key = InputKey_Up; break;
+                            case VK_CONTROL: key = InputKey_Down; break;
+                            case VK_UP: key = InputKey_RotateZY; break;
+                            case VK_DOWN: key = InputKey_RotateYZ; break;
+                            case VK_LEFT: key = InputKey_RotateXZ; break;
+                            case VK_RIGHT: key = InputKey_RotateZX; break;
+                            case 'Q': key = InputKey_RotateXY; break;
+                            case 'E': key = InputKey_RotateYX; break;
+                            case VK_TAB: key = InputKey_ToggleDebugTriangles; break;
+                            default: keyFound = false; break;
                         }
-                    }
-                } break;
+                        if (keyFound) {
+                            if (msg.message == WM_KEYDOWN) {
+                                inputKeyDown(&state->input, key);
+                            } else {
+                                inputKeyUp(&state->input, key);
+                            }
+                        }
+                    } break;
 
-                default: {
-                    TranslateMessage(&msg);
-                    DispatchMessage(&msg);
-                } break;
+                    default: {
+                        TranslateMessage(&msg);
+                        DispatchMessage(&msg);
+                    } break;
+                }
             }
-        }
-        timerSection(&timer, FrameTimingID_Input);
 
-        update(state);
-        timerSection(&timer, FrameTimingID_Update);
+            TracyCZoneEnd(tracyCtx);
+        }
 
         {
-            TracyCZone(tracyCtx, true);
+            TracyCZoneN(tracyCtx, "update", true);
+            update(state);
+            TracyCZoneEnd(tracyCtx);
+        }
+
+        {
+            TracyCZoneN(tracyCtx, "render", true);
             render(state);
             TracyCZoneEnd(tracyCtx);
         }
-        timerSection(&timer, FrameTimingID_Render);
 
         // NOTE(khvorov) Present
         {
@@ -2845,7 +2616,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
                 ID3D11DeviceContext_Map(context, (ID3D11Resource*)texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
                 u32* pixels = (u32*)mappedTexture.pData;
-                TracyCZone(tracyCtx, true);
+                TracyCZoneN(tracyCtx, "present copymem", true);
                 copymem(pixels, state->renderer.image.ptr, state->renderer.image.width * state->renderer.image.height * sizeof(u32));
                 TracyCZoneEnd(tracyCtx);
 
@@ -2863,16 +2634,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             ID3D11DeviceContext_Draw(context, 4, 0);
 
             HRESULT presentResult = IDXGISwapChain1_Present(swapChain, 1, 0);
-            TracyCFrameMark;
 
             asserthr(presentResult);
             if (presentResult == DXGI_STATUS_OCCLUDED) {
                 Sleep(10);
             }
         }
-        timerSection(&timer, FrameTimingID_Present);
-        pushFrameTimings(&state->debug.timingsLog, timer.timings);
-        timerNewFrame(&timer);
     }
 
     return 0;
