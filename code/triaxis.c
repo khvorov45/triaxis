@@ -917,13 +917,13 @@ typedef struct Camera {
     V3f     pos;
     f32     fovDegreesX;
     Rotor3f orientation;
-    f32     movementInc;
-    f32     rotationInc;
+    f32     moveWUPerSec;
+    f32     rotDegreesPerSec;
 } Camera;
 
 function Camera
 createCamera(V3f pos) {
-    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f(), .movementInc = 0.1, .rotationInc = 1};
+    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
     return camera;
 }
 
@@ -2081,46 +2081,54 @@ initState(void* mem, isize bytes) {
 }
 
 function void
-update(State* state) {
-    if (state->input.keys[InputKey_Forward].down) {
-        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), state->camera.movementInc), state->camera.pos);
-    }
-    if (state->input.keys[InputKey_Back].down) {
-        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), -state->camera.movementInc), state->camera.pos);
-    }
-    if (state->input.keys[InputKey_Right].down) {
-        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), state->camera.movementInc), state->camera.pos);
-    }
-    if (state->input.keys[InputKey_Left].down) {
-        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), -state->camera.movementInc), state->camera.pos);
-    }
-    if (state->input.keys[InputKey_Up].down) {
-        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), state->camera.movementInc), state->camera.pos);
-    }
-    if (state->input.keys[InputKey_Down].down) {
-        state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), -state->camera.movementInc), state->camera.pos);
+update(State* state, f32 deltaSec) {
+    {
+        f32 moveInc = state->camera.moveWUPerSec * deltaSec;
+
+        if (state->input.keys[InputKey_Forward].down) {
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), moveInc), state->camera.pos);
+        }
+        if (state->input.keys[InputKey_Back].down) {
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), -moveInc), state->camera.pos);
+        }
+        if (state->input.keys[InputKey_Right].down) {
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), moveInc), state->camera.pos);
+        }
+        if (state->input.keys[InputKey_Left].down) {
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), -moveInc), state->camera.pos);
+        }
+        if (state->input.keys[InputKey_Up].down) {
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), moveInc), state->camera.pos);
+        }
+        if (state->input.keys[InputKey_Down].down) {
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), -moveInc), state->camera.pos);
+        }
     }
 
-    if (state->input.keys[InputKey_RotateXY].down) {
-        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 1, 0, 0));
-    }
-    if (state->input.keys[InputKey_RotateYX].down) {
-        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, -1, 0, 0));
-    }
-    if (state->input.keys[InputKey_RotateXZ].down) {
-        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 1, 0));
-    }
-    if (state->input.keys[InputKey_RotateZX].down) {
-        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, -1, 0));
-    }
-    if (state->input.keys[InputKey_RotateYZ].down) {
-        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, 1));
-    }
-    if (state->input.keys[InputKey_RotateZY].down) {
-        state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(state->camera.rotationInc, 0, 0, -1));
+    {
+        f32 rotInc = state->camera.rotDegreesPerSec * deltaSec;
+
+        if (state->input.keys[InputKey_RotateXY].down) {
+            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 1, 0, 0));
+        }
+        if (state->input.keys[InputKey_RotateYX].down) {
+            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, -1, 0, 0));
+        }
+        if (state->input.keys[InputKey_RotateXZ].down) {
+            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, 1, 0));
+        }
+        if (state->input.keys[InputKey_RotateZX].down) {
+            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, -1, 0));
+        }
+        if (state->input.keys[InputKey_RotateYZ].down) {
+            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, 0, 1));
+        }
+        if (state->input.keys[InputKey_RotateZY].down) {
+            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, 0, -1));
+        }
     }
 
-    Rotor3f cubeRotation1 = createRotor3fAnglePlane(1, 1, 1, 1);
+    Rotor3f cubeRotation1 = createRotor3fAnglePlane(40 * deltaSec, 1, 1, 1);
     state->cube1.orientation = rotor3fMulRotor3f(state->cube1.orientation, cubeRotation1);
     Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
     state->cube2.orientation = rotor3fMulRotor3f(state->cube2.orientation, cubeRotation2);
@@ -2201,12 +2209,14 @@ getMsFromMarker(Clock clock, ClockMarker marker) {
 
 typedef struct Timer {
     Clock       clock;
-    ClockMarker frameStart;
+    ClockMarker update;
 } Timer;
 
-static void
-timerNewFrame(Timer* timer) {
-    timer->frameStart = getClockMarker();
+static f32
+msSinceLastUpdate(Timer* timer) {
+    f32 result = getMsFromMarker(timer->clock, timer->update);
+    timer->update = getClockMarker();
+    return result;
 }
 
 LRESULT CALLBACK
@@ -2522,11 +2532,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         timeBeginPeriod(caps.wPeriodMin);
     }
 
-    // TODO(khvorov) Handle delta time
-    Timer timer = {.clock = createClock()};
+    Timer timer = {.clock = createClock(), .update = getClockMarker()};
     for (;;) {
         TracyCFrameMark;
-        timerNewFrame(&timer);
 
         assert(state->scratch.tempCount == 0);
         assert(state->scratch.used == 0);
@@ -2581,7 +2589,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         {
             TracyCZoneN(tracyCtx, "update", true);
-            update(state);
+            f32 ms = msSinceLastUpdate(&timer);
+            update(state, ms / 1000.0f);
             TracyCZoneEnd(tracyCtx);
         }
 
