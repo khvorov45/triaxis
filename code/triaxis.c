@@ -121,14 +121,13 @@ function void
 copymem(void* dest, void* src, isize len) {
     assert((src < dest && src + len <= dest) || (dest < src && dest + len <= src));
 
-    isize remaining = len;
+    isize wholeTransferCount = len / sizeof(__m512i);
 
     __m512i* src512 = (__m512i*)src;
     __m512i* dest512 = (__m512i*)dest;
-    while (remaining >= (isize)sizeof(__m512i)) {
-        __m512i val = _mm512_loadu_si512(src512++);
-        _mm512_storeu_si512(dest512++, val);
-        remaining -= sizeof(__m512i);
+    for (isize ind = 0; ind < wholeTransferCount; ind++) {
+        __m512i val = _mm512_loadu_si512(src512 + ind);
+        _mm512_storeu_si512(dest512 + ind, val);
     }
 
     __m512i zeros512 = _mm512_set1_epi8(0);
@@ -200,10 +199,11 @@ copymem(void* dest, void* src, isize len) {
         0x7fffffffffffffff,
     };
 
+    isize     remaining = len - wholeTransferCount * sizeof(__m512i);
     __mmask64 tailMask = byteMasks512[remaining];
 
-    __m512i tail = _mm512_mask_loadu_epi8(zeros512, tailMask, src512);
-    _mm512_mask_storeu_epi8(dest512, tailMask, tail);
+    __m512i tail = _mm512_mask_loadu_epi8(zeros512, tailMask, src512 + wholeTransferCount);
+    _mm512_mask_storeu_epi8(dest512 + wholeTransferCount, tailMask, tail);
 }
 
 typedef struct Arena {
