@@ -34,34 +34,34 @@ main() {
         }
     }
 
-    bool debugInfo = false;
-    bool optimise = false;
-    bool profile = false;
-    bool asserts = false;
-    bool tests = false;
-    bool bench = false;
-    {
-        prb_Str* args = prb_getCmdArgs(arena);
-        prb_assert(arrlen(args) == 7);
+    Str*           args = prb_getCmdArgs(arena);
+    i32            argsIndex = 1;
+    prb_Arena      argsDefinesBuilderArena = prb_createArenaFromArena(arena, 1 * prb_MEGABYTE);
+    prb_GrowingStr argsDefinesBuilder = prb_beginStr(&argsDefinesBuilderArena);
+    prb_GrowingStr nameBuilder = prb_beginStr(arena);
+    prb_addStrSegment(&nameBuilder, "triaxis");
 
-        prb_assert(prb_strStartsWith(args[1], STR("debuginfo=")));
-        debugInfo = prb_strEndsWith(args[1], STR("yes"));
+#define boolarg(name) \
+    assert(arrlen(args) > argsIndex); \
+    assert(prb_strStartsWith(args[argsIndex], STR(#name "="))); \
+    bool name = prb_strEndsWith(args[argsIndex++], STR("yes")); \
+    if (name) { \
+        prb_addStrSegment(&nameBuilder, "_" #name); \
+        prb_addStrSegment(&argsDefinesBuilder, " -DTRIAXIS_" #name); \
+    } \
+    do { \
+    } while (0)
 
-        prb_assert(prb_strStartsWith(args[2], STR("optimise=")));
-        optimise = prb_strEndsWith(args[2], STR("yes"));
+    boolarg(debuginfo);
+    boolarg(optimise);
+    boolarg(profile);
+    boolarg(asserts);
+    boolarg(tests);
+    boolarg(bench);
+#undef boolarg
 
-        prb_assert(prb_strStartsWith(args[3], STR("profile=")));
-        profile = prb_strEndsWith(args[3], STR("yes"));
-
-        prb_assert(prb_strStartsWith(args[4], STR("asserts=")));
-        asserts = prb_strEndsWith(args[4], STR("yes"));
-
-        prb_assert(prb_strStartsWith(args[5], STR("tests=")));
-        tests = prb_strEndsWith(args[5], STR("yes"));
-
-        prb_assert(prb_strStartsWith(args[6], STR("bench=")));
-        bench = prb_strEndsWith(args[6], STR("yes"));
-    }
+    Str outputName = prb_endStr(&nameBuilder);
+    Str argsDefines = prb_endStr(&argsDefinesBuilder);
 
     Str rootDir = prb_getParentDir(arena, STR(__FILE__));
     Str codeDir = prb_pathJoin(arena, rootDir, STR("code"));
@@ -71,59 +71,57 @@ main() {
     prb_createDirIfNotExists(arena, buildDir);
     // prb_clearDir(arena, buildDir);
 
-    Str alwaysFlags = prb_fmt(arena, "-march=native -I%.*s/public/tracy", LIT(tracyDir));
-    Str optFlags = STR("-O3");
-    Str debugInfoFlags = STR("-g -DTRIAXIS_DEBUGINFO");
-
-    Str tracyEnableFlag = STR("-DTRACY_ENABLE");
+    Str tracyIncludeFlag = prb_fmt(arena, "-I%.*s/public/tracy", LIT(tracyDir));
     Str tracyClientObj = prb_pathJoin(arena, buildDir, STR("TracyClient.obj"));
     if (!prb_isFile(arena, tracyClientObj)) {
         Str src = prb_pathJoin(arena, tracyDir, STR("public/TracyClient.cpp"));
-        Str cmd = prb_fmt(arena, "clang %.*s %.*s %.*s %.*s -Wno-format -c -o %.*s", LIT(alwaysFlags), LIT(optFlags), LIT(tracyEnableFlag), LIT(src), LIT(tracyClientObj));
+        Str cmd = prb_fmt(arena, "clang %.*s -march=native -O3 -DTRACY_ENABLE -Wno-format -c %.*s -o %.*s", LIT(tracyIncludeFlag), LIT(src), LIT(tracyClientObj));
         execCmd(arena, cmd);
     }
 
     {
-        Str mainSrc = prb_pathJoin(arena, codeDir, STR("triaxis.c"));
-        Str outName = STR("triaxis");
+        Str flags = {};
+        {
+            prb_GrowingStr builder = prb_beginStr(arena);
+            prb_addStrSegment(&builder, "%.*s%.*s", LIT(tracyIncludeFlag), LIT(argsDefines));
+            if (debuginfo) {
+                prb_addStrSegment(&builder, " -g");
+            }
+            if (optimise) {
+                // NOTE(khvorov) -fno-builtin is to prevent generating calls to memset and such
+                prb_addStrSegment(&builder, " -O3 -fno-builtin");
+            }
+            if (profile) {
+                prb_addStrSegment(&builder, "-DTRACY_ENABLE");
+            }
+            flags = prb_endStr(&builder);
+        }
 
-        Str* src = 0;
-        arrput(src, mainSrc);
-        Str* flags = 0;
-        arrput(flags, alwaysFlags);
-        if (debugInfo) {
-            arrput(flags, debugInfoFlags);
-            outName = prb_fmt(arena, "%.*s_debuginfo", LIT(outName));
+        Str mainObj = {};
+        {
+            Str src = prb_pathJoin(arena, codeDir, STR("triaxis.c"));
+            Str name = prb_fmt(arena, "%.*s.obj", LIT(outputName));
+            mainObj = prb_pathJoin(arena, buildDir, name);
+            Str cmd = prb_fmt(arena, "clang %.*s -Wall -Wextra -c -march=native %.*s -o %.*s", LIT(flags), LIT(src), LIT(mainObj));
+            execCmd(arena, cmd);
         }
-        if (optimise) {
-            arrput(flags, optFlags);
-            arrput(flags, STR("-fno-builtin"));  // NOTE(khvorov) Prevent generating calls to memset and such
-            outName = prb_fmt(arena, "%.*s_opt", LIT(outName));
-        }
-        if (profile) {
-            arrput(flags, tracyEnableFlag);
-            arrput(src, tracyClientObj);
-            outName = prb_fmt(arena, "%.*s_profile", LIT(outName));
-        }
-        if (asserts) {
-            arrput(flags, STR("-DTRIAXIS_ASSERTS"));
-            outName = prb_fmt(arena, "%.*s_asserts", LIT(outName));
-        }
-        if (tests) {
-            arrput(flags, STR("-DTRIAXIS_TESTS"));
-            outName = prb_fmt(arena, "%.*s_tests", LIT(outName));
-        }
-        if (bench) {
-            arrput(flags, STR("-DTRIAXIS_BENCH"));
-            outName = prb_fmt(arena, "%.*s_bench", LIT(outName));
-        }
-        Str flagsStr = prb_stringsJoin(arena, flags, arrlen(flags), STR(" "));
-        outName = prb_fmt(arena, "%.*s.exe", LIT(outName));
-        Str out = prb_pathJoin(arena, buildDir, outName);
-        Str srcStr = prb_stringsJoin(arena, src, arrlen(src), prb_STR(" "));
 
-        Str cmd = prb_fmt(arena, "clang %.*s -Wall -Wextra %.*s -o %.*s -Wl,-incremental:no", LIT(flagsStr), LIT(srcStr), LIT(out));
-        execCmd(arena, cmd);
+        {
+            Str src = {};
+            {
+                prb_GrowingStr builder = prb_beginStr(arena);
+                prb_addStrSegment(&builder, "%.*s", LIT(mainObj));
+                if (profile) {
+                    prb_addStrSegment(&builder, " %.*s", LIT(tracyClientObj));
+                }
+                src = prb_endStr(&builder);
+            }
+
+            Str exe = prb_replaceExt(arena, mainObj, STR("exe"));
+            Str cmd = prb_fmt(arena, "clang %.*s -o %.*s -Wl,-incremental:no", LIT(src), LIT(exe));
+            execCmd(arena, cmd);
+        }
+        
     }
 
     prb_writeToStdout(prb_fmt(arena, "total: %.2fms\n", prb_getMsFrom(scriptStart)));

@@ -23,7 +23,7 @@
 #define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = val, (arr).len++) : (__debugbreak(), 0))
 #define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
 
-#ifdef TRIAXIS_ASSERTS
+#ifdef TRIAXIS_asserts
 #define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
 #else
 #pragma clang diagnostic ignored "-Wunused-value"
@@ -2044,10 +2044,10 @@ initState(void* mem, isize bytes) {
     assert(bytes > 0);
 
     Arena arena = {.base = mem, .size = bytes};
-#ifdef TRIAXIS_TESTS
+#ifdef TRIAXIS_tests
     runTests(&arena);
 #endif
-#ifdef TRIAXIS_BENCH
+#ifdef TRIAXIS_bench
     runBench(&arena);
 #endif
 
@@ -2516,7 +2516,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         .MaxDepth = 1,
     };
 
-#ifdef TRIAXIS_DEBUGINFO
+#ifdef TRIAXIS_debuginfo
     // NOTE(khvorov) To prevent a white flash
     ShowWindow(window, SW_SHOWMINIMIZED);
 #endif
