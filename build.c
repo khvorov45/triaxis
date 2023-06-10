@@ -108,7 +108,7 @@ main() {
 
         Str mainObj = {};
         {
-            Str src = prb_pathJoin(arena, codeDir, STR("triaxis.c"));
+            Str src = prb_pathJoin(arena, codeDir, STR("triaxis_windows.c"));
             Str name = prb_fmt(arena, "%.*s.obj", LIT(outputName));
             mainObj = prb_pathJoin(arena, buildDir, name);
             Str cmd = prb_fmt(arena, "clang %.*s -Wall -Wextra -c -march=native %.*s -o %.*s", LIT(flags), LIT(src), LIT(mainObj));
