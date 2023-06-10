@@ -92,7 +92,7 @@ main() {
                 prb_addStrSegment(&builder, " -O3 -fno-builtin");
             }
             if (profile) {
-                prb_addStrSegment(&builder, "-DTRACY_ENABLE");
+                prb_addStrSegment(&builder, " -DTRACY_ENABLE");
             }
             flags = prb_endStr(&builder);
         }
