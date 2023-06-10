@@ -73,53 +73,90 @@ memeq(void* ptr1, void* ptr2, isize len) {
     return result;
 }
 
+const __mmask64 globalTailByteMasks512[64] = {
+    0x0000000000000000,
+    0x0000000000000001,
+    0x0000000000000003,
+    0x0000000000000007,
+    0x000000000000000f,
+    0x000000000000001f,
+    0x000000000000003f,
+    0x000000000000007f,
+    0x00000000000000ff,
+    0x00000000000001ff,
+    0x00000000000003ff,
+    0x00000000000007ff,
+    0x0000000000000fff,
+    0x0000000000001fff,
+    0x0000000000003fff,
+    0x0000000000007fff,
+    0x000000000000ffff,
+    0x000000000001ffff,
+    0x000000000003ffff,
+    0x000000000007ffff,
+    0x00000000000fffff,
+    0x00000000001fffff,
+    0x00000000003fffff,
+    0x00000000007fffff,
+    0x0000000000ffffff,
+    0x0000000001ffffff,
+    0x0000000003ffffff,
+    0x0000000007ffffff,
+    0x000000000fffffff,
+    0x000000001fffffff,
+    0x000000003fffffff,
+    0x000000007fffffff,
+    0x00000000ffffffff,
+    0x00000001ffffffff,
+    0x00000003ffffffff,
+    0x00000007ffffffff,
+    0x0000000fffffffff,
+    0x0000001fffffffff,
+    0x0000003fffffffff,
+    0x0000007fffffffff,
+    0x000000ffffffffff,
+    0x000001ffffffffff,
+    0x000003ffffffffff,
+    0x000007ffffffffff,
+    0x00000fffffffffff,
+    0x00001fffffffffff,
+    0x00003fffffffffff,
+    0x00007fffffffffff,
+    0x0000ffffffffffff,
+    0x0001ffffffffffff,
+    0x0003ffffffffffff,
+    0x0007ffffffffffff,
+    0x000fffffffffffff,
+    0x001fffffffffffff,
+    0x003fffffffffffff,
+    0x007fffffffffffff,
+    0x00ffffffffffffff,
+    0x01ffffffffffffff,
+    0x03ffffffffffffff,
+    0x07ffffffffffffff,
+    0x0fffffffffffffff,
+    0x1fffffffffffffff,
+    0x3fffffffffffffff,
+    0x7fffffffffffffff,
+};
+
 function void
 zeromem(void* ptr, isize len) {
-    isize remaining = len;
-
+    isize    wholeCount = len / sizeof(__m512i);
     __m512i* ptr512 = (__m512i*)ptr;
-    __m512i  zero512 = _mm512_setzero_si512();
-    while (remaining >= (isize)sizeof(__m512i)) {
-        _mm512_storeu_si512(ptr512++, zero512);
-        remaining -= sizeof(__m512i);
+
+    {
+        __m512i zero512 = _mm512_setzero_si512();
+        for (isize ind = 0; ind < wholeCount; ind++) {
+            _mm512_storeu_si512(ptr512 + ind, zero512);
+        }
     }
 
-    __m256i* ptr256 = (__m256i*)ptr512;
-    __m256i  zero256 = _mm256_setzero_si256();
-    while (remaining >= (isize)sizeof(__m256i)) {
-        _mm256_storeu_si256(ptr256++, zero256);
-        remaining -= sizeof(__m256i);
-    }
-
-    __m128i* ptr128 = (__m128i*)ptr256;
-    __m128i  zero128 = _mm_setzero_si128();
-    while (remaining >= (isize)sizeof(__m128i)) {
-        _mm_storeu_si128(ptr128++, zero128);
-        remaining -= sizeof(__m128i);
-    }
-
-    u64* ptr64 = (u64*)ptr128;
-    while (remaining >= (isize)sizeof(u64)) {
-        *ptr64++ = 0;
-        remaining -= sizeof(u64);
-    }
-
-    u32* ptr32 = (u32*)ptr64;
-    while (remaining >= (isize)sizeof(u32)) {
-        *ptr32++ = 0;
-        remaining -= sizeof(u32);
-    }
-
-    u16* ptr16 = (u16*)ptr32;
-    while (remaining >= (isize)sizeof(u16)) {
-        *ptr16++ = 0;
-        remaining -= sizeof(u16);
-    }
-
-    u8* ptr8 = (u8*)ptr16;
-    while (remaining >= (isize)sizeof(u8)) {
-        *ptr8++ = 0;
-        remaining -= sizeof(u8);
+    {
+        __m512i   zeros512 = _mm512_set1_epi8(0);
+        isize     remaining = len - wholeCount * sizeof(__m512i);
+        __mmask64 tailMask = globalTailByteMasks512[remaining];
+        _mm512_mask_storeu_epi8(ptr512 + wholeCount, tailMask, zeros512);
     }
 }
 
@@ -138,75 +175,8 @@ copymem(void* dest, void* src, isize len) {
 
     __m512i zeros512 = _mm512_set1_epi8(0);
 
-    __mmask64 byteMasks512[64] = {
-        0x0000000000000000,
-        0x0000000000000001,
-        0x0000000000000003,
-        0x0000000000000007,
-        0x000000000000000f,
-        0x000000000000001f,
-        0x000000000000003f,
-        0x000000000000007f,
-        0x00000000000000ff,
-        0x00000000000001ff,
-        0x00000000000003ff,
-        0x00000000000007ff,
-        0x0000000000000fff,
-        0x0000000000001fff,
-        0x0000000000003fff,
-        0x0000000000007fff,
-        0x000000000000ffff,
-        0x000000000001ffff,
-        0x000000000003ffff,
-        0x000000000007ffff,
-        0x00000000000fffff,
-        0x00000000001fffff,
-        0x00000000003fffff,
-        0x00000000007fffff,
-        0x0000000000ffffff,
-        0x0000000001ffffff,
-        0x0000000003ffffff,
-        0x0000000007ffffff,
-        0x000000000fffffff,
-        0x000000001fffffff,
-        0x000000003fffffff,
-        0x000000007fffffff,
-        0x00000000ffffffff,
-        0x00000001ffffffff,
-        0x00000003ffffffff,
-        0x00000007ffffffff,
-        0x0000000fffffffff,
-        0x0000001fffffffff,
-        0x0000003fffffffff,
-        0x0000007fffffffff,
-        0x000000ffffffffff,
-        0x000001ffffffffff,
-        0x000003ffffffffff,
-        0x000007ffffffffff,
-        0x00000fffffffffff,
-        0x00001fffffffffff,
-        0x00003fffffffffff,
-        0x00007fffffffffff,
-        0x0000ffffffffffff,
-        0x0001ffffffffffff,
-        0x0003ffffffffffff,
-        0x0007ffffffffffff,
-        0x000fffffffffffff,
-        0x001fffffffffffff,
-        0x003fffffffffffff,
-        0x007fffffffffffff,
-        0x00ffffffffffffff,
-        0x01ffffffffffffff,
-        0x03ffffffffffffff,
-        0x07ffffffffffffff,
-        0x0fffffffffffffff,
-        0x1fffffffffffffff,
-        0x3fffffffffffffff,
-        0x7fffffffffffffff,
-    };
-
     isize     remaining = len - wholeTransferCount * sizeof(__m512i);
-    __mmask64 tailMask = byteMasks512[remaining];
+    __mmask64 tailMask = globalTailByteMasks512[remaining];
 
     __m512i tail = _mm512_mask_loadu_epi8(zeros512, tailMask, src512 + wholeTransferCount);
     _mm512_mask_storeu_epi8(dest512 + wholeTransferCount, tailMask, tail);
@@ -2008,14 +1978,14 @@ function void
 runBench(Arena* arena) {
     TempMemory runBenchTemp = beginTempMemory(arena);
     zeromem(arenaFreePtr(arena), arenaFreeSize(arena));
+#if TRACY_ENABLE
+    isize samples = 10;
+#else
+    isize samples = 1;
+#endif
 
     {
         isize toCopy = arenaFreeSize(arena) / 2 - 1024;
-#if TRACY_ENABLE
-        isize samples = 10;
-#else
-        isize samples = 1;
-#endif
 
         for (isize ind = 0; ind < samples; ind++) {
             TempMemory temp = beginTempMemory(arena);
@@ -2025,6 +1995,20 @@ runBench(Arena* arena) {
 
             TracyCZoneN(tracyCtx, "bench copymem", true);
             copymem(arr1, arr2, toCopy);
+            TracyCZoneEnd(tracyCtx);
+
+            endTempMemory(temp);
+        }
+    }
+
+    {
+        isize toZero = arenaFreeSize(arena);
+
+        for (isize ind = 0; ind < samples; ind++) {
+            TempMemory temp = beginTempMemory(arena);
+
+            TracyCZoneN(tracyCtx, "bench zeromem", true);
+            zeromem(arenaFreePtr(arena), toZero);
             TracyCZoneEnd(tracyCtx);
 
             endTempMemory(temp);

@@ -97,6 +97,7 @@ main() {
         }
         if (optimise) {
             arrput(flags, optFlags);
+            arrput(flags, STR("-fno-builtin"));  // NOTE(khvorov) Prevent generating calls to memset and such
             outName = prb_fmt(arena, "%.*s_opt", LIT(outName));
         }
         if (profile) {
