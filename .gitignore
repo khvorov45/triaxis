@@ -6,3 +6,4 @@ win32_d3d11.c
 *.obj
 *.pdf
 *.rdbg
+*.10x
