@@ -13,17 +13,9 @@ typedef struct D3D11Vertex {
 typedef struct D3D11Renderer {
     ID3D11DeviceContext*      context;
     ID3D11RenderTargetView*   rtView;
-    ID3D11DepthStencilView*   dsView;
     IDXGISwapChain1*          swapChain;
-    ID3D11Buffer*             vbuffer;
     ID3D11InputLayout*        layout;
-    ID3D11VertexShader*       vshader;
-    ID3D11PixelShader*        pshader;
-    D3D11_VIEWPORT            viewport;
-    ID3D11RasterizerState*    rasterizerState;
-    ID3D11ShaderResourceView* textureView;
     ID3D11Texture2D*          texture;
-    ID3D11SamplerState*       sampler;
 } D3D11Renderer;
 
 static D3D11Renderer
@@ -212,11 +204,10 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     }
 
     ID3D11RenderTargetView* rtView = 0;
-    ID3D11DepthStencilView* dsView = 0;
     {
         asserthr(IDXGISwapChain1_ResizeBuffers(swapChain, 0, windowWidth, windowHeight, DXGI_FORMAT_UNKNOWN, 0));
 
-        ID3D11Texture2D* backbuffer;
+        ID3D11Texture2D* backbuffer = 0;
         IDXGISwapChain1_GetBuffer(swapChain, 0, &IID_ID3D11Texture2D, (void**)&backbuffer);
         ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource*)backbuffer, NULL, &rtView);
         assert(rtView);
@@ -235,7 +226,6 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
 
         ID3D11Texture2D* depth = 0;
         ID3D11Device_CreateTexture2D(device, &depthDesc, NULL, &depth);
-        ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource*)depth, NULL, &dsView);
         ID3D11Texture2D_Release(depth);
     }
 
@@ -248,20 +238,28 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         .MaxDepth = 1,
     };
 
+    {
+        ID3D11DeviceContext_IASetInputLayout(context, layout);
+        ID3D11DeviceContext_IASetPrimitiveTopology(context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        UINT offset = 0;
+        UINT stride = sizeof(D3D11Vertex);
+        ID3D11DeviceContext_IASetVertexBuffers(context, 0, 1, &vbuffer, &stride, &offset);
+    }
+
+    ID3D11DeviceContext_VSSetShader(context, vshader, NULL, 0);
+
+    ID3D11DeviceContext_RSSetViewports(context, 1, &viewport);
+    ID3D11DeviceContext_RSSetState(context, rasterizerState);
+
+    ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler);
+    ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &textureView);
+    ID3D11DeviceContext_PSSetShader(context, pshader, NULL, 0);
+
     D3D11Renderer rend = {
         .context = context,
         .rtView = rtView,
-        .dsView = dsView,
         .swapChain = swapChain,
-        .vbuffer = vbuffer,
-        .layout = layout,
-        .vshader = vshader,
-        .pshader = pshader,
-        .viewport = viewport,
-        .rasterizerState = rasterizerState,
-        .textureView = textureView,
         .texture = texture,
-        .sampler = sampler,
     };
     return rend;
 }
@@ -271,21 +269,7 @@ d3d11present(D3D11Renderer rend, Texture tex) {
     {
         FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
         ID3D11DeviceContext_ClearRenderTargetView(rend.context, rend.rtView, color);
-        ID3D11DeviceContext_ClearDepthStencilView(rend.context, rend.dsView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
     }
-
-    {
-        ID3D11DeviceContext_IASetInputLayout(rend.context, rend.layout);
-        ID3D11DeviceContext_IASetPrimitiveTopology(rend.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        UINT offset = 0;
-        UINT stride = sizeof(D3D11Vertex);
-        ID3D11DeviceContext_IASetVertexBuffers(rend.context, 0, 1, &rend.vbuffer, &stride, &offset);
-    }
-
-    ID3D11DeviceContext_VSSetShader(rend.context, rend.vshader, NULL, 0);
-
-    ID3D11DeviceContext_RSSetViewports(rend.context, 1, &rend.viewport);
-    ID3D11DeviceContext_RSSetState(rend.context, rend.rasterizerState);
 
     {
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
@@ -294,21 +278,12 @@ d3d11present(D3D11Renderer rend, Texture tex) {
         TracyCZoneN(tracyCtx, "present copymem", true);
         copymem(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
         TracyCZoneEnd(tracyCtx);
-
         ID3D11DeviceContext_Unmap(rend.context, (ID3D11Resource*)rend.texture, 0);
-
-        ID3D11DeviceContext_PSSetSamplers(rend.context, 0, 1, &rend.sampler);
-        ID3D11DeviceContext_PSSetShaderResources(rend.context, 0, 1, &rend.textureView);
-        ID3D11DeviceContext_PSSetShader(rend.context, rend.pshader, NULL, 0);
     }
 
-    ID3D11DeviceContext_OMSetRenderTargets(rend.context, 1, &rend.rtView, rend.dsView);
-
-    ID3D11DeviceContext_IASetPrimitiveTopology(rend.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    ID3D11DeviceContext_OMSetRenderTargets(rend.context, 1, &rend.rtView, 0);
     ID3D11DeviceContext_Draw(rend.context, 4, 0);
-
     HRESULT presentResult = IDXGISwapChain1_Present(rend.swapChain, 1, 0);
-
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
         Sleep(10);
