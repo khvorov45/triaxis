@@ -33,25 +33,6 @@ execCmd(Arena* arena, Str cmd) {
     assert(prb_launchProcesses(arena, &proc, 1, prb_Background_No));
 }
 
-function Str
-compileObj(Arena* arena, Str srcName, Str outSuffix, Str flags) {
-    Str srcNameNoExt = {};
-    if (prb_strEndsWith(srcName, STR(".c"))) {
-        srcNameNoExt = prb_strSlice(srcName, 0, srcName.len - 2);
-    } else if (prb_strEndsWith(srcName, STR(".cpp"))) {
-        srcNameNoExt = prb_strSlice(srcName, 0, srcName.len - 4);
-    } else {
-        assert(!"unrecognizedSource");
-    }
-
-    Str src = prb_pathJoin(arena, globalCodeDir, srcName);
-    Str name = prb_fmt(arena, "%.*s%.*s.obj", LIT(srcNameNoExt), LIT(outSuffix));
-    Str obj = prb_pathJoin(arena, globalBuildDir, name);
-    Str cmd = prb_fmt(arena, "clang %.*s -Wall -Wextra -c -march=native %.*s -o %.*s", LIT(flags), LIT(src), LIT(obj));
-    execCmd(arena, cmd);
-    return obj;
-}
-
 function void
 compile(Arena* arena, Opt opt) {
     prb_Arena      argsDefinesBuilderArena = prb_createArenaFromArena(arena, 1 * prb_MEGABYTE);
@@ -74,7 +55,7 @@ compile(Arena* arena, Opt opt) {
     boolarg(bench);
 #undef boolarg
 
-    Str outputName = prb_endStr(&nameBuilder);
+    Str outputSuffix = prb_endStr(&nameBuilder);
     Str argsDefines = prb_endStr(&argsDefinesBuilder);
 
     Str tracyIncludeFlag = prb_fmt(arena, "-I%.*s/public/tracy", LIT(globalTracyDir));
@@ -103,21 +84,37 @@ compile(Arena* arena, Opt opt) {
             flags = prb_endStr(&builder);
         }
 
-        Str mainObj = compileObj(arena, STR("triaxis_windows.cpp"), outputName, flags);
+        Str mainPath = prb_pathJoin(arena, globalCodeDir, STR("triaxis_windows.cpp"));
 
         {
             Str src = {};
             {
                 prb_GrowingStr builder = prb_beginStr(arena);
-                prb_addStrSegment(&builder, "%.*s", LIT(mainObj));
+                prb_addStrSegment(&builder, "%.*s", LIT(mainPath));
                 if (opt.profile) {
                     prb_addStrSegment(&builder, " %.*s", LIT(tracyClientObj));
                 }
                 src = prb_endStr(&builder);
             }
 
-            Str exe = prb_replaceExt(arena, mainObj, STR("exe"));
-            Str cmd = prb_fmt(arena, "clang %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
+            Str exe = {};
+            {
+                Str codeFileName = prb_getLastEntryInPath(mainPath);
+                Str nameNoExt = {};
+                {
+                    if (prb_strEndsWith(codeFileName, STR(".c"))) {
+                        nameNoExt = prb_strSlice(codeFileName, 0, codeFileName.len - 2);
+                    } else if (prb_strEndsWith(codeFileName, STR(".cpp"))) {
+                        nameNoExt = prb_strSlice(codeFileName, 0, codeFileName.len - 4);
+                    } else {
+                        assert(!"unexpected source");
+                    }
+                }
+                Str exeFileName = prb_fmt(arena, "%.*s%.*s.exe", LIT(nameNoExt), LIT(outputSuffix));
+                exe = prb_pathJoin(arena, globalBuildDir, exeFileName);
+            }
+
+            Str cmd = prb_fmt(arena, "clang -march=native -Wall -Wextra %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
             execCmd(arena, cmd);
         }
     }
@@ -136,7 +133,7 @@ main() {
     globalTracyDir = prb_pathJoin(arena, globalRootDir, STR("tracy"));
 
     prb_createDirIfNotExists(arena, globalBuildDir);
-    //prb_clearDir(arena, globalBuildDir);
+    // prb_clearDir(arena, globalBuildDir);
 
     // NOTE(khvorov) Codegen
     {

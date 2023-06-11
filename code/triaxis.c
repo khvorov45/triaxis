@@ -1918,7 +1918,7 @@ function void
 runBench(Arena* arena) {
     TempMemory runBenchTemp = beginTempMemory(arena);
     zeromem(arenaFreePtr(arena), arenaFreeSize(arena));
-#if TRACY_ENABLE
+#if TRIAXIS_optimise
     isize samples = 10;
 #else
     isize samples = 1;
