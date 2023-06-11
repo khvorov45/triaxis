@@ -4,23 +4,32 @@
 #define WIN32_LEAN_AND_MEAN 1
 #define VC_EXTRALEAN 1
 #include <Windows.h>
-#include <timeapi.h>
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <d3dcompiler.h>
 
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "user32")
 #pragma comment(lib, "Winmm")
-#pragma comment(lib, "d3d11")
-#pragma comment(lib, "dxguid")
-#pragma comment(lib, "d3dcompiler")
-
-#define asserthr(x) assert(SUCCEEDED(x))
 
 //
 // SECTION D3D11
 //
+
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <d3dcompiler.h>
+
+#undef max
+#undef min
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsometimes-uninitialized"
+#pragma clang diagnostic ignored "-Wunused-private-field"
+#include "TracyD3D11.hpp"
+#pragma clang diagnostic pop
+
+#define asserthr(x) assert(SUCCEEDED(x))
+
+#pragma comment(lib, "d3d11")
+#pragma comment(lib, "dxguid")
+#pragma comment(lib, "d3dcompiler")
 
 // TODO(khvorov) Handle resizing
 
@@ -35,6 +44,7 @@ typedef struct D3D11Renderer {
     IDXGISwapChain1*        swapChain;
     ID3D11InputLayout*      layout;
     ID3D11Texture2D*        texture;
+    TracyD3D11Ctx           tracyD3D11Context;
 } D3D11Renderer;
 
 static D3D11Renderer
@@ -231,21 +241,6 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         device->CreateRenderTargetView((ID3D11Resource*)backbuffer, NULL, &rtView);
         assert(rtView);
         backbuffer->Release();
-
-        D3D11_TEXTURE2D_DESC depthDesc = {
-            .Width = (UINT)windowWidth,
-            .Height = (UINT)windowHeight,
-            .MipLevels = 1,
-            .ArraySize = 1,
-            .Format = DXGI_FORMAT_D32_FLOAT,
-            .SampleDesc = {.Count = 1, .Quality = 0},
-            .Usage = D3D11_USAGE_DEFAULT,
-            .BindFlags = D3D11_BIND_DEPTH_STENCIL,
-        };
-
-        ID3D11Texture2D* depth = 0;
-        device->CreateTexture2D(&depthDesc, NULL, &depth);
-        depth->Release();
     }
 
     D3D11_VIEWPORT viewport = {
@@ -274,11 +269,14 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     context->PSSetShaderResources(0, 1, &textureView);
     context->PSSetShader(pshader, NULL, 0);
 
+    TracyD3D11Ctx tracyD3D11Context = TracyD3D11Context(device, context);
+
     D3D11Renderer rend = {
         .context = context,
         .rtView = rtView,
         .swapChain = swapChain,
         .texture = texture,
+        .tracyD3D11Context = tracyD3D11Context,
     };
     return rend;
 }
@@ -300,9 +298,14 @@ d3d11present(D3D11Renderer rend, Texture tex) {
         rend.context->Unmap((ID3D11Resource*)rend.texture, 0);
     }
 
-    rend.context->OMSetRenderTargets(1, &rend.rtView, 0);
-    rend.context->Draw(4, 0);
+    {
+        TracyD3D11Zone(rend.tracyD3D11Context, "draw quad");
+        rend.context->OMSetRenderTargets(1, &rend.rtView, 0);
+        rend.context->Draw(4, 0);
+    }
+
     HRESULT presentResult = rend.swapChain->Present(1, 0);
+    TracyD3D11Collect(rend.tracyD3D11Context);
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
         Sleep(10);
@@ -312,6 +315,8 @@ d3d11present(D3D11Renderer rend, Texture tex) {
 //
 // SECTION Timing
 //
+
+#include <timeapi.h>
 
 typedef struct Clock {
     LARGE_INTEGER freqPerSecond;
@@ -521,5 +526,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         TracyCZoneEnd(tracyFrameCtx);
     }
 
+    TracyD3D11Destroy(d3d11rend.tracyD3D11Context);
     return 0;
 }
