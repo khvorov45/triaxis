@@ -24,7 +24,6 @@ typedef struct D3D11Renderer {
     ID3D11ShaderResourceView* textureView;
     ID3D11Texture2D*          texture;
     ID3D11SamplerState*       sampler;
-    ID3D11DepthStencilState*  depthState;
 } D3D11Renderer;
 
 static D3D11Renderer
@@ -212,20 +211,6 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         ID3D11Device_CreateRasterizerState(device, &desc, &rasterizerState);
     }
 
-    // TODO(khvorov) Remove?
-    ID3D11DepthStencilState* depthState = 0;
-    {
-        D3D11_DEPTH_STENCIL_DESC desc = {
-            .DepthEnable = FALSE,
-            .DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL,
-            .DepthFunc = D3D11_COMPARISON_LESS,
-            .StencilEnable = FALSE,
-            .StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
-            .StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
-        };
-        ID3D11Device_CreateDepthStencilState(device, &desc, &depthState);
-    }
-
     ID3D11RenderTargetView* rtView = 0;
     ID3D11DepthStencilView* dsView = 0;
     {
@@ -277,7 +262,6 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         .textureView = textureView,
         .texture = texture,
         .sampler = sampler,
-        .depthState = depthState,
     };
     return rend;
 }
@@ -318,7 +302,6 @@ d3d11present(D3D11Renderer rend, Texture tex) {
         ID3D11DeviceContext_PSSetShader(rend.context, rend.pshader, NULL, 0);
     }
 
-    ID3D11DeviceContext_OMSetDepthStencilState(rend.context, rend.depthState, 0);
     ID3D11DeviceContext_OMSetRenderTargets(rend.context, 1, &rend.rtView, rend.dsView);
 
     ID3D11DeviceContext_IASetPrimitiveTopology(rend.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
