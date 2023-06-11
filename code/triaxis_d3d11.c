@@ -5,13 +5,17 @@
 
 // TODO(khvorov) Handle resizing
 
+typedef struct D3D11Vertex {
+    V2f pos;
+    V2f uv;
+} D3D11Vertex;
+
 typedef struct D3D11Renderer {
     ID3D11DeviceContext*      context;
     ID3D11RenderTargetView*   rtView;
     ID3D11DepthStencilView*   dsView;
     IDXGISwapChain1*          swapChain;
     ID3D11Buffer*             vbuffer;
-    UINT                      vertexSize;
     ID3D11InputLayout*        layout;
     ID3D11VertexShader*       vshader;
     ID3D11PixelShader*        pshader;
@@ -29,7 +33,9 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     ID3D11DeviceContext* context = 0;
     {
         UINT flags = 0;
+#ifdef TRIAXIS_debuginfo
         flags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
         D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0};
         asserthr(D3D11CreateDevice(
             NULL,
@@ -45,6 +51,7 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         ));
     }
 
+#ifdef TRIAXIS_asserts
     {
         ID3D11InfoQueue* info = 0;
         ID3D11Device_QueryInterface(device, &IID_ID3D11InfoQueue, (void**)&info);
@@ -52,6 +59,7 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         ID3D11InfoQueue_SetBreakOnSeverity(info, D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
         ID3D11InfoQueue_Release(info);
     }
+#endif
 
     IDXGISwapChain1* swapChain = 0;
     {
@@ -82,14 +90,9 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         IDXGIDevice_Release(dxgiDevice);
     }
 
-    struct Vertex {
-        float position[2];
-        float uv[2];
-    };
-
     ID3D11Buffer* vbuffer = 0;
     {
-        struct Vertex data[] = {
+        D3D11Vertex data[] = {
             {{-1.00f, +1.00f}, {0.0f, 0.0f}},
             {{+1.00f, +1.00f}, {1.0f, 0.0f}},
             {{-1.00f, -1.00f}, {0.0f, 1.0f}},
@@ -111,12 +114,17 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     ID3D11PixelShader*  pshader = 0;
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(D3D11Vertex, pos), D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(D3D11Vertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
 
         UINT flags = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
-        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#ifdef TRIAXIS_debuginfo
+        flags |= D3DCOMPILE_DEBUG;
+#endif
+#ifndef TRIAXIS_optimise
+        flags |= D3DCOMPILE_SKIP_OPTIMIZATION;
+#endif
 
         ID3DBlob* verror = 0;
         ID3DBlob* vblob = 0;
@@ -204,6 +212,7 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         ID3D11Device_CreateRasterizerState(device, &desc, &rasterizerState);
     }
 
+    // TODO(khvorov) Remove?
     ID3D11DepthStencilState* depthState = 0;
     {
         D3D11_DEPTH_STENCIL_DESC desc = {
@@ -222,7 +231,6 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     {
         asserthr(IDXGISwapChain1_ResizeBuffers(swapChain, 0, windowWidth, windowHeight, DXGI_FORMAT_UNKNOWN, 0));
 
-        // create RenderTarget view for new backbuffer texture
         ID3D11Texture2D* backbuffer;
         IDXGISwapChain1_GetBuffer(swapChain, 0, &IID_ID3D11Texture2D, (void**)&backbuffer);
         ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource*)backbuffer, NULL, &rtView);
@@ -261,7 +269,6 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         .dsView = dsView,
         .swapChain = swapChain,
         .vbuffer = vbuffer,
-        .vertexSize = sizeof(struct Vertex),
         .layout = layout,
         .vshader = vshader,
         .pshader = pshader,
@@ -287,7 +294,8 @@ d3d11present(D3D11Renderer rend, Texture tex) {
         ID3D11DeviceContext_IASetInputLayout(rend.context, rend.layout);
         ID3D11DeviceContext_IASetPrimitiveTopology(rend.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         UINT offset = 0;
-        ID3D11DeviceContext_IASetVertexBuffers(rend.context, 0, 1, &rend.vbuffer, &rend.vertexSize, &offset);
+        UINT stride = sizeof(D3D11Vertex);
+        ID3D11DeviceContext_IASetVertexBuffers(rend.context, 0, 1, &rend.vbuffer, &stride, &offset);
     }
 
     ID3D11DeviceContext_VSSetShader(rend.context, rend.vshader, NULL, 0);

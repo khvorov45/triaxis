@@ -106,7 +106,7 @@ compile(Arena* arena, Opt opt) {
             }
 
             Str exe = prb_replaceExt(arena, mainObj, STR("exe"));
-            Str cmd = prb_fmt(arena, "clang %.*s -o %.*s -Wl,-incremental:no", LIT(src), LIT(exe));
+            Str cmd = prb_fmt(arena, "clang %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
             execCmd(arena, cmd);
         }
     }
