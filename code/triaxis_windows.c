@@ -84,33 +84,41 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         state = initState(memBase, memSize);
     }
 
-    WNDCLASSEXW windowClass = {
-        .cbSize = sizeof(WNDCLASSEXW),
-        .lpfnWndProc = windowProc,
-        .hInstance = hInstance,
-        .lpszClassName = L"Triaxis",
-        .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH),
-        .hCursor = LoadCursorA(NULL, IDC_ARROW),
-        .hIcon = LoadIconA(NULL, IDI_APPLICATION),
-    };
-    assert(RegisterClassExW(&windowClass) != 0);
+    HWND window = 0;
+    {
+        TempMemory temp = beginTempMemory(&state->scratch);
+        LPWSTR     exename = arenaFreePtr(&state->scratch);
+        GetModuleFileNameW(hInstance, exename, arenaFreeSize(&state->scratch) / sizeof(u16));
 
-    // TODO(khvorov) Put exe path in the name
-    HWND window = CreateWindowExW(
-        WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
-        windowClass.lpszClassName,
-        L"Triaxis",
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        state->windowWidth,
-        state->windowHeight,
-        NULL,
-        NULL,
-        windowClass.hInstance,
-        NULL
-    );
-    assert(window);
+        WNDCLASSEXW windowClass = {
+            .cbSize = sizeof(WNDCLASSEXW),
+            .lpfnWndProc = windowProc,
+            .hInstance = hInstance,
+            .lpszClassName = L"triaxisWindowClass",
+            .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH),
+            .hCursor = LoadCursorA(NULL, IDC_ARROW),
+            .hIcon = LoadIconA(NULL, IDI_APPLICATION),
+        };
+        assert(RegisterClassExW(&windowClass) != 0);
+
+        window = CreateWindowExW(
+            WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
+            windowClass.lpszClassName,
+            exename,
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            state->windowWidth,
+            state->windowHeight,
+            NULL,
+            NULL,
+            windowClass.hInstance,
+            NULL
+        );
+        assert(window);
+
+        endTempMemory(temp);
+    }
 
     // NOTE(khvorov) Adjust window size such that it's the client area that's the specified size, not the whole window with decorations
     {
