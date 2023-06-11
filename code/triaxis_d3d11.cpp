@@ -1,4 +1,7 @@
-#include "triaxis_d3d11.h"
+#undef function
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <d3dcompiler.h>
 
 #define asserthr(x) assert(SUCCEEDED(x))
 
@@ -8,6 +11,14 @@ typedef struct D3D11Vertex {
     f32 pos[2];
     f32 uv[2];
 } D3D11Vertex;
+
+typedef struct D3D11Renderer {
+    ID3D11DeviceContext*    context;
+    ID3D11RenderTargetView* rtView;
+    IDXGISwapChain1*        swapChain;
+    ID3D11InputLayout*      layout;
+    ID3D11Texture2D*        texture;
+} D3D11Renderer;
 
 D3D11Renderer
 initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {

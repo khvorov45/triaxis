@@ -6,14 +6,18 @@
 #include <Windows.h>
 #include <timeapi.h>
 
-#include "triaxis_d3d11.h"
-
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "user32")
 #pragma comment(lib, "Winmm")
 #pragma comment(lib, "d3d11")
 #pragma comment(lib, "dxguid")
 #pragma comment(lib, "d3dcompiler")
+
+#include "triaxis_d3d11.cpp"
+
+//
+// SECTION Timing
+//
 
 typedef struct Clock {
     LARGE_INTEGER freqPerSecond;
@@ -57,6 +61,10 @@ msSinceLastUpdate(Timer* timer) {
     return result;
 }
 
+//
+// SECTION Main
+//
+
 LRESULT CALLBACK
 windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     LRESULT result = 0;
@@ -85,17 +93,17 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     HWND window = 0;
     {
         TempMemory temp = beginTempMemory(&state->scratch);
-        LPWSTR     exename = arenaFreePtr(&state->scratch);
+        LPWSTR     exename = (LPWSTR)arenaFreePtr(&state->scratch);
         GetModuleFileNameW(hInstance, exename, arenaFreeSize(&state->scratch) / sizeof(u16));
 
         WNDCLASSEXW windowClass = {
             .cbSize = sizeof(WNDCLASSEXW),
             .lpfnWndProc = windowProc,
             .hInstance = hInstance,
-            .lpszClassName = L"triaxisWindowClass",
-            .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH),
-            .hCursor = LoadCursorA(NULL, IDC_ARROW),
             .hIcon = LoadIconA(NULL, IDI_APPLICATION),
+            .hCursor = LoadCursorA(NULL, IDC_ARROW),
+            .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH),
+            .lpszClassName = L"triaxisWindowClass",
         };
         assert(RegisterClassExW(&windowClass) != 0);
 
@@ -164,7 +172,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
                     case WM_KEYDOWN:
                     case WM_KEYUP: {
-                        InputKey key = 0;
+                        InputKey key = InputKey_Up;
                         bool     keyFound = true;
                         switch (msg.wParam) {
                             case 'W': key = InputKey_Forward; break;

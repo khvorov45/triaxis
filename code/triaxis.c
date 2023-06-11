@@ -1,7 +1,210 @@
-#include "triaxis.h"
+#pragma clang diagnostic ignored "-Wunused-function"
+#pragma clang diagnostic ignored "-Wc99-designator"
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdalign.h>
+#include <immintrin.h>
 
 // TODO(khvorov) Remove
 #include <math.h>
+
+#include "TracyC.h"
+
+// clang-format off
+#define PI 3.14159
+#define function static
+#define arrayCount(x) (int)(sizeof(x) / sizeof(x[0]))
+#define unused(x) (x) = (x)
+#define min(x, y) (((x) < (y)) ? (x) : (y))
+#define max(x, y) (((x) > (y)) ? (x) : (y))
+#define absval(x) ((x) >= 0 ? (x) : -(x))
+#define arenaAllocArray(arena, type, count) (type*)arenaAlloc(arena, sizeof(type)*count, alignof(type))
+#define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
+#define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = val, (arr).len++) : (__debugbreak(), 0))
+#define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
+
+#ifdef TRIAXIS_asserts
+#define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
+#else
+#pragma clang diagnostic ignored "-Wunused-value"
+#define assert(cond) cond
+#endif
+// clang-format on
+
+typedef uint8_t  u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int32_t  i32;
+typedef intptr_t isize;
+typedef float    f32;
+
+#include "generated.c"
+
+//
+// SECTION Memory
+//
+
+function bool
+isPowerOf2(isize value) {
+    bool result = (value > 0) && ((value & (value - 1)) == 0);
+    return result;
+}
+
+function isize
+getOffsetForAlignment(void* ptr, isize align) {
+    assert(isPowerOf2(align));
+    isize mask = align - 1;
+    isize misalignment = (isize)ptr & mask;
+    isize offset = 0;
+    if (misalignment > 0) {
+        offset = align - misalignment;
+    }
+    return offset;
+}
+
+function bool
+memeq(const void* ptr1, const void* ptr2, isize len) {
+    bool result = true;
+    for (isize ind = 0; ind < len; ind++) {
+        if (((u8*)ptr1)[ind] != ((u8*)ptr2)[ind]) {
+            result = false;
+            break;
+        }
+    }
+    return result;
+}
+
+function void
+zeromem(void* ptr, isize len) {
+    isize    wholeCount = len / sizeof(__m512i);
+    __m512i* ptr512 = (__m512i*)ptr;
+
+    {
+        __m512i zero512 = _mm512_setzero_si512();
+        for (isize ind = 0; ind < wholeCount; ind++) {
+            _mm512_storeu_si512(ptr512 + ind, zero512);
+        }
+    }
+
+    {
+        __m512i   zeros512 = _mm512_set1_epi8(0);
+        isize     remaining = len - wholeCount * sizeof(__m512i);
+        __mmask64 tailMask = globalTailByteMasks512[remaining];
+        _mm512_mask_storeu_epi8(ptr512 + wholeCount, tailMask, zeros512);
+    }
+}
+
+function void
+copymem(void* dest, const void* src, isize len) {
+    assert(((u8*)src < (u8*)dest && (u8*)src + len <= (u8*)dest) || ((u8*)dest < (u8*)src && (u8*)dest + len <= (u8*)src));
+
+    isize wholeTransferCount = len / sizeof(__m512i);
+
+    __m512i* src512 = (__m512i*)src;
+    __m512i* dest512 = (__m512i*)dest;
+    for (isize ind = 0; ind < wholeTransferCount; ind++) {
+        __m512i val = _mm512_loadu_si512(src512 + ind);
+        _mm512_storeu_si512(dest512 + ind, val);
+    }
+
+    __m512i zeros512 = _mm512_set1_epi8(0);
+
+    isize     remaining = len - wholeTransferCount * sizeof(__m512i);
+    __mmask64 tailMask = globalTailByteMasks512[remaining];
+
+    __m512i tail = _mm512_mask_loadu_epi8(zeros512, tailMask, src512 + wholeTransferCount);
+    _mm512_mask_storeu_epi8(dest512 + wholeTransferCount, tailMask, tail);
+}
+
+typedef struct Arena {
+    void* base;
+    isize size;
+    isize used;
+    isize tempCount;
+} Arena;
+
+function void*
+arenaFreePtr(Arena* arena) {
+    assert(arena->used <= arena->size);
+    void* result = (u8*)arena->base + arena->used;
+    return result;
+}
+
+function isize
+arenaFreeSize(Arena* arena) {
+    assert(arena->used <= arena->size);
+    isize result = arena->size - arena->used;
+    return result;
+}
+
+function void
+arenaChangeUsed(Arena* arena, isize size) {
+    arena->used += size;
+    assert(arena->used <= arena->size);
+}
+
+function void
+arenaAlign(Arena* arena, isize align) {
+    isize offset = getOffsetForAlignment(arenaFreePtr(arena), align);
+    arenaChangeUsed(arena, offset);
+}
+
+function void*
+arenaAlloc(Arena* arena, isize size, isize align) {
+    arenaAlign(arena, align);
+    void* result = arenaFreePtr(arena);
+    arenaChangeUsed(arena, size);
+    return result;
+}
+
+function Arena
+createArenaFromArena(Arena* parent, isize size) {
+    Arena arena = {.base = arenaFreePtr(parent), .size = size};
+    arenaChangeUsed(parent, size);
+    return arena;
+}
+
+typedef struct TempMemory {
+    Arena* arena;
+    isize  usedAtBegin;
+    isize  tempCountAtBegin;
+} TempMemory;
+
+function TempMemory
+beginTempMemory(Arena* arena) {
+    TempMemory result = {arena, arena->used, arena->tempCount};
+    arena->tempCount += 1;
+    return result;
+}
+
+function void
+endTempMemory(TempMemory temp) {
+    assert(temp.arena->used >= temp.usedAtBegin);
+    assert(temp.arena->tempCount == temp.tempCountAtBegin + 1);
+    temp.arena->used = temp.usedAtBegin;
+    temp.arena->tempCount = temp.tempCountAtBegin;
+}
+
+//
+// SECTION Strings
+//
+
+#define STR(x) ((Str) {.ptr = x, .len = sizeof(x) - 1})
+typedef struct Str {
+    const char* ptr;
+    isize       len;
+} Str;
+
+function bool
+streq(Str s1, Str s2) {
+    bool result = false;
+    if (s1.len == s2.len) {
+        result = memeq(s1.ptr, s2.ptr, s1.len);
+    }
+    return result;
+}
 
 //
 // SECTION String formatting
@@ -358,7 +561,7 @@ color255tou32(Color255 color) {
 
 function Color255
 coloru32to255(u32 color) {
-    Color255 result = {.r = (color >> 16) & 0xff, .g = (color >> 8) & 0xff, .b = color & 0xff, .a = color >> 24};
+    Color255 result = {.r = (u8)((color >> 16) & 0xff), .g = (u8)((color >> 8) & 0xff), .b = (u8)(color & 0xff), .a = (u8)(color >> 24)};
     return result;
 }
 
@@ -636,7 +839,7 @@ typedef struct Camera {
 
 function Camera
 createCamera(V3f pos) {
-    Camera camera = {.fovDegreesX = 90, .pos = pos, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
+    Camera camera = {.pos = pos, .fovDegreesX = 90, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
     return camera;
 }
 
@@ -702,6 +905,12 @@ inputKeyWasPressed(Input* input, InputKey key) {
 //
 // SECTION SWRenderer
 //
+
+typedef struct Texture {
+    u32*  ptr;
+    isize width;
+    isize height;
+} Texture;
 
 typedef struct SWRenderer {
     struct {
@@ -902,7 +1111,7 @@ swRendererDrawContrastLine(SWRenderer* renderer, V2f v1, V2f v2) {
 
 function void
 swRendererDrawContrastRect(SWRenderer* renderer, Rect2f rect) {
-    Rect2f rectClipped = rect2fClip(rect, (Rect2f) {{-0.5, -0.5}, {renderer->image.width, renderer->image.height}});
+    Rect2f rectClipped = rect2fClip(rect, (Rect2f) {{-0.5, -0.5}, {(f32)renderer->image.width, (f32)renderer->image.height}});
     i32    x0 = (i32)(rectClipped.topleft.x + 0.5);
     i32    x1 = (i32)(rectClipped.topleft.x + rectClipped.dim.x + 0.5);
     i32    y0 = (i32)(rectClipped.topleft.y + 0.5);
@@ -959,7 +1168,7 @@ typedef struct SWRendererMeshBuilder {
 
 function SWRendererMeshBuilder
 swRendererBeginMesh(SWRenderer* renderer) {
-    SWRendererMeshBuilder builder = {renderer, renderer->triangles.vertices.len, renderer->triangles.indices.len};
+    SWRendererMeshBuilder builder = {renderer, (i32)renderer->triangles.vertices.len, (i32)renderer->triangles.indices.len};
     return builder;
 }
 
@@ -1091,107 +1300,107 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.5, .y = 1.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 1.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.75, .y = -0.25, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.75, .y = 0.75, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.75, .y = 0.75, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 7, .y = 0, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 7, .y = 1, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 6, .y = 1, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 9.25, .y = 0.25, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 4.75, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 14.5, .y = -0.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 4, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 5.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 7, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 10, .y = 7, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 9, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 11, .y = 4, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 12, .y = 5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 11, .y = 6, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .r = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
 
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 7, .z = 1}));
     arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.a = 0.5, .g = 1}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
 
     assert(renderer->triangles.colors.len == renderer->triangles.vertices.len);
     assert(renderer->triangles.vertices.len % 3 == 0);
@@ -1202,7 +1411,7 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
         renderer->triangles.vertices.ptr[ind].xy = v2fhadamard(renderer->triangles.vertices.ptr[ind].xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
     }
 
-    for (isize ind = 0; ind < renderer->triangles.vertices.len; ind += 3) {
+    for (i32 ind = 0; ind < renderer->triangles.vertices.len; ind += 3) {
         TriangleIndices trig = {ind, ind + 1, ind + 2};
         meshStorageAddTriangle(&renderer->triangles, trig);
     }
@@ -1604,14 +1813,14 @@ runTests(Arena* arena) {
         assert(rotor3fEq(rotor3fNormalise((Rotor3f) {4, 4, 4, 4}), (Rotor3f) {0.5, 0.5, 0.5, 0.5}));
         assert(rotor3fEq(rotor3fReverse((Rotor3f) {1, 2, 3, 4}), (Rotor3f) {1, -2, -3, -4}));
 
-        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, 1, 0, 0), (V3f) {.x = 1, 0, 0}).y == 1);
-        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, -1, 0, 0), (V3f) {.x = 1, 0, 0}).y == -1);
+        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, 1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0}).y == 1);
+        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, -1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0}).y == -1);
 
         {
             Rotor3f r1 = createRotor3fAnglePlane(30, 1, 0, 0);
             Rotor3f r2 = createRotor3fAnglePlane(60, 1, 0, 0);
             Rotor3f rmul = rotor3fMulRotor3f(r1, r2);
-            V3f     vrot = rotor3fRotateV3f(rmul, (V3f) {.x = 1, 0, 0});
+            V3f     vrot = rotor3fRotateV3f(rmul, (V3f) {.x = 1, .y = 0, .z = 0});
             assert(absval(vrot.y - 1) < 0.001);
         }
     }
@@ -1653,7 +1862,7 @@ runTests(Arena* arena) {
         Mesh cube1 = createCubeMesh(&store, 2, (V3f) {}, createRotor3f());
         assert(store.vertices.len == cube1.vertices.len);
         assert(store.indices.len == cube1.indices.len);
-        assert(v3feq(cube1.vertices.ptr[0], (V3f) {.x = -1, 1, -1}));
+        assert(v3feq(cube1.vertices.ptr[0], (V3f) {.x = -1, .y = 1, .z = -1}));
         assert(cube1.indices.ptr[0].i1 == 0);
 
         Mesh cube2 = createCubeMesh(&store, 4, (V3f) {}, createRotor3f());
@@ -1661,7 +1870,7 @@ runTests(Arena* arena) {
         assert(store.indices.len == cube1.indices.len + cube2.indices.len);
         assert(cube2.vertices.ptr == cube1.vertices.ptr + cube1.vertices.len);
         assert(cube2.indices.ptr == cube1.indices.ptr + cube1.indices.len);
-        assert(v3feq(cube2.vertices.ptr[0], (V3f) {.x = -2, 2, -2}));
+        assert(v3feq(cube2.vertices.ptr[0], (V3f) {.x = -2, .y = 2, .z = -2}));
         assert(cube2.indices.ptr[0].i1 == 0);
     }
 
@@ -1791,7 +2000,7 @@ initState(void* mem, isize bytes) {
     state->renderer = createSWRenderer(&arena, perSystem);
     state->meshStorage = createMeshStorage(&arena, perSystem);
 
-    state->camera = createCamera((V3f) {.x = 0, 0, -3});
+    state->camera = createCamera((V3f) {.x = 0, .y = 0, .z = -3});
     state->input = (Input) {};
 
     state->cube1 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 0}, createRotor3fAnglePlane(0, 1, 0, 0));
@@ -1811,22 +2020,22 @@ update(State* state, f32 deltaSec) {
         f32 moveInc = state->camera.moveWUPerSec * deltaSec;
 
         if (state->input.keys[InputKey_Forward].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), moveInc), state->camera.pos);
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 0, .z = 1}), moveInc), state->camera.pos);
         }
         if (state->input.keys[InputKey_Back].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 0, 1}), -moveInc), state->camera.pos);
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 0, .z = 1}), -moveInc), state->camera.pos);
         }
         if (state->input.keys[InputKey_Right].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), moveInc), state->camera.pos);
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, .y = 0, .z = 0}), moveInc), state->camera.pos);
         }
         if (state->input.keys[InputKey_Left].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, 0, 0}), -moveInc), state->camera.pos);
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, .y = 0, .z = 0}), -moveInc), state->camera.pos);
         }
         if (state->input.keys[InputKey_Up].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), moveInc), state->camera.pos);
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 1, .z = 0}), moveInc), state->camera.pos);
         }
         if (state->input.keys[InputKey_Down].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, 1, 0}), -moveInc), state->camera.pos);
+            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 1, .z = 0}), -moveInc), state->camera.pos);
         }
     }
 

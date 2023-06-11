@@ -103,14 +103,13 @@ compile(Arena* arena, Opt opt) {
             flags = prb_endStr(&builder);
         }
 
-        Str mainObj = compileObj(arena, STR("triaxis_windows.c"), outputName, flags);
-        Str d3d11Obj = compileObj(arena, STR("triaxis_d3d11.cpp"), outputName, flags);
+        Str mainObj = compileObj(arena, STR("triaxis_windows.cpp"), outputName, flags);
 
         {
             Str src = {};
             {
                 prb_GrowingStr builder = prb_beginStr(arena);
-                prb_addStrSegment(&builder, "%.*s %.*s", LIT(mainObj), LIT(d3d11Obj));
+                prb_addStrSegment(&builder, "%.*s", LIT(mainObj));
                 if (opt.profile) {
                     prb_addStrSegment(&builder, " %.*s", LIT(tracyClientObj));
                 }
