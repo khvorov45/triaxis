@@ -97,7 +97,7 @@ zeromem(void* ptr, isize len) {
 
 function void
 copymem(void* dest, void* src, isize len) {
-    assert((src < dest && src + len <= dest) || (dest < src && dest + len <= src));
+    assert(((u8*)src < (u8*)dest && (u8*)src + len <= (u8*)dest) || ((u8*)dest < (u8*)src && (u8*)dest + len <= (u8*)src));
 
     isize wholeTransferCount = len / sizeof(__m512i);
 

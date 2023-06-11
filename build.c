@@ -104,7 +104,7 @@ compile(Arena* arena, Opt opt) {
         }
 
         Str mainObj = compileObj(arena, STR("triaxis_windows.c"), outputName, flags);
-        Str d3d11Obj = compileObj(arena, STR("triaxis_d3d11.c"), outputName, flags);
+        Str d3d11Obj = compileObj(arena, STR("triaxis_d3d11.cpp"), outputName, flags);
 
         {
             Str src = {};

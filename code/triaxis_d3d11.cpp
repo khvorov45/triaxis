@@ -36,23 +36,23 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
 #ifdef TRIAXIS_asserts
     {
         ID3D11InfoQueue* info = 0;
-        ID3D11Device_QueryInterface(device, &IID_ID3D11InfoQueue, (void**)&info);
-        ID3D11InfoQueue_SetBreakOnSeverity(info, D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
-        ID3D11InfoQueue_SetBreakOnSeverity(info, D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
-        ID3D11InfoQueue_Release(info);
+        device->QueryInterface(IID_ID3D11InfoQueue, (void**)&info);
+        info->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+        info->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
+        info->Release();
     }
 #endif
 
     IDXGISwapChain1* swapChain = 0;
     {
         IDXGIDevice* dxgiDevice = 0;
-        asserthr(ID3D11Device_QueryInterface(device, &IID_IDXGIDevice, (void**)&dxgiDevice));
+        asserthr(device->QueryInterface(IID_IDXGIDevice, (void**)&dxgiDevice));
 
         IDXGIAdapter* dxgiAdapter = 0;
-        asserthr(IDXGIDevice_GetAdapter(dxgiDevice, &dxgiAdapter));
+        asserthr(dxgiDevice->GetAdapter(&dxgiAdapter));
 
         IDXGIFactory2* factory = 0;
-        asserthr(IDXGIAdapter_GetParent(dxgiAdapter, &IID_IDXGIFactory2, (void**)&factory));
+        asserthr(dxgiAdapter->GetParent(IID_IDXGIFactory2, (void**)&factory));
 
         DXGI_SWAP_CHAIN_DESC1 desc = {
             .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -63,13 +63,13 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
         };
 
-        asserthr(IDXGIFactory2_CreateSwapChainForHwnd(factory, (IUnknown*)device, window, &desc, NULL, NULL, &swapChain));
+        asserthr(factory->CreateSwapChainForHwnd(device, window, &desc, NULL, NULL, &swapChain));
 
-        IDXGIFactory_MakeWindowAssociation(factory, window, DXGI_MWA_NO_ALT_ENTER);
+        factory->MakeWindowAssociation(window, DXGI_MWA_NO_ALT_ENTER);
 
-        IDXGIFactory2_Release(factory);
-        IDXGIAdapter_Release(dxgiAdapter);
-        IDXGIDevice_Release(dxgiDevice);
+        factory->Release();
+        dxgiAdapter->Release();
+        dxgiDevice->Release();
     }
 
     ID3D11Buffer* vbuffer = 0;
@@ -88,7 +88,7 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         };
 
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = data};
-        ID3D11Device_CreateBuffer(device, &desc, &initial, &vbuffer);
+        device->CreateBuffer(&desc, &initial, &vbuffer);
     }
 
     ID3D11InputLayout*  layout = 0;
@@ -132,34 +132,34 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
 
             HRESULT vresult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "vs", "vs_5_0", flags, 0, &vblob, &verror);
             if (FAILED(vresult)) {
-                char* msg = ID3D10Blob_GetBufferPointer(verror);
+                char* msg = (char*)verror->GetBufferPointer();
                 OutputDebugStringA(msg);
                 assert(!"failed to compile");
             }
 
             HRESULT presult = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, "ps", "ps_5_0", flags, 0, &pblob, &perror);
             if (FAILED(presult)) {
-                char* msg = ID3D10Blob_GetBufferPointer(perror);
+                char* msg = (char*)perror->GetBufferPointer();
                 OutputDebugStringA(msg);
                 assert(!"failed to compile");
             }
             endTempMemory(temp);
         }
 
-        ID3D11Device_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob), NULL, &vshader);
-        ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(pblob), ID3D10Blob_GetBufferSize(pblob), NULL, &pshader);
-        ID3D11Device_CreateInputLayout(device, desc, ARRAYSIZE(desc), ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob), &layout);
+        device->CreateVertexShader(vblob->GetBufferPointer(), vblob->GetBufferSize(), NULL, &vshader);
+        device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &pshader);
+        device->CreateInputLayout(desc, ARRAYSIZE(desc), vblob->GetBufferPointer(), vblob->GetBufferSize(), &layout);
 
-        ID3D10Blob_Release(pblob);
-        ID3D10Blob_Release(vblob);
+        pblob->Release();
+        vblob->Release();
     }
 
     ID3D11ShaderResourceView* textureView = 0;
     ID3D11Texture2D*          texture = 0;
     {
         D3D11_TEXTURE2D_DESC desc = {
-            .Width = windowWidth,
-            .Height = windowHeight,
+            .Width = (UINT)windowWidth,
+            .Height = (UINT)windowHeight,
             .MipLevels = 1,
             .ArraySize = 1,
             .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -169,8 +169,8 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
 
-        ID3D11Device_CreateTexture2D(device, &desc, 0, &texture);
-        ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource*)texture, NULL, &textureView);
+        device->CreateTexture2D(&desc, 0, &texture);
+        device->CreateShaderResourceView((ID3D11Resource*)texture, NULL, &textureView);
     }
 
     ID3D11SamplerState* sampler = 0;
@@ -182,7 +182,7 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
         };
 
-        ID3D11Device_CreateSamplerState(device, &desc, &sampler);
+        device->CreateSamplerState(&desc, &sampler);
     }
 
     ID3D11RasterizerState* rasterizerState = 0;
@@ -191,22 +191,22 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .FillMode = D3D11_FILL_SOLID,
             .CullMode = D3D11_CULL_NONE,
         };
-        ID3D11Device_CreateRasterizerState(device, &desc, &rasterizerState);
+        device->CreateRasterizerState(&desc, &rasterizerState);
     }
 
     ID3D11RenderTargetView* rtView = 0;
     {
-        asserthr(IDXGISwapChain1_ResizeBuffers(swapChain, 0, windowWidth, windowHeight, DXGI_FORMAT_UNKNOWN, 0));
+        asserthr(swapChain->ResizeBuffers(0, windowWidth, windowHeight, DXGI_FORMAT_UNKNOWN, 0));
 
         ID3D11Texture2D* backbuffer = 0;
-        IDXGISwapChain1_GetBuffer(swapChain, 0, &IID_ID3D11Texture2D, (void**)&backbuffer);
-        ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource*)backbuffer, NULL, &rtView);
+        swapChain->GetBuffer(0, IID_ID3D11Texture2D, (void**)&backbuffer);
+        device->CreateRenderTargetView((ID3D11Resource*)backbuffer, NULL, &rtView);
         assert(rtView);
-        ID3D11Texture2D_Release(backbuffer);
+        backbuffer->Release();
 
         D3D11_TEXTURE2D_DESC depthDesc = {
-            .Width = windowWidth,
-            .Height = windowHeight,
+            .Width = (UINT)windowWidth,
+            .Height = (UINT)windowHeight,
             .MipLevels = 1,
             .ArraySize = 1,
             .Format = DXGI_FORMAT_D32_FLOAT,
@@ -216,8 +216,8 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         };
 
         ID3D11Texture2D* depth = 0;
-        ID3D11Device_CreateTexture2D(device, &depthDesc, NULL, &depth);
-        ID3D11Texture2D_Release(depth);
+        device->CreateTexture2D(&depthDesc, NULL, &depth);
+        depth->Release();
     }
 
     D3D11_VIEWPORT viewport = {
@@ -230,21 +230,21 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     };
 
     {
-        ID3D11DeviceContext_IASetInputLayout(context, layout);
-        ID3D11DeviceContext_IASetPrimitiveTopology(context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        context->IASetInputLayout(layout);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         UINT offset = 0;
         UINT stride = sizeof(D3D11Vertex);
-        ID3D11DeviceContext_IASetVertexBuffers(context, 0, 1, &vbuffer, &stride, &offset);
+        context->IASetVertexBuffers(0, 1, &vbuffer, &stride, &offset);
     }
 
-    ID3D11DeviceContext_VSSetShader(context, vshader, NULL, 0);
+    context->VSSetShader(vshader, NULL, 0);
 
-    ID3D11DeviceContext_RSSetViewports(context, 1, &viewport);
-    ID3D11DeviceContext_RSSetState(context, rasterizerState);
+    context->RSSetViewports(1, &viewport);
+    context->RSSetState(rasterizerState);
 
-    ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler);
-    ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &textureView);
-    ID3D11DeviceContext_PSSetShader(context, pshader, NULL, 0);
+    context->PSSetSamplers(0, 1, &sampler);
+    context->PSSetShaderResources(0, 1, &textureView);
+    context->PSSetShader(pshader, NULL, 0);
 
     D3D11Renderer rend = {
         .context = context,
@@ -259,22 +259,22 @@ void
 d3d11present(D3D11Renderer rend, Texture tex) {
     {
         FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
-        ID3D11DeviceContext_ClearRenderTargetView(rend.context, rend.rtView, color);
+        rend.context->ClearRenderTargetView(rend.rtView, color);
     }
 
     {
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
-        ID3D11DeviceContext_Map(rend.context, (ID3D11Resource*)rend.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
+        rend.context->Map((ID3D11Resource*)rend.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
         TracyCZoneN(tracyCtx, "present copymem", true);
         copymem(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
         TracyCZoneEnd(tracyCtx);
-        ID3D11DeviceContext_Unmap(rend.context, (ID3D11Resource*)rend.texture, 0);
+        rend.context->Unmap((ID3D11Resource*)rend.texture, 0);
     }
 
-    ID3D11DeviceContext_OMSetRenderTargets(rend.context, 1, &rend.rtView, 0);
-    ID3D11DeviceContext_Draw(rend.context, 4, 0);
-    HRESULT presentResult = IDXGISwapChain1_Present(rend.swapChain, 1, 0);
+    rend.context->OMSetRenderTargets(1, &rend.rtView, 0);
+    rend.context->Draw(4, 0);
+    HRESULT presentResult = rend.swapChain->Present(1, 0);
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
         Sleep(10);
