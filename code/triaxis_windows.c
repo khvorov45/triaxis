@@ -6,16 +6,14 @@
 #include <Windows.h>
 #include <timeapi.h>
 
+#include "triaxis_d3d11.h"
+
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "user32")
 #pragma comment(lib, "Winmm")
 #pragma comment(lib, "d3d11")
 #pragma comment(lib, "dxguid")
 #pragma comment(lib, "d3dcompiler")
-
-#define asserthr(x) assert(SUCCEEDED(x))
-
-#include "triaxis_d3d11.c"
 
 typedef struct Clock {
     LARGE_INTEGER freqPerSecond;

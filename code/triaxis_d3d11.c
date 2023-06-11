@@ -1,24 +1,15 @@
-#define COBJMACROS
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <d3dcompiler.h>
+#include "triaxis_d3d11.h"
+
+#define asserthr(x) assert(SUCCEEDED(x))
 
 // TODO(khvorov) Handle resizing
 
 typedef struct D3D11Vertex {
-    V2f pos;
-    V2f uv;
+    f32 pos[2];
+    f32 uv[2];
 } D3D11Vertex;
 
-typedef struct D3D11Renderer {
-    ID3D11DeviceContext*      context;
-    ID3D11RenderTargetView*   rtView;
-    IDXGISwapChain1*          swapChain;
-    ID3D11InputLayout*        layout;
-    ID3D11Texture2D*          texture;
-} D3D11Renderer;
-
-static D3D11Renderer
+D3D11Renderer
 initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     ID3D11Device*        device = 0;
     ID3D11DeviceContext* context = 0;
@@ -264,7 +255,7 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
     return rend;
 }
 
-static void
+void
 d3d11present(D3D11Renderer rend, Texture tex) {
     {
         FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
