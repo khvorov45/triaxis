@@ -234,11 +234,7 @@ for (prb_Iter iter = prb_createIter(); prb_iterNext(&iter) == prb_Success;) {
 
 #ifndef prb_assertAction
 #define prb_assertAction() do {\
-    prb_writeToStdout(prb_STR("assertion failure at "));\
-    prb_writeToStdout(prb_STR(__FILE__));\
-    prb_writeToStdout(prb_STR(":"));\
-    prb_writeToStdout(prb_STR(prb_LINE_STRING));\
-    prb_writeToStdout(prb_STR("\n"));\
+    prb_writeToStdout(prb_STR(__FILE__ ":" prb_LINE_STRING ": assertion failure\n"));\
     prb_debugbreak();\
     prb_terminate(1);\
 } while (0)
