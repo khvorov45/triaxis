@@ -1,27 +1,62 @@
-struct VS_INPUT {
+//
+// SECTION Blitter
+//
+
+struct BlitterVSInput {
     float2 pos   : POSITION;
     float2 uv    : TEXCOORD;
 };
 
-struct PS_INPUT {
+struct BlitterPSInput {
     float4 pos   : SV_POSITION;
     float2 uv    : TEXCOORD;
 };
 
-sampler sampler0 : register(s0);
+sampler blitterSampler : register(s0);
 
-Texture2D<float4> texture0 : register(t0);
+Texture2D<float4> blitterTexture : register(t0);
 
-PS_INPUT
-vs(VS_INPUT input) {
-    PS_INPUT output;
+BlitterPSInput
+blittervs(BlitterVSInput input) {
+    BlitterPSInput output;
     output.pos = float4(input.pos, 0, 1);
     output.uv = input.uv;
     return output;
 }
 
 float4
-ps(PS_INPUT input) : SV_TARGET {
-    float4 tex = texture0.Sample(sampler0, input.uv);
+blitterps(BlitterPSInput input) : SV_TARGET {
+    float4 tex = blitterTexture.Sample(blitterSampler, input.uv);
     return tex;
+}
+
+//
+// SECTION Renderer
+//
+
+cbuffer RendererVSConstant : register(b0) {
+    float3 RendererVSConstant_pos;
+};
+
+struct RendererVSInput {
+    float3 pos : POSITION;
+};
+
+struct RendererPSInput {
+    float4 pos: SV_POSITION;
+    float3 color: COLOR;
+};
+
+RendererPSInput
+renderervs(RendererVSInput input) {
+    RendererPSInput output;
+    output.pos = float4(input.pos + RendererVSConstant_pos, 1);
+    output.color = input.pos;
+    return output;
+}
+
+float4
+rendererps(RendererPSInput input) : SV_TARGET {
+    float4 color = float4(input.color, 1);
+    return color;
 }

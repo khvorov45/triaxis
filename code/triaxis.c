@@ -37,6 +37,7 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 typedef int32_t  i32;
+typedef int64_t  i64;
 typedef intptr_t isize;
 typedef float    f32;
 
@@ -1966,6 +1967,7 @@ typedef struct State {
     SWRenderer  renderer;
     MeshStorage meshStorage;
     Font        font;
+    Arena       perm;
     Arena       scratch;
 
     isize windowWidth;
@@ -1995,6 +1997,7 @@ initState(void* mem, isize bytes) {
 
     initFont(&state->font, &arena);
     state->scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
+    state->perm = createArenaFromArena(&arena, 10 * 1024 * 1024);
 
     isize perSystem = arenaFreeSize(&arena) / 3;
     state->renderer = createSWRenderer(&arena, perSystem);
