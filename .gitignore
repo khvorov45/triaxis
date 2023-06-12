@@ -7,3 +7,4 @@ win32_d3d11.c
 *.pdf
 *.rdbg
 *.10x
+*.cap

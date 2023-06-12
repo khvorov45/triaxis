@@ -35,7 +35,7 @@ blitterps(BlitterPSInput input) : SV_TARGET {
 //
 
 cbuffer RendererVSConstant : register(b0) {
-    float3 RendererVSConstant_pos;
+    float4x4 RendererVSConstant_transform;
 };
 
 struct RendererVSInput {
@@ -50,7 +50,8 @@ struct RendererPSInput {
 RendererPSInput
 renderervs(RendererVSInput input) {
     RendererPSInput output;
-    output.pos = float4(input.pos + RendererVSConstant_pos, 1);
+    float4 input4d = float4(input.pos, 1);
+    output.pos = mul(RendererVSConstant_transform, input4d);
     output.color = input.pos;
     return output;
 }

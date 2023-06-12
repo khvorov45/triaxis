@@ -1,5 +1,6 @@
 #pragma clang diagnostic ignored "-Wunused-function"
 #pragma clang diagnostic ignored "-Wc99-designator"
+#pragma clang diagnostic ignored "-Wreorder-init-list"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -371,6 +372,18 @@ v3feq(V3f v1, V3f v2) {
 }
 
 function V2f
+v2freverse(V2f v1) {
+    V2f result = {-v1.x, -v1.y};
+    return result;
+}
+
+function V3f
+v3freverse(V3f v1) {
+    V3f result = {.x = -v1.x, .y = -v1.y, .z = -v1.z};
+    return result;
+}
+
+function V2f
 v2fadd(V2f v1, V2f v2) {
     V2f result = {v1.x + v2.x, v1.y + v2.y};
     return result;
@@ -655,6 +668,58 @@ isTopLeft(V2f v1, V2f v2) {
     bool isFlatTop = v1v2.y == 0 && v1v2.x > 0;
     bool isLeft = v1v2.y < 0;
     bool result = isFlatTop || isLeft;
+    return result;
+}
+
+typedef struct M4x4f {
+    f32 m11, m12, m13, m14;
+    f32 m21, m22, m23, m24;
+    f32 m31, m32, m33, m34;
+    f32 m41, m42, m43, m44;
+} M4x4f;
+
+function M4x4f
+m4x4fidentity(void) {
+    M4x4f result = {.m11 = 1, .m22 = 1, .m33 = 1, .m44 = 1};
+    return result;
+}
+
+function M4x4f
+m4x4ftranslation(V3f pos) {
+    M4x4f result = {.m11 = 1, .m22 = 1, .m33 = 1, .m44 = 1, .m14 = pos.x, .m24 = pos.y, .m34 = pos.z};
+    return result;
+}
+
+function M4x4f
+m4x4fprojection(void) {
+    M4x4f result = {.m11 = 1, .m22 = 1, .m33 = 1, .m44 = 0, .m43 = 1};
+    return result;
+}
+
+function M4x4f
+m4x4fmul(M4x4f mat1, M4x4f mat2) {
+    M4x4f result = {};
+
+    result.m11 = mat1.m11 * mat2.m11 + mat1.m12 * mat2.m21 + mat1.m13 * mat2.m31 + mat1.m14 * mat2.m41;
+    result.m12 = mat1.m11 * mat2.m12 + mat1.m12 * mat2.m22 + mat1.m13 * mat2.m32 + mat1.m14 * mat2.m42;
+    result.m13 = mat1.m11 * mat2.m13 + mat1.m12 * mat2.m23 + mat1.m13 * mat2.m33 + mat1.m14 * mat2.m43;
+    result.m14 = mat1.m11 * mat2.m14 + mat1.m12 * mat2.m24 + mat1.m13 * mat2.m34 + mat1.m14 * mat2.m44;
+
+    result.m21 = mat1.m21 * mat2.m11 + mat1.m22 * mat2.m21 + mat1.m23 * mat2.m31 + mat1.m24 * mat2.m41;
+    result.m22 = mat1.m21 * mat2.m12 + mat1.m22 * mat2.m22 + mat1.m23 * mat2.m32 + mat1.m24 * mat2.m42;
+    result.m23 = mat1.m21 * mat2.m13 + mat1.m22 * mat2.m23 + mat1.m23 * mat2.m33 + mat1.m24 * mat2.m43;
+    result.m24 = mat1.m21 * mat2.m14 + mat1.m22 * mat2.m24 + mat1.m23 * mat2.m34 + mat1.m24 * mat2.m44;
+
+    result.m31 = mat1.m31 * mat2.m11 + mat1.m32 * mat2.m21 + mat1.m33 * mat2.m31 + mat1.m34 * mat2.m41;
+    result.m32 = mat1.m31 * mat2.m12 + mat1.m32 * mat2.m22 + mat1.m33 * mat2.m32 + mat1.m34 * mat2.m42;
+    result.m33 = mat1.m31 * mat2.m13 + mat1.m32 * mat2.m23 + mat1.m33 * mat2.m33 + mat1.m34 * mat2.m43;
+    result.m34 = mat1.m31 * mat2.m14 + mat1.m32 * mat2.m24 + mat1.m33 * mat2.m34 + mat1.m34 * mat2.m44;
+
+    result.m41 = mat1.m41 * mat2.m11 + mat1.m42 * mat2.m21 + mat1.m43 * mat2.m31 + mat1.m44 * mat2.m41;
+    result.m42 = mat1.m41 * mat2.m12 + mat1.m42 * mat2.m22 + mat1.m43 * mat2.m32 + mat1.m44 * mat2.m42;
+    result.m43 = mat1.m41 * mat2.m13 + mat1.m42 * mat2.m23 + mat1.m43 * mat2.m33 + mat1.m44 * mat2.m43;
+    result.m44 = mat1.m41 * mat2.m14 + mat1.m42 * mat2.m24 + mat1.m43 * mat2.m34 + mat1.m44 * mat2.m44;
+
     return result;
 }
 

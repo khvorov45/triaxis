@@ -157,7 +157,7 @@ initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight, Arena* p
 
 static ID3DBlob*
 compileShader(Str hlsl, const char* name, const char* kind) {
-    UINT flags = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
+    UINT flags = D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
 #ifdef TRIAXIS_debuginfo
     flags |= D3DCOMPILE_DEBUG;
 #endif
@@ -321,8 +321,7 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
 }
 
 typedef struct D3D11RendererVSConstant {
-    V3f pos;
-    f32 ignore;
+    M4x4f pos;
 } D3D11RendererVSConstant;
 
 typedef struct D3D11Renderer {
@@ -382,7 +381,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
     {
         D3D11_RASTERIZER_DESC desc = {
             .FillMode = D3D11_FILL_SOLID,
-            .CullMode = D3D11_CULL_NONE,
+            .CullMode = D3D11_CULL_BACK,
         };
         common->device->CreateRasterizerState(&desc, &renderer.rasterizerState);
     }
@@ -419,19 +418,30 @@ d3d11render(D3D11Renderer renderer, State* state) {
     renderer.common->context->VSSetConstantBuffers(0, 1, &renderer.constantBuffer);
 
     {
-        FLOAT color[] = {0.3f, 0.3, 0.3f, 1.f};
+        FLOAT color[] = {0.1f, 0.1, 0.1f, 1.f};
         renderer.common->context->ClearRenderTargetView(renderer.common->rtView, color);
     }
 
     renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, 0);
 
     {
-        Mesh mesh = state->cube1;
+        Mesh  mesh = state->cube1;
+        M4x4f transform = m4x4fidentity();
+        {
+            M4x4f translation = m4x4ftranslation(mesh.pos);
+            transform = m4x4fmul(translation, transform);
+
+            M4x4f cameraTranslation = m4x4ftranslation(v3freverse(state->camera.pos));
+            transform = m4x4fmul(cameraTranslation, transform);
+
+            M4x4f projection = m4x4fprojection();
+            transform = m4x4fmul(projection, transform);
+        }
 
         D3D11_MAPPED_SUBRESOURCE mappedConstantBuffer = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedConstantBuffer);
         D3D11RendererVSConstant* constant = (D3D11RendererVSConstant*)mappedConstantBuffer.pData;
-        constant->pos = mesh.pos;
+        constant->pos = transform;
         renderer.common->context->Unmap((ID3D11Resource*)renderer.constantBuffer, 0);
 
         i32 baseVertex = mesh.vertices.ptr - state->meshStorage.vertices.ptr;
