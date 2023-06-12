@@ -38,16 +38,21 @@ typedef struct D3D11Vertex {
     f32 uv[2];
 } D3D11Vertex;
 
-typedef struct D3D11Renderer {
+typedef struct D3D11Common {
     ID3D11DeviceContext*    context;
+    ID3D11Device*           device;
     ID3D11RenderTargetView* rtView;
     IDXGISwapChain1*        swapChain;
-    ID3D11Texture2D*        texture;
     TracyD3D11Ctx           tracyD3D11Context;
-} D3D11Renderer;
+} D3D11Common;
 
-static D3D11Renderer
-initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
+typedef struct D3D11Blitter {
+    D3D11Common*     common;
+    ID3D11Texture2D* texture;
+} D3D11Blitter;
+
+static D3D11Common
+initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
     ID3D11Device*        device = 0;
     ID3D11DeviceContext* context = 0;
     {
@@ -109,6 +114,45 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         dxgiDevice->Release();
     }
 
+    ID3D11RenderTargetView* rtView = 0;
+    {
+        asserthr(swapChain->ResizeBuffers(0, viewportWidth, viewportHeight, DXGI_FORMAT_UNKNOWN, 0));
+
+        ID3D11Texture2D* backbuffer = 0;
+        swapChain->GetBuffer(0, IID_ID3D11Texture2D, (void**)&backbuffer);
+        device->CreateRenderTargetView((ID3D11Resource*)backbuffer, NULL, &rtView);
+        assert(rtView);
+        backbuffer->Release();
+    }
+
+    {
+        D3D11_VIEWPORT viewport = {
+            .TopLeftX = 0,
+            .TopLeftY = 0,
+            .Width = (FLOAT)viewportWidth,
+            .Height = (FLOAT)viewportHeight,
+            .MinDepth = 0,
+            .MaxDepth = 1,
+        };
+        context->RSSetViewports(1, &viewport);
+    }
+
+    TracyD3D11Ctx tracyD3D11Context = TracyD3D11Context(device, context);
+
+    D3D11Common common = {
+        .context = context,
+        .device = device,
+        .rtView = rtView,
+        .swapChain = swapChain,
+        .tracyD3D11Context = tracyD3D11Context,
+    };
+    return common;
+}
+
+static D3D11Blitter
+initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, Arena* scratch) {
+    D3D11Blitter blitter = {.common = common};
+
     {
         D3D11Vertex data[] = {
             {{-1.00f, +1.00f}, {0.0f, 0.0f}},
@@ -126,11 +170,11 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = data};
 
         ID3D11Buffer* vbuffer = 0;
-        device->CreateBuffer(&desc, &initial, &vbuffer);
+        common->device->CreateBuffer(&desc, &initial, &vbuffer);
 
         UINT offset = 0;
         UINT stride = sizeof(D3D11Vertex);
-        context->IASetVertexBuffers(0, 1, &vbuffer, &stride, &offset);
+        common->context->IASetVertexBuffers(0, 1, &vbuffer, &stride, &offset);
     }
 
     {
@@ -186,27 +230,26 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         }
 
         ID3D11VertexShader* vshader = 0;
-        device->CreateVertexShader(vblob->GetBufferPointer(), vblob->GetBufferSize(), NULL, &vshader);
-        context->VSSetShader(vshader, NULL, 0);
+        common->device->CreateVertexShader(vblob->GetBufferPointer(), vblob->GetBufferSize(), NULL, &vshader);
+        common->context->VSSetShader(vshader, NULL, 0);
 
         ID3D11PixelShader* pshader = 0;
-        device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &pshader);
-        context->PSSetShader(pshader, NULL, 0);
+        common->device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &pshader);
+        common->context->PSSetShader(pshader, NULL, 0);
 
         ID3D11InputLayout* layout = 0;
-        device->CreateInputLayout(desc, ARRAYSIZE(desc), vblob->GetBufferPointer(), vblob->GetBufferSize(), &layout);
-        context->IASetInputLayout(layout);
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        common->device->CreateInputLayout(desc, ARRAYSIZE(desc), vblob->GetBufferPointer(), vblob->GetBufferSize(), &layout);
+        common->context->IASetInputLayout(layout);
+        common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
         pblob->Release();
         vblob->Release();
     }
 
-    ID3D11Texture2D* texture = 0;
     {
         D3D11_TEXTURE2D_DESC desc = {
-            .Width = (UINT)windowWidth,
-            .Height = (UINT)windowHeight,
+            .Width = (UINT)textureWidth,
+            .Height = (UINT)textureHeight,
             .MipLevels = 1,
             .ArraySize = 1,
             .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -216,11 +259,11 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
 
-        device->CreateTexture2D(&desc, 0, &texture);
+        common->device->CreateTexture2D(&desc, 0, &blitter.texture);
 
         ID3D11ShaderResourceView* view = 0;
-        device->CreateShaderResourceView((ID3D11Resource*)texture, NULL, &view);
-        context->PSSetShaderResources(0, 1, &view);
+        common->device->CreateShaderResourceView((ID3D11Resource*)blitter.texture, NULL, &view);
+        common->context->PSSetShaderResources(0, 1, &view);
     }
 
     {
@@ -231,8 +274,8 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
         };
         ID3D11SamplerState* sampler = 0;
-        device->CreateSamplerState(&desc, &sampler);
-        context->PSSetSamplers(0, 1, &sampler);
+        common->device->CreateSamplerState(&desc, &sampler);
+        common->context->PSSetSamplers(0, 1, &sampler);
     }
 
     {
@@ -241,70 +284,38 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .CullMode = D3D11_CULL_NONE,
         };
         ID3D11RasterizerState* rasterizerState = 0;
-        device->CreateRasterizerState(&desc, &rasterizerState);
-        context->RSSetState(rasterizerState);
+        common->device->CreateRasterizerState(&desc, &rasterizerState);
+        common->context->RSSetState(rasterizerState);
     }
 
-    ID3D11RenderTargetView* rtView = 0;
-    {
-        asserthr(swapChain->ResizeBuffers(0, windowWidth, windowHeight, DXGI_FORMAT_UNKNOWN, 0));
-
-        ID3D11Texture2D* backbuffer = 0;
-        swapChain->GetBuffer(0, IID_ID3D11Texture2D, (void**)&backbuffer);
-        device->CreateRenderTargetView((ID3D11Resource*)backbuffer, NULL, &rtView);
-        assert(rtView);
-        backbuffer->Release();
-    }
-
-    {
-        D3D11_VIEWPORT viewport = {
-            .TopLeftX = 0,
-            .TopLeftY = 0,
-            .Width = (FLOAT)windowWidth,
-            .Height = (FLOAT)windowHeight,
-            .MinDepth = 0,
-            .MaxDepth = 1,
-        };
-        context->RSSetViewports(1, &viewport);
-    }
-
-    TracyD3D11Ctx tracyD3D11Context = TracyD3D11Context(device, context);
-
-    D3D11Renderer rend = {
-        .context = context,
-        .rtView = rtView,
-        .swapChain = swapChain,
-        .texture = texture,
-        .tracyD3D11Context = tracyD3D11Context,
-    };
-    return rend;
+    return blitter;
 }
 
 static void
-d3d11present(D3D11Renderer rend, Texture tex) {
+d3d11blit(D3D11Blitter blitter, Texture tex) {
     {
         FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
-        rend.context->ClearRenderTargetView(rend.rtView, color);
+        blitter.common->context->ClearRenderTargetView(blitter.common->rtView, color);
     }
 
     {
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
-        rend.context->Map((ID3D11Resource*)rend.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
+        blitter.common->context->Map((ID3D11Resource*)blitter.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
         TracyCZoneN(tracyCtx, "present copymem", true);
         copymem(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
         TracyCZoneEnd(tracyCtx);
-        rend.context->Unmap((ID3D11Resource*)rend.texture, 0);
+        blitter.common->context->Unmap((ID3D11Resource*)blitter.texture, 0);
     }
 
     {
-        TracyD3D11Zone(rend.tracyD3D11Context, "draw quad");
-        rend.context->OMSetRenderTargets(1, &rend.rtView, 0);
-        rend.context->Draw(4, 0);
+        TracyD3D11Zone(blitter.common->tracyD3D11Context, "draw quad");
+        blitter.common->context->OMSetRenderTargets(1, &blitter.common->rtView, 0);
+        blitter.common->context->Draw(4, 0);
     }
 
-    HRESULT presentResult = rend.swapChain->Present(1, 0);
-    TracyD3D11Collect(rend.tracyD3D11Context);
+    HRESULT presentResult = blitter.common->swapChain->Present(1, 0);
+    TracyD3D11Collect(blitter.common->tracyD3D11Context);
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
         Sleep(10);
@@ -449,7 +460,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     }
 
     swRendererSetImageSize(&state->renderer, state->windowWidth, state->windowHeight);
-    D3D11Renderer d3d11rend = initD3D11(window, state->windowWidth, state->windowHeight, &state->scratch);
+    D3D11Common  d3d11common = initD3D11Common(window, state->windowWidth, state->windowHeight);
+    D3D11Blitter d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight, &state->scratch);
 
     Timer timer = {.clock = createClock(), .update = getClockMarker()};
     for (bool running = true; running;) {
@@ -520,11 +532,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             TracyCZoneEnd(tracyCtx);
         }
 
-        d3d11present(d3d11rend, (Texture) {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height});
+        d3d11blit(d3d11blitter, (Texture) {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height});
 
         TracyCZoneEnd(tracyFrameCtx);
     }
 
-    TracyD3D11Destroy(d3d11rend.tracyD3D11Context);
+    TracyD3D11Destroy(d3d11common.tracyD3D11Context);
     return 0;
 }
