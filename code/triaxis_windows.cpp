@@ -42,7 +42,6 @@ typedef struct D3D11Renderer {
     ID3D11DeviceContext*    context;
     ID3D11RenderTargetView* rtView;
     IDXGISwapChain1*        swapChain;
-    ID3D11InputLayout*      layout;
     ID3D11Texture2D*        texture;
     TracyD3D11Ctx           tracyD3D11Context;
 } D3D11Renderer;
@@ -110,7 +109,6 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         dxgiDevice->Release();
     }
 
-    ID3D11Buffer* vbuffer = 0;
     {
         D3D11Vertex data[] = {
             {{-1.00f, +1.00f}, {0.0f, 0.0f}},
@@ -126,12 +124,15 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         };
 
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = data};
+
+        ID3D11Buffer* vbuffer = 0;
         device->CreateBuffer(&desc, &initial, &vbuffer);
+
+        UINT offset = 0;
+        UINT stride = sizeof(D3D11Vertex);
+        context->IASetVertexBuffers(0, 1, &vbuffer, &stride, &offset);
     }
 
-    ID3D11InputLayout*  layout = 0;
-    ID3D11VertexShader* vshader = 0;
-    ID3D11PixelShader*  pshader = 0;
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(D3D11Vertex, pos), D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -184,16 +185,24 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             endTempMemory(temp);
         }
 
+        ID3D11VertexShader* vshader = 0;
         device->CreateVertexShader(vblob->GetBufferPointer(), vblob->GetBufferSize(), NULL, &vshader);
+        context->VSSetShader(vshader, NULL, 0);
+
+        ID3D11PixelShader* pshader = 0;
         device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &pshader);
+        context->PSSetShader(pshader, NULL, 0);
+
+        ID3D11InputLayout* layout = 0;
         device->CreateInputLayout(desc, ARRAYSIZE(desc), vblob->GetBufferPointer(), vblob->GetBufferSize(), &layout);
+        context->IASetInputLayout(layout);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
         pblob->Release();
         vblob->Release();
     }
 
-    ID3D11ShaderResourceView* textureView = 0;
-    ID3D11Texture2D*          texture = 0;
+    ID3D11Texture2D* texture = 0;
     {
         D3D11_TEXTURE2D_DESC desc = {
             .Width = (UINT)windowWidth,
@@ -208,10 +217,12 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         };
 
         device->CreateTexture2D(&desc, 0, &texture);
-        device->CreateShaderResourceView((ID3D11Resource*)texture, NULL, &textureView);
+
+        ID3D11ShaderResourceView* view = 0;
+        device->CreateShaderResourceView((ID3D11Resource*)texture, NULL, &view);
+        context->PSSetShaderResources(0, 1, &view);
     }
 
-    ID3D11SamplerState* sampler = 0;
     {
         D3D11_SAMPLER_DESC desc = {
             .Filter = D3D11_FILTER_MIN_MAG_MIP_POINT,
@@ -219,17 +230,19 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
             .AddressV = D3D11_TEXTURE_ADDRESS_WRAP,
             .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
         };
-
+        ID3D11SamplerState* sampler = 0;
         device->CreateSamplerState(&desc, &sampler);
+        context->PSSetSamplers(0, 1, &sampler);
     }
 
-    ID3D11RasterizerState* rasterizerState = 0;
     {
         D3D11_RASTERIZER_DESC desc = {
             .FillMode = D3D11_FILL_SOLID,
             .CullMode = D3D11_CULL_NONE,
         };
+        ID3D11RasterizerState* rasterizerState = 0;
         device->CreateRasterizerState(&desc, &rasterizerState);
+        context->RSSetState(rasterizerState);
     }
 
     ID3D11RenderTargetView* rtView = 0;
@@ -243,31 +256,17 @@ initD3D11(HWND window, isize windowWidth, isize windowHeight, Arena* scratch) {
         backbuffer->Release();
     }
 
-    D3D11_VIEWPORT viewport = {
-        .TopLeftX = 0,
-        .TopLeftY = 0,
-        .Width = (FLOAT)windowWidth,
-        .Height = (FLOAT)windowHeight,
-        .MinDepth = 0,
-        .MaxDepth = 1,
-    };
-
     {
-        context->IASetInputLayout(layout);
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-        UINT offset = 0;
-        UINT stride = sizeof(D3D11Vertex);
-        context->IASetVertexBuffers(0, 1, &vbuffer, &stride, &offset);
+        D3D11_VIEWPORT viewport = {
+            .TopLeftX = 0,
+            .TopLeftY = 0,
+            .Width = (FLOAT)windowWidth,
+            .Height = (FLOAT)windowHeight,
+            .MinDepth = 0,
+            .MaxDepth = 1,
+        };
+        context->RSSetViewports(1, &viewport);
     }
-
-    context->VSSetShader(vshader, NULL, 0);
-
-    context->RSSetViewports(1, &viewport);
-    context->RSSetState(rasterizerState);
-
-    context->PSSetSamplers(0, 1, &sampler);
-    context->PSSetShaderResources(0, 1, &textureView);
-    context->PSSetShader(pshader, NULL, 0);
 
     TracyD3D11Ctx tracyD3D11Context = TracyD3D11Context(device, context);
 
