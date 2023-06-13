@@ -321,7 +321,12 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
 }
 
 typedef struct D3D11RendererVSConstant {
-    M4x4f pos;
+    V3f meshPos;
+    u8  pad1[4];
+    V3f cameraPos;
+    f32 tanHalfFovX;
+    f32 heightOverWidth;
+    u8  pad4[12];
 } D3D11RendererVSConstant;
 
 typedef struct D3D11Renderer {
@@ -425,23 +430,15 @@ d3d11render(D3D11Renderer renderer, State* state) {
     renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, 0);
 
     {
-        Mesh  mesh = state->cube1;
-        M4x4f transform = m4x4fidentity();
-        {
-            M4x4f translation = m4x4ftranslation(mesh.pos);
-            transform = m4x4fmul(translation, transform);
-
-            M4x4f cameraTranslation = m4x4ftranslation(v3freverse(state->camera.pos));
-            transform = m4x4fmul(cameraTranslation, transform);
-
-            M4x4f projection = m4x4fprojection();
-            transform = m4x4fmul(projection, transform);
-        }
+        Mesh mesh = state->cube1;
 
         D3D11_MAPPED_SUBRESOURCE mappedConstantBuffer = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedConstantBuffer);
         D3D11RendererVSConstant* constant = (D3D11RendererVSConstant*)mappedConstantBuffer.pData;
-        constant->pos = transform;
+        constant->cameraPos = state->camera.pos;
+        constant->meshPos = mesh.pos;
+        constant->tanHalfFovX = tan(degreesToRadians(state->camera.fovDegreesX / 2));
+        constant->heightOverWidth = state->camera.heightOverWidth;
         renderer.common->context->Unmap((ID3D11Resource*)renderer.constantBuffer, 0);
 
         i32 baseVertex = mesh.vertices.ptr - state->meshStorage.vertices.ptr;
@@ -633,6 +630,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                             case 'Q': key = InputKey_RotateXY; break;
                             case 'E': key = InputKey_RotateYX; break;
                             case VK_TAB: key = InputKey_ToggleDebugTriangles; break;
+                            case 'T': key = InputKey_ToggleSW; break;
                             default: keyFound = false; break;
                         }
                         if (keyFound) {
@@ -661,8 +659,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             TracyCZoneEnd(tracyCtx);
         }
 
-        bool useSW = false;
-        if (useSW) {
+        if (state->useSW) {
             {
                 TracyCZoneN(tracyCtx, "render", true);
                 render(state);

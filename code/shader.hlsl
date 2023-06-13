@@ -35,7 +35,10 @@ blitterps(BlitterPSInput input) : SV_TARGET {
 //
 
 cbuffer RendererVSConstant : register(b0) {
-    float4x4 RendererVSConstant_transform;
+    float3 RendererVSConstant_meshPos;
+    float3 RendererVSConstant_cameraPos;
+    float RendererVSConstant_tanHalfFovX;
+    float RendererVSConstant_heightOverWidth;
 };
 
 struct RendererVSInput {
@@ -48,11 +51,35 @@ struct RendererPSInput {
 };
 
 RendererPSInput
-renderervs(RendererVSInput input) {
+renderervs(RendererVSInput input) {    
+    float3 vtxWorld;
+    {
+        // float3 rot = rotor3fRotateV3f(mesh.orientation, vtxModel);
+        float3 rot = input.pos;
+        float3 trans = rot + RendererVSConstant_meshPos;
+        vtxWorld = trans;
+    }
+    
+    float3 vtxCamera;
+    {
+        float3 trans = vtxWorld - RendererVSConstant_cameraPos;
+        // Rotor3f cameraRotationRev = rotor3fReverse(camera.orientation);
+        // float3 rot = rotor3fRotateV3f(cameraRotationRev, trans);
+        float3 rot = trans;
+        vtxCamera = rot;
+    }
+
+    float3 vtxScreen;
+    {
+        float2 plane = float2(vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z);
+        float tanHalfFovY = RendererVSConstant_tanHalfFovX * RendererVSConstant_heightOverWidth;
+        float2 screen = float2(plane.x / RendererVSConstant_tanHalfFovX, plane.y / tanHalfFovY);
+        vtxScreen = float3(screen, vtxCamera.z);
+    }
+
     RendererPSInput output;
-    float4 input4d = float4(input.pos, 1);
-    output.pos = mul(RendererVSConstant_transform, input4d);
-    output.color = input.pos;
+    output.pos = float4(vtxScreen, 1);
+    output.color = vtxWorld;    
     return output;
 }
 

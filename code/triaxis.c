@@ -898,14 +898,15 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
 typedef struct Camera {
     V3f     pos;
     f32     fovDegreesX;
+    f32     heightOverWidth;
     Rotor3f orientation;
     f32     moveWUPerSec;
     f32     rotDegreesPerSec;
 } Camera;
 
 function Camera
-createCamera(V3f pos) {
-    Camera camera = {.pos = pos, .fovDegreesX = 90, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
+createCamera(V3f pos, f32 width, f32 height) {
+    Camera camera = {.pos = pos, .fovDegreesX = 90, .heightOverWidth = height / width, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
     return camera;
 }
 
@@ -927,6 +928,7 @@ typedef enum InputKey {
     InputKey_RotateYZ,
     InputKey_RotateZY,
     InputKey_ToggleDebugTriangles,
+    InputKey_ToggleSW,
     InputKey_Count,
 } InputKey;
 
@@ -2043,6 +2045,7 @@ typedef struct State {
     Mesh   cube1;
     Mesh   cube2;
     bool   showDebugTriangles;
+    bool   useSW;
 } State;
 
 function State*
@@ -2068,16 +2071,16 @@ initState(void* mem, isize bytes) {
     state->renderer = createSWRenderer(&arena, perSystem);
     state->meshStorage = createMeshStorage(&arena, perSystem);
 
-    state->camera = createCamera((V3f) {.x = 0, .y = 0, .z = -3});
-    state->input = (Input) {};
-
-    state->cube1 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 0}, createRotor3fAnglePlane(0, 1, 0, 0));
-    state->cube2 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 0}, createRotor3fAnglePlane(0, 0, 1, 0));
-
-    state->showDebugTriangles = false;
-
     state->windowWidth = 1600;
     state->windowHeight = 800;
+
+    state->camera = createCamera((V3f) {.x = 0, .y = 0, .z = 0}, (f32)state->windowWidth, (f32)state->windowHeight);
+    state->input = (Input) {};
+
+    state->cube1 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0));
+    state->cube2 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0));
+
+    state->showDebugTriangles = false;
 
     return state;
 }
@@ -2137,6 +2140,10 @@ update(State* state, f32 deltaSec) {
 
     if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
         state->showDebugTriangles = !state->showDebugTriangles;
+    }
+
+    if (inputKeyWasPressed(&state->input, InputKey_ToggleSW)) {
+        state->useSW = !state->useSW;
     }
 }
 
