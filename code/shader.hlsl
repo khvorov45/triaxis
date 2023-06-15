@@ -34,11 +34,14 @@ blitterps(BlitterPSInput input) : SV_TARGET {
 // SECTION Renderer
 //
 
-cbuffer RendererVSConstant : register(b0) {
-    float3 RendererVSConstant_meshPos;
-    float3 RendererVSConstant_cameraPos;
-    float RendererVSConstant_tanHalfFovX;
-    float RendererVSConstant_heightOverWidth;
+cbuffer ConstCamera : register(b0) {
+    float3 ConstCamera_pos;
+    float ConstCamera_fovx;
+    float ConstCamera_fovy;
+};
+
+cbuffer ConstMesh : register(b1) {
+    float3 ConstMesh_pos;
 };
 
 struct RendererVSInput {
@@ -56,13 +59,13 @@ renderervs(RendererVSInput input) {
     {
         // float3 rot = rotor3fRotateV3f(mesh.orientation, vtxModel);
         float3 rot = input.pos;
-        float3 trans = rot + RendererVSConstant_meshPos;
+        float3 trans = rot + ConstMesh_pos;
         vtxWorld = trans;
     }
     
     float3 vtxCamera;
     {
-        float3 trans = vtxWorld - RendererVSConstant_cameraPos;
+        float3 trans = vtxWorld - ConstCamera_pos;
         // Rotor3f cameraRotationRev = rotor3fReverse(camera.orientation);
         // float3 rot = rotor3fRotateV3f(cameraRotationRev, trans);
         float3 rot = trans;
@@ -72,8 +75,7 @@ renderervs(RendererVSInput input) {
     float3 vtxScreen;
     {
         float2 plane = float2(vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z);
-        float tanHalfFovY = RendererVSConstant_tanHalfFovX * RendererVSConstant_heightOverWidth;
-        float2 screen = float2(plane.x / RendererVSConstant_tanHalfFovX, plane.y / tanHalfFovY);
+        float2 screen = float2(plane.x / ConstCamera_fovx, plane.y / ConstCamera_fovy);
         vtxScreen = float3(screen, vtxCamera.z);
     }
 

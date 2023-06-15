@@ -320,14 +320,17 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
     }
 }
 
-typedef struct D3D11RendererVSConstant {
-    V3f meshPos;
-    u8  pad1[4];
-    V3f cameraPos;
+typedef struct D3D11ConstCamera {
+    V3f pos;
     f32 tanHalfFovX;
-    f32 heightOverWidth;
-    u8  pad4[12];
-} D3D11RendererVSConstant;
+    f32 tanHalfFovY;
+    u8  pad[12];
+} D3D11ConstCamera;
+
+typedef struct D3D11ConstMesh {
+    V3f pos;
+    u8  pad1[4];
+} D3D11ConstMesh;
 
 typedef struct D3D11Renderer {
     D3D11Common*           common;
@@ -337,7 +340,9 @@ typedef struct D3D11Renderer {
     ID3D11InputLayout*     layout;
     ID3D11PixelShader*     pshader;
     ID3D11RasterizerState* rasterizerState;
-    ID3D11Buffer*          constantBuffer;
+
+    ID3D11Buffer* constCamera;
+    ID3D11Buffer* constMesh;
 } D3D11Renderer;
 
 static D3D11Renderer
@@ -393,12 +398,15 @@ initD3D11Renderer(D3D11Common* common, State* state) {
 
     {
         D3D11_BUFFER_DESC desc = {
-            .ByteWidth = sizeof(D3D11RendererVSConstant),
+            .ByteWidth = sizeof(D3D11ConstCamera),
             .Usage = D3D11_USAGE_DYNAMIC,
             .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
-        common->device->CreateBuffer(&desc, 0, &renderer.constantBuffer);
+        common->device->CreateBuffer(&desc, 0, &renderer.constCamera);
+
+        desc.ByteWidth = sizeof(D3D11ConstMesh);
+        common->device->CreateBuffer(&desc, 0, &renderer.constMesh);
     }
 
     return renderer;
@@ -420,7 +428,16 @@ d3d11render(D3D11Renderer renderer, State* state) {
     renderer.common->context->PSSetShader(renderer.pshader, NULL, 0);
     renderer.common->context->RSSetState(renderer.rasterizerState);
 
-    renderer.common->context->VSSetConstantBuffers(0, 1, &renderer.constantBuffer);
+    renderer.common->context->VSSetConstantBuffers(0, 2, &renderer.constCamera);
+    {
+        D3D11_MAPPED_SUBRESOURCE mappedCamera = {};
+        renderer.common->context->Map((ID3D11Resource*)renderer.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
+        D3D11ConstCamera* constCamera = (D3D11ConstCamera*)mappedCamera.pData;
+        constCamera->pos = state->camera.pos;
+        constCamera->tanHalfFovX = tan(degreesToRadians(state->camera.fovDegreesX / 2));
+        constCamera->tanHalfFovY = constCamera->tanHalfFovX * state->camera.heightOverWidth;
+        renderer.common->context->Unmap((ID3D11Resource*)renderer.constCamera, 0);
+    }
 
     {
         FLOAT color[] = {0.1f, 0.1, 0.1f, 1.f};
@@ -432,14 +449,11 @@ d3d11render(D3D11Renderer renderer, State* state) {
     {
         Mesh mesh = state->cube1;
 
-        D3D11_MAPPED_SUBRESOURCE mappedConstantBuffer = {};
-        renderer.common->context->Map((ID3D11Resource*)renderer.constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedConstantBuffer);
-        D3D11RendererVSConstant* constant = (D3D11RendererVSConstant*)mappedConstantBuffer.pData;
-        constant->cameraPos = state->camera.pos;
-        constant->meshPos = mesh.pos;
-        constant->tanHalfFovX = tan(degreesToRadians(state->camera.fovDegreesX / 2));
-        constant->heightOverWidth = state->camera.heightOverWidth;
-        renderer.common->context->Unmap((ID3D11Resource*)renderer.constantBuffer, 0);
+        D3D11_MAPPED_SUBRESOURCE mappedMesh = {};
+        renderer.common->context->Map((ID3D11Resource*)renderer.constMesh, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedMesh);
+        D3D11ConstMesh* constMesh = (D3D11ConstMesh*)mappedMesh.pData;
+        constMesh->pos = mesh.pos;
+        renderer.common->context->Unmap((ID3D11Resource*)renderer.constMesh, 0);
 
         i32 baseVertex = mesh.vertices.ptr - state->meshStorage.vertices.ptr;
         i32 baseIndex = (i32*)mesh.indices.ptr - (i32*)state->meshStorage.indices.ptr;
