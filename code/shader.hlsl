@@ -64,7 +64,7 @@ rotor3fRotateV3f(float4 r, float3 v) {
     float3 result = float3(
         r.x * x + y * r.y + z * r.z + t * r.w,
         r.x * y - x * r.y - t * r.z + z * r.w,
-        r.x * z + t * r.y - x * r.z - y * r.w,
+        r.x * z + t * r.y - x * r.z - y * r.w
     );
 
     return result;
@@ -74,8 +74,8 @@ RendererPSInput
 renderervs(RendererVSInput input) {    
     float3 vtxWorld;
     {
+        float3 vtxModel = input.pos;
         float3 rot = rotor3fRotateV3f(ConstMesh_orientation, vtxModel);
-        float3 rot = input.pos;
         float3 trans = rot + ConstMesh_pos;
         vtxWorld = trans;
     }
