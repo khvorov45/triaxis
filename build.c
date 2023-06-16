@@ -114,7 +114,7 @@ compile(Arena* arena, Opt opt) {
                 exe = prb_pathJoin(arena, globalBuildDir, exeFileName);
             }
 
-            Str cmd = prb_fmt(arena, "clang -march=native -Wall -Wextra %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
+            Str cmd = prb_fmt(arena, "clang -march=native -Wall -Wextra -fno-caret-diagnostics %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
             execCmd(arena, cmd);
         }
     }

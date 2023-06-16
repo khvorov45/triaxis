@@ -446,8 +446,8 @@ d3d11render(D3D11Renderer renderer, State* state) {
 
     renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, 0);
 
-    {
-        Mesh mesh = state->cube1;
+    for (isize meshIndex = 0; meshIndex < state->meshes.len; meshIndex++) {
+        Mesh mesh = state->meshes.ptr[meshIndex];
 
         D3D11_MAPPED_SUBRESOURCE mappedMesh = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.constMesh, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedMesh);

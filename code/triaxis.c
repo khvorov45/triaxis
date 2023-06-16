@@ -2042,10 +2042,15 @@ typedef struct State {
 
     Camera camera;
     Input  input;
-    Mesh   cube1;
-    Mesh   cube2;
-    bool   showDebugTriangles;
-    bool   useSW;
+
+    struct {
+        Mesh* ptr;
+        isize len;
+        isize cap;
+    } meshes;
+
+    bool showDebugTriangles;
+    bool useSW;
 } State;
 
 function State*
@@ -2077,8 +2082,8 @@ initState(void* mem, isize bytes) {
     state->camera = createCamera((V3f) {.x = 0, .y = 0, .z = 0}, (f32)state->windowWidth, (f32)state->windowHeight);
     state->input = (Input) {};
 
-    state->cube1 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0));
-    state->cube2 = createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0));
+    arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0)));
+    arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0)));
 
     state->showDebugTriangles = false;
 
@@ -2133,10 +2138,12 @@ update(State* state, f32 deltaSec) {
         }
     }
 
-    Rotor3f cubeRotation1 = createRotor3fAnglePlane(40 * deltaSec, 1, 1, 1);
-    state->cube1.orientation = rotor3fMulRotor3f(state->cube1.orientation, cubeRotation1);
-    Rotor3f cubeRotation2 = rotor3fReverse(cubeRotation1);
-    state->cube2.orientation = rotor3fMulRotor3f(state->cube2.orientation, cubeRotation2);
+    Rotor3f cubeRotation = createRotor3fAnglePlane(40 * deltaSec, 1, 1, 1);
+    for (isize ind = 0; ind < state->meshes.len; ind++) {
+        Mesh* mesh = state->meshes.ptr + ind;
+        mesh->orientation = rotor3fMulRotor3f(mesh->orientation, cubeRotation);
+        cubeRotation = rotor3fReverse(cubeRotation);
+    }
 
     if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
         state->showDebugTriangles = !state->showDebugTriangles;
@@ -2153,8 +2160,10 @@ render(State* state) {
     if (state->showDebugTriangles) {
         swRendererDrawDebugTriangles(&state->renderer, state->windowWidth, state->windowHeight, &state->scratch);
     } else {
-        swRendererPushMesh(&state->renderer, state->cube1, state->camera);
-        swRendererPushMesh(&state->renderer, state->cube2, state->camera);
+        for (isize meshIndex = 0; meshIndex < state->meshes.len; meshIndex++) {
+            Mesh mesh = state->meshes.ptr[meshIndex];
+            swRendererPushMesh(&state->renderer, mesh, state->camera);
+        }
         swRendererSetImageSize(&state->renderer, state->windowWidth, state->windowHeight);
         swRendererClearImage(&state->renderer);
         swRendererFillTriangles(&state->renderer);
