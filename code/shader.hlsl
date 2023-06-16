@@ -35,6 +35,7 @@ blitterps(BlitterPSInput input) : SV_TARGET {
 //
 
 cbuffer ConstCamera : register(b0) {
+    float4 ConstCamera_orientation;
     float3 ConstCamera_pos;
     float ConstCamera_fovx;
     float ConstCamera_fovy;
@@ -70,6 +71,12 @@ rotor3fRotateV3f(float4 r, float3 v) {
     return result;
 }
 
+float4
+rotor3fReverse(float4 r) {
+    float4 result = { r.x, -r.y, -r.z, -r.w };
+    return result;
+}
+
 RendererPSInput
 renderervs(RendererVSInput input) {    
     float3 vtxWorld;
@@ -83,9 +90,8 @@ renderervs(RendererVSInput input) {
     float3 vtxCamera;
     {
         float3 trans = vtxWorld - ConstCamera_pos;
-        // Rotor3f cameraRotationRev = rotor3fReverse(camera.orientation);
-        // float3 rot = rotor3fRotateV3f(cameraRotationRev, trans);
-        float3 rot = trans;
+        float4 cameraRotationRev = rotor3fReverse(ConstCamera_orientation);
+        float3 rot = rotor3fRotateV3f(cameraRotationRev, trans);
         vtxCamera = rot;
     }
 

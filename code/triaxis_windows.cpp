@@ -321,10 +321,11 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
 }
 
 typedef struct D3D11ConstCamera {
-    V3f pos;
-    f32 tanHalfFovX;
-    f32 tanHalfFovY;
-    u8  pad[12];
+    Rotor3f orientation;
+    V3f     pos;
+    f32     tanHalfFovX;
+    f32     tanHalfFovY;
+    u8      pad[12];
 } D3D11ConstCamera;
 
 typedef struct D3D11ConstMesh {
@@ -434,6 +435,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         D3D11_MAPPED_SUBRESOURCE mappedCamera = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
         D3D11ConstCamera* constCamera = (D3D11ConstCamera*)mappedCamera.pData;
+        constCamera->orientation = state->camera.orientation;
         constCamera->pos = state->camera.pos;
         constCamera->tanHalfFovX = tan(degreesToRadians(state->camera.fovDegreesX / 2));
         constCamera->tanHalfFovY = constCamera->tanHalfFovX * state->camera.heightOverWidth;
