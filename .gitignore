@@ -8,3 +8,4 @@ win32_d3d11.c
 *.rdbg
 *.10x
 *.cap
+*.out

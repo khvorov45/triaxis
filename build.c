@@ -114,8 +114,29 @@ compile(Arena* arena, Opt opt) {
                 exe = prb_pathJoin(arena, globalBuildDir, exeFileName);
             }
 
-            Str cmd = prb_fmt(arena, "clang -march=native -Wall -Wextra -fno-caret-diagnostics %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
-            execCmd(arena, cmd);
+            Str cmd = prb_fmt(arena, "clang -march=native -Wall -Wextra -fno-caret-diagnostics -fdiagnostics-format=msvc %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
+            prb_writelnToStdout(arena, cmd);
+            Str buildOut = prb_pathJoin(arena, globalBuildDir, STR("build.out"));
+            prb_removePathIfExists(arena, buildOut);
+            prb_Process proc = prb_createProcess(cmd, (prb_ProcessSpec) {.redirectStdout = true, .redirectStderr = true, .stdoutFilepath = buildOut, .stderrFilepath = buildOut});
+            prb_Status  result = prb_launchProcesses(arena, &proc, 1, prb_Background_No);
+            {
+                prb_ReadEntireFileResult readRes = prb_readEntireFile(arena, buildOut);
+                assert(readRes.success);
+                prb_StrScanner lineIter = prb_createStrScanner((Str) {(const char*)readRes.content.data, readRes.content.len});
+                prb_GrowingStr outputBuilder = prb_beginStr(arena);
+                while (prb_strScannerMove(&lineIter, (prb_StrFindSpec) {.mode = prb_StrFindMode_LineBreak, .alwaysMatchEnd = true}, prb_StrScannerSide_AfterMatch)) {
+                    Str  line = lineIter.betweenLastMatches;
+                    bool ignore = prb_strEndsWith(line, STR("declared here"));
+                    ignore = ignore || prb_strStartsWith(line, STR("In file included from"));
+                    if (!ignore) {
+                        prb_addStrSegment(&outputBuilder, "%.*s\n", LIT(line));
+                    }
+                }
+                Str outFiltered = prb_endStr(&outputBuilder);
+                prb_writeToStdout(outFiltered);
+            }
+            assert(result);
         }
     }
 }
