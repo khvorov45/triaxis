@@ -3056,7 +3056,7 @@ prb_launchProcesses(prb_Arena* arena, prb_Process* procs, int32_t procCount, prb
                 }
 
                 if (spec.redirectStdout && spec.redirectStderr && prb_streq(stdoutPath, stderrPath)) {
-                    prb_windows_OpenResult openRes = prb_windows_open(arena, stdoutPath, GENERIC_WRITE, FILE_SHARE_WRITE, CREATE_ALWAYS, &securityAttr);
+                    prb_windows_OpenResult openRes = prb_windows_open(arena, stdoutPath, GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, CREATE_ALWAYS, &securityAttr);
                     if (openRes.success) {
                         startupInfo.hStdOutput = openRes.handle;
                         startupInfo.hStdError = openRes.handle;
