@@ -328,8 +328,9 @@ typedef struct D3D11ConstCamera {
 } D3D11ConstCamera;
 
 typedef struct D3D11ConstMesh {
-    V3f pos;
-    u8  pad1[4];
+    Rotor3f orientation;
+    V3f     pos;
+    u8      pad1[4];
 } D3D11ConstMesh;
 
 typedef struct D3D11Renderer {
@@ -452,6 +453,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         D3D11_MAPPED_SUBRESOURCE mappedMesh = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.constMesh, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedMesh);
         D3D11ConstMesh* constMesh = (D3D11ConstMesh*)mappedMesh.pData;
+        constMesh->orientation = mesh.orientation;
         constMesh->pos = mesh.pos;
         renderer.common->context->Unmap((ID3D11Resource*)renderer.constMesh, 0);
 

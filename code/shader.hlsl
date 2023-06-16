@@ -41,6 +41,7 @@ cbuffer ConstCamera : register(b0) {
 };
 
 cbuffer ConstMesh : register(b1) {
+    float4 ConstMesh_orientation;
     float3 ConstMesh_pos;
 };
 
@@ -53,11 +54,27 @@ struct RendererPSInput {
     float3 color: COLOR;
 };
 
+float3
+rotor3fRotateV3f(float4 r, float3 v) {
+    float x = r.x * v.x + v.y * r.y + v.z * r.z;
+    float y = r.x * v.y - v.x * r.y + v.z * r.w;
+    float z = r.x * v.z - v.x * r.z - v.y * r.w;
+    float t = v.x * r.w - v.y * r.z + v.z * r.y;
+
+    float3 result = float3(
+        r.x * x + y * r.y + z * r.z + t * r.w,
+        r.x * y - x * r.y - t * r.z + z * r.w,
+        r.x * z + t * r.y - x * r.z - y * r.w,
+    );
+
+    return result;
+}
+
 RendererPSInput
 renderervs(RendererVSInput input) {    
     float3 vtxWorld;
     {
-        // float3 rot = rotor3fRotateV3f(mesh.orientation, vtxModel);
+        float3 rot = rotor3fRotateV3f(ConstMesh_orientation, vtxModel);
         float3 rot = input.pos;
         float3 trans = rot + ConstMesh_pos;
         vtxWorld = trans;
