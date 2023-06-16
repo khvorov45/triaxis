@@ -2075,6 +2075,7 @@ initState(void* mem, isize bytes) {
     isize perSystem = arenaFreeSize(&arena) / 3;
     state->renderer = createSWRenderer(&arena, perSystem);
     state->meshStorage = createMeshStorage(&arena, perSystem);
+    arenaAllocCap(&arena, Mesh, perSystem, state->meshes);
 
     state->windowWidth = 1600;
     state->windowHeight = 800;
