@@ -4,6 +4,7 @@
 #define WIN32_LEAN_AND_MEAN 1
 #define VC_EXTRALEAN 1
 #include <Windows.h>
+#include <hidusage.h>
 
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "user32")
@@ -613,6 +614,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         SetWindowPos(window, 0, rect.left, rect.top, state->windowWidth + dwidth, state->windowHeight + dheight, 0);
     }
 
+    {
+        RAWINPUTDEVICE mouse = {
+            .usUsagePage = HID_USAGE_PAGE_GENERIC,
+            .usUsage = HID_USAGE_GENERIC_MOUSE,
+            .hwndTarget = window,
+        };
+
+        assert(RegisterRawInputDevices(&mouse, 1, sizeof(RAWINPUTDEVICE)) == TRUE);
+    }
+
+    // TODO(khvorov) Trap mouse in window
+
 #ifdef TRIAXIS_debuginfo
     // NOTE(khvorov) To prevent a white flash
     ShowWindow(window, SW_SHOWMINIMIZED);
@@ -678,11 +691,30 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                         }
                     } break;
 
+                    case WM_INPUT: {
+                        RAWINPUT input = {};
+                        UINT     size = sizeof(RAWINPUT);
+                        assert(GetRawInputData((HRAWINPUT)msg.lParam, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)));
+                        if (input.header.dwType == RIM_TYPEMOUSE && input.data.mouse.usFlags == MOUSE_MOVE_RELATIVE) {
+                            state->input.mouse.dx = input.data.mouse.lLastX;
+                            state->input.mouse.dy = input.data.mouse.lLastY;
+                        }
+                    } break;
+
+                    case WM_MOUSEMOVE: break;
+
                     default: {
                         TranslateMessage(&msg);
                         DispatchMessage(&msg);
                     } break;
                 }
+            }
+
+            {
+                POINT point = {};
+                GetCursorPos(&point);
+                state->input.mouse.x = point.x;
+                state->input.mouse.y = point.y;
             }
 
             TracyCZoneEnd(tracyCtx);

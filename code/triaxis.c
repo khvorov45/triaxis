@@ -328,8 +328,25 @@ fmtNull(StrBuilder* builder) {
 //
 
 function f32
+squareRootf(f32 val) {
+    __m128 val128 = _mm_set_ss(val);
+    __m128 result128 = _mm_sqrt_ss(val128);
+    f32    result = _mm_cvtss_f32(result128);
+    return result;
+}
+
+function f32
 squaref(f32 val) {
     f32 result = val * val;
+    return result;
+}
+
+function f32
+safeRatio1f(f32 v1, f32 v2) {
+    f32 result = 1;
+    if (v2 != 0) {
+        result = v1 / v2;
+    }
     return result;
 }
 
@@ -443,6 +460,32 @@ v3fdot(V3f v1, V3f v2) {
     return result;
 }
 
+function f32
+v2flen(V2f v1) {
+    f32 result = squareRootf(v2fdot(v1, v1));
+    return result;
+}
+
+function f32
+v3flen(V3f v1) {
+    f32 result = squareRootf(v3fdot(v1, v1));
+    return result;
+}
+
+function V2f
+v2fnormalise(V2f v1) {
+    f32 len = v2flen(v1);
+    V2f result = v2fscale(v1, safeRatio1f(1, len));
+    return result;
+}
+
+function V3f
+v3fnormalise(V3f v1) {
+    f32 len = v3flen(v1);
+    V3f result = v3fscale(v1, safeRatio1f(1, len));
+    return result;
+}
+
 typedef struct Rotor3f {
     f32 dt;
     f32 xy;
@@ -458,7 +501,8 @@ createRotor3f(void) {
 
 function Rotor3f
 createRotor3fAnglePlane(f32 angleDegrees, f32 xy, f32 xz, f32 yz) {
-    f32 area = sqrtf(squaref(xy) + squaref(xz) + squaref(yz));
+    assert(xy != 0 || xz != 0 || yz != 0);
+    f32 area = squareRootf(squaref(xy) + squaref(xz) + squaref(yz));
     f32 angleRadians = degreesToRadians(angleDegrees);
     f32 halfa = angleRadians / 2;
     f32 sina = sinf(halfa);
@@ -466,9 +510,9 @@ createRotor3fAnglePlane(f32 angleDegrees, f32 xy, f32 xz, f32 yz) {
 
     Rotor3f result = {
         .dt = cosa,
-        .xy = -xy / area * sina,
-        .xz = -xz / area * sina,
-        .yz = -yz / area * sina,
+        .xy = -safeRatio1f(xy, area) * sina,
+        .xz = -safeRatio1f(xz, area) * sina,
+        .yz = -safeRatio1f(yz, area) * sina,
     };
     return result;
 }
@@ -905,9 +949,9 @@ typedef struct Camera {
 
 function Camera
 createCamera(V3f pos, f32 width, f32 height) {
-    f32 fovDegreesX = 90;
-    f32 fovx = tan(degreesToRadians(fovDegreesX / 2));
-    f32 fovy = height / width * fovx;
+    f32    fovDegreesX = 90;
+    f32    fovx = tan(degreesToRadians(fovDegreesX / 2));
+    f32    fovy = height / width * fovx;
     Camera camera = {.pos = pos, .tanHalfFov = {fovx, fovy}, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
     return camera;
 }
@@ -939,8 +983,14 @@ typedef struct KeyState {
     i32  halfTransitionCount;
 } KeyState;
 
+typedef struct MouseState {
+    i32 x, y;
+    i32 dx, dy;
+} MouseState;
+
 typedef struct Input {
-    KeyState keys[InputKey_Count];
+    KeyState   keys[InputKey_Count];
+    MouseState mouse;
 } Input;
 
 function void
@@ -949,6 +999,8 @@ inputBeginFrame(Input* input) {
         KeyState* state = input->keys + keyIndex;
         state->halfTransitionCount = 0;
     }
+    input->mouse.dx = 0;
+    input->mouse.dy = 0;
 }
 
 function void
@@ -2096,46 +2148,70 @@ update(State* state, f32 deltaSec) {
     {
         f32 moveInc = state->camera.moveWUPerSec * deltaSec;
 
+        V3f cameraMoveInCameraSpace = {};
         if (state->input.keys[InputKey_Forward].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 0, .z = 1}), moveInc), state->camera.pos);
+            cameraMoveInCameraSpace.z += 1;
         }
         if (state->input.keys[InputKey_Back].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 0, .z = 1}), -moveInc), state->camera.pos);
+            cameraMoveInCameraSpace.z -= 1;
         }
         if (state->input.keys[InputKey_Right].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, .y = 0, .z = 0}), moveInc), state->camera.pos);
+            cameraMoveInCameraSpace.x += 1;
         }
         if (state->input.keys[InputKey_Left].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 1, .y = 0, .z = 0}), -moveInc), state->camera.pos);
+            cameraMoveInCameraSpace.x -= 1;
         }
         if (state->input.keys[InputKey_Up].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 1, .z = 0}), moveInc), state->camera.pos);
+            cameraMoveInCameraSpace.y += 1;
         }
         if (state->input.keys[InputKey_Down].down) {
-            state->camera.pos = v3fadd(v3fscale(rotor3fRotateV3f(state->camera.orientation, (V3f) {.x = 0, .y = 1, .z = 0}), -moveInc), state->camera.pos);
+            cameraMoveInCameraSpace.y -= 1;
         }
+
+        V3f cameraMoveInWorldSpace = rotor3fRotateV3f(state->camera.orientation, cameraMoveInCameraSpace);
+        V3f cameraMoveNorm = v3fnormalise(cameraMoveInWorldSpace);
+        V3f cameraMoveScaled = v3fscale(cameraMoveNorm, moveInc);
+
+        state->camera.pos = v3fadd(state->camera.pos, cameraMoveScaled);
     }
 
     {
-        f32 rotInc = state->camera.rotDegreesPerSec * deltaSec;
-
+        f32 xy = 0;
+        f32 xz = 0;
+        f32 yz = 0;
         if (state->input.keys[InputKey_RotateXY].down) {
-            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 1, 0, 0));
+            xy += 1;
         }
         if (state->input.keys[InputKey_RotateYX].down) {
-            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, -1, 0, 0));
+            xy -= 1;
         }
         if (state->input.keys[InputKey_RotateXZ].down) {
-            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, 1, 0));
+            xz += 1;
         }
         if (state->input.keys[InputKey_RotateZX].down) {
-            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, -1, 0));
+            xz -= 1;
         }
         if (state->input.keys[InputKey_RotateYZ].down) {
-            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, 0, 1));
+            yz += 1;
         }
         if (state->input.keys[InputKey_RotateZY].down) {
-            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, createRotor3fAnglePlane(rotInc, 0, 0, -1));
+            yz -= 1;
+        }
+
+        xz -= (f32)state->input.mouse.dx;
+        yz += (f32)state->input.mouse.dy;
+
+        if (xy != 0 || xz != 0 || yz != 0) {
+            // TODO(khvorov) Smooth mouse movement
+            f32 rotInc = state->camera.rotDegreesPerSec * deltaSec;
+            V2f mouseSens = {100, 100};
+            V2f mouseMove = v2fhadamard(mouseSens, {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
+            f32 mouseMoveCoef = v2flen(mouseMove);
+            if (mouseMoveCoef != 0) {
+                rotInc = mouseMoveCoef * deltaSec;
+            }
+            Rotor3f rot = createRotor3fAnglePlane(rotInc, xy, xz, yz);
+            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, rot);
         }
     }
 
