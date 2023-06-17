@@ -338,6 +338,7 @@ typedef struct D3D11Renderer {
     D3D11Common*           common;
     ID3D11Buffer*          vbuffer;
     ID3D11Buffer*          ibuffer;
+    ID3D11Buffer*          colorBuffer;
     ID3D11VertexShader*    vshader;
     ID3D11InputLayout*     layout;
     ID3D11PixelShader*     pshader;
@@ -372,8 +373,19 @@ initD3D11Renderer(D3D11Common* common, State* state) {
     }
 
     {
+        D3D11_BUFFER_DESC desc = {
+            .ByteWidth = (UINT)(state->meshStorage.colors.len * sizeof(*state->meshStorage.colors.ptr)),
+            .Usage = D3D11_USAGE_IMMUTABLE,
+            .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+        };
+        D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->meshStorage.colors.ptr};
+        common->device->CreateBuffer(&desc, &initial, &renderer.colorBuffer);
+    }
+
+    {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
 
         {
@@ -420,6 +432,12 @@ d3d11render(D3D11Renderer renderer, State* state) {
         UINT offset = 0;
         UINT stride = sizeof(*state->meshStorage.vertices.ptr);
         renderer.common->context->IASetVertexBuffers(0, 1, &renderer.vbuffer, &stride, &offset);
+    }
+
+    {
+        UINT offset = 0;
+        UINT stride = sizeof(*state->meshStorage.colors.ptr);
+        renderer.common->context->IASetVertexBuffers(1, 1, &renderer.colorBuffer, &stride, &offset);
     }
 
     renderer.common->context->IASetIndexBuffer(renderer.ibuffer, DXGI_FORMAT_R32_UINT, 0);
@@ -680,7 +698,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         if (state->useSW) {
             {
                 TracyCZoneN(tracyCtx, "render", true);
-                render(state);
+                swRender(state);
                 TracyCZoneEnd(tracyCtx);
             }
 

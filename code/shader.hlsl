@@ -48,6 +48,7 @@ cbuffer ConstMesh : register(b1) {
 
 struct RendererVSInput {
     float3 pos : POSITION;
+    float4 color : COLOR;
 };
 
 struct RendererPSInput {
@@ -78,7 +79,7 @@ rotor3fReverse(float4 r) {
 }
 
 RendererPSInput
-renderervs(RendererVSInput input) {    
+renderervs(RendererVSInput input) {
     float3 vtxWorld;
     {
         float3 vtxModel = input.pos;
@@ -86,7 +87,7 @@ renderervs(RendererVSInput input) {
         float3 trans = rot + ConstMesh_pos;
         vtxWorld = trans;
     }
-    
+
     float3 vtxCamera;
     {
         float3 trans = vtxWorld - ConstCamera_pos;
@@ -104,7 +105,7 @@ renderervs(RendererVSInput input) {
 
     RendererPSInput output;
     output.pos = float4(vtxScreen, 1);
-    output.color = vtxWorld;    
+    output.color = input.color.rgb;
     return output;
 }
 

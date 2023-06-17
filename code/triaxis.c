@@ -2156,7 +2156,7 @@ update(State* state, f32 deltaSec) {
 }
 
 function void
-render(State* state) {
+swRender(State* state) {
     meshStorageClearBuffers(&state->renderer.triangles);
     if (state->showDebugTriangles) {
         swRendererDrawDebugTriangles(&state->renderer, state->windowWidth, state->windowHeight, &state->scratch);
@@ -2168,6 +2168,5 @@ render(State* state) {
         swRendererSetImageSize(&state->renderer, state->windowWidth, state->windowHeight);
         swRendererClearImage(&state->renderer);
         swRendererFillTriangles(&state->renderer);
-        swRendererOutlineTriangles(&state->renderer);
     }
 }
