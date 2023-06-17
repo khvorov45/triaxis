@@ -897,8 +897,7 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
 
 typedef struct Camera {
     V3f     pos;
-    f32     fovDegreesX;
-    f32     heightOverWidth;
+    V2f     tanHalfFov;
     Rotor3f orientation;
     f32     moveWUPerSec;
     f32     rotDegreesPerSec;
@@ -906,7 +905,10 @@ typedef struct Camera {
 
 function Camera
 createCamera(V3f pos, f32 width, f32 height) {
-    Camera camera = {.pos = pos, .fovDegreesX = 90, .heightOverWidth = height / width, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
+    f32 fovDegreesX = 90;
+    f32 fovx = tan(degreesToRadians(fovDegreesX / 2));
+    f32 fovy = height / width * fovx;
+    Camera camera = {.pos = pos, .tanHalfFov = {fovx, fovy}, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
     return camera;
 }
 
@@ -1276,11 +1278,9 @@ swRendererPushMesh(SWRenderer* renderer, Mesh mesh, Camera camera) {
         {
             V2f plane = {vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z};
 
-            f32 fovRadiansX = degreesToRadians(camera.fovDegreesX);
-
-            f32 planeRight = tan(0.5f * fovRadiansX);
+            f32 planeRight = camera.tanHalfFov.x;
             f32 planeLeft = -planeRight;
-            f32 planeTop = ((f32)renderer->image.height / (f32)renderer->image.width) * planeRight;
+            f32 planeTop = camera.tanHalfFov.y;
             f32 planeBottom = -planeTop;
 
             V2f screen = {

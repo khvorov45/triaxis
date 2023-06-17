@@ -455,8 +455,8 @@ d3d11render(D3D11Renderer renderer, State* state) {
         D3D11ConstCamera* constCamera = (D3D11ConstCamera*)mappedCamera.pData;
         constCamera->orientation = state->camera.orientation;
         constCamera->pos = state->camera.pos;
-        constCamera->tanHalfFovX = tan(degreesToRadians(state->camera.fovDegreesX / 2));
-        constCamera->tanHalfFovY = constCamera->tanHalfFovX * state->camera.heightOverWidth;
+        constCamera->tanHalfFovX = state->camera.tanHalfFov.x;
+        constCamera->tanHalfFovY = state->camera.tanHalfFov.y;
         renderer.common->context->Unmap((ID3D11Resource*)renderer.constCamera, 0);
     }
 
