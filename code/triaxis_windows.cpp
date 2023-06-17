@@ -743,5 +743,33 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     }
 
     TracyD3D11Destroy(d3d11common.tracyD3D11Context);
+
+    // TODO(khvorov) Does this prevent bluescreens?
+    {
+        d3d11renderer.vbuffer->Release();
+        d3d11renderer.ibuffer->Release();
+        d3d11renderer.colorBuffer->Release();
+        d3d11renderer.vshader->Release();
+        d3d11renderer.layout->Release();
+        d3d11renderer.pshader->Release();
+        d3d11renderer.rasterizerState->Release();
+        d3d11renderer.constCamera->Release();
+        d3d11renderer.constMesh->Release();
+
+        d3d11blitter.vbuffer->Release();
+        d3d11blitter.vshader->Release();
+        d3d11blitter.pshader->Release();
+        d3d11blitter.layout->Release();
+        d3d11blitter.texture->Release();
+        d3d11blitter.textureView->Release();
+        d3d11blitter.sampler->Release();
+        d3d11blitter.rasterizerState->Release();
+
+        d3d11common.swapChain->Release();
+        d3d11common.rtView->Release();
+        d3d11common.device->Release();
+        d3d11common.context->Release();
+    }
+
     return 0;
 }
