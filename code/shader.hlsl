@@ -98,13 +98,13 @@ renderervs(RendererVSInput input) {
 
     float3 vtxScreen;
     {
-        float2 plane = float2(vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z);
+        float2 plane = float2(vtxCamera.x, vtxCamera.y);
         float2 screen = float2(plane.x / ConstCamera_fovx, plane.y / ConstCamera_fovy);
         vtxScreen = float3(screen, vtxCamera.z);
     }
 
     RendererPSInput output;
-    output.pos = float4(vtxScreen, 1);
+    output.pos = float4(vtxScreen, vtxCamera.z);
     output.color = input.color.rgb;
     return output;
 }
