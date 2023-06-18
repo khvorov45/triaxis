@@ -454,7 +454,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         D3D11_MAPPED_SUBRESOURCE mappedCamera = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
         D3D11ConstCamera* constCamera = (D3D11ConstCamera*)mappedCamera.pData;
-        constCamera->orientation = state->camera.orientation;
+        constCamera->orientation = state->camera.currentOrientation;
         constCamera->pos = state->camera.pos;
         constCamera->tanHalfFovX = state->camera.tanHalfFov.x;
         constCamera->tanHalfFovY = state->camera.tanHalfFov.y;
@@ -673,6 +673,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                             case 'D': key = InputKey_Right; break;
                             case VK_SPACE: key = InputKey_Up; break;
                             case VK_CONTROL: key = InputKey_Down; break;
+                            case VK_SHIFT: key = InputKey_MoveFaster; break;
                             case VK_UP: key = InputKey_RotateZY; break;
                             case VK_DOWN: key = InputKey_RotateYZ; break;
                             case VK_LEFT: key = InputKey_RotateXZ; break;

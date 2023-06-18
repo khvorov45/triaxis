@@ -351,7 +351,7 @@ safeRatio1f(f32 v1, f32 v2) {
 }
 
 function f32
-lerp(f32 start, f32 end, f32 by) {
+lerpf(f32 start, f32 end, f32 by) {
     f32 result = start + (end - start) * by;
     return result;
 }
@@ -569,6 +569,18 @@ rotor3fRotateV3f(Rotor3f r, V3f v) {
     return result;
 }
 
+function Rotor3f
+rotor3fLerpN(Rotor3f r1, Rotor3f r2, f32 by) {
+    Rotor3f resultNotNorm = {
+        .dt = lerpf(r1.dt, r2.dt, by),
+        .xy = lerpf(r1.xy, r2.xy, by),
+        .xz = lerpf(r1.xz, r2.xz, by),
+        .yz = lerpf(r1.yz, r2.yz, by),
+    };
+    Rotor3f result = rotor3fNormalise(resultNotNorm);
+    return result;
+}
+
 typedef struct Rect2f {
     V2f topleft;
     V2f dim;
@@ -649,10 +661,10 @@ color01eq(Color01 c1, Color01 c2) {
 function Color01
 color01Lerp(Color01 c1, Color01 c2, f32 by) {
     Color01 result = {
-        .r = lerp(c1.r, c2.r, by),
-        .g = lerp(c1.g, c2.g, by),
-        .b = lerp(c1.b, c2.b, by),
-        .a = lerp(c1.a, c2.a, by),
+        .r = lerpf(c1.r, c2.r, by),
+        .g = lerpf(c1.g, c2.g, by),
+        .b = lerpf(c1.b, c2.b, by),
+        .a = lerpf(c1.a, c2.a, by),
     };
     return result;
 }
@@ -942,8 +954,10 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
 typedef struct Camera {
     V3f     pos;
     V2f     tanHalfFov;
-    Rotor3f orientation;
+    Rotor3f currentOrientation;
+    Rotor3f targetOrientation;
     f32     moveWUPerSec;
+    f32     moveAccelerationCoef;
     f32     rotDegreesPerSec;
 } Camera;
 
@@ -952,7 +966,15 @@ createCamera(V3f pos, f32 width, f32 height) {
     f32    fovDegreesX = 90;
     f32    fovx = tan(degreesToRadians(fovDegreesX / 2));
     f32    fovy = height / width * fovx;
-    Camera camera = {.pos = pos, .tanHalfFov = {fovx, fovy}, .orientation = createRotor3f(), .moveWUPerSec = 1, .rotDegreesPerSec = 70};
+    Camera camera = {
+        .pos = pos,
+        .tanHalfFov = {fovx, fovy},
+        .currentOrientation = createRotor3f(),
+        .targetOrientation = createRotor3f(),
+        .moveWUPerSec = 1,
+        .moveAccelerationCoef = 10,
+        .rotDegreesPerSec = 70,
+    };
     return camera;
 }
 
@@ -967,6 +989,7 @@ typedef enum InputKey {
     InputKey_Right,
     InputKey_Up,
     InputKey_Down,
+    InputKey_MoveFaster,
     InputKey_RotateXY,
     InputKey_RotateYX,
     InputKey_RotateXZ,
@@ -1167,9 +1190,9 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     Color01  existingColor01 = color255to01(existingColor255);
 
                     Color01 blended01 = {
-                        .r = lerp(existingColor01.r, color01.r, color01.a),
-                        .g = lerp(existingColor01.g, color01.g, color01.a),
-                        .b = lerp(existingColor01.b, color01.b, color01.a),
+                        .r = lerpf(existingColor01.r, color01.r, color01.a),
+                        .g = lerpf(existingColor01.g, color01.g, color01.a),
+                        .b = lerpf(existingColor01.b, color01.b, color01.a),
                         .a = 1,
                     };
 
@@ -1321,7 +1344,7 @@ swRendererPushMesh(SWRenderer* renderer, Mesh mesh, Camera camera) {
         V3f vtxCamera = {};
         {
             V3f     trans = v3fsub(vtxWorld, camera.pos);
-            Rotor3f cameraRotationRev = rotor3fReverse(camera.orientation);
+            Rotor3f cameraRotationRev = rotor3fReverse(camera.currentOrientation);
             V3f     rot = rotor3fRotateV3f(cameraRotationRev, trans);
             vtxCamera = rot;
         }
@@ -1908,7 +1931,7 @@ runTests(Arena* arena) {
 
     {
         assert(squaref(5) == 25);
-        assert(lerp(5, 15, 0.3) == 8);
+        assert(lerpf(5, 15, 0.3) == 8);
 
         assert(degreesToRadians(0) == 0);
         assert(degreesToRadians(30) < degreesToRadians(60));
@@ -2082,6 +2105,8 @@ runBench(Arena* arena) {
 // SECTION App
 //
 
+// TODO(khvorov) Debug overlay with a log panel
+
 typedef struct State {
     SWRenderer  renderer;
     MeshStorage meshStorage;
@@ -2147,6 +2172,9 @@ function void
 update(State* state, f32 deltaSec) {
     {
         f32 moveInc = state->camera.moveWUPerSec * deltaSec;
+        if (state->input.keys[InputKey_MoveFaster].down) {
+            moveInc *= state->camera.moveAccelerationCoef;
+        }
 
         V3f cameraMoveInCameraSpace = {};
         if (state->input.keys[InputKey_Forward].down) {
@@ -2168,13 +2196,14 @@ update(State* state, f32 deltaSec) {
             cameraMoveInCameraSpace.y -= 1;
         }
 
-        V3f cameraMoveInWorldSpace = rotor3fRotateV3f(state->camera.orientation, cameraMoveInCameraSpace);
+        V3f cameraMoveInWorldSpace = rotor3fRotateV3f(state->camera.currentOrientation, cameraMoveInCameraSpace);
         V3f cameraMoveNorm = v3fnormalise(cameraMoveInWorldSpace);
         V3f cameraMoveScaled = v3fscale(cameraMoveNorm, moveInc);
 
         state->camera.pos = v3fadd(state->camera.pos, cameraMoveScaled);
     }
 
+    // NOTE(khvorov) Camera rotation (key-based)
     {
         f32 xy = 0;
         f32 xz = 0;
@@ -2198,24 +2227,35 @@ update(State* state, f32 deltaSec) {
             yz -= 1;
         }
 
-        xz -= (f32)state->input.mouse.dx;
-        yz += (f32)state->input.mouse.dy;
-
         if (xy != 0 || xz != 0 || yz != 0) {
-            // TODO(khvorov) Smooth mouse movement
-            f32 rotInc = state->camera.rotDegreesPerSec * deltaSec;
-            V2f mouseSens = {100, 100};
-            V2f mouseMove = v2fhadamard(mouseSens, {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
-            f32 mouseMoveCoef = v2flen(mouseMove);
-            if (mouseMoveCoef != 0) {
-                rotInc = mouseMoveCoef * deltaSec;
-            }
+            f32     rotInc = state->camera.rotDegreesPerSec * deltaSec;
             Rotor3f rot = createRotor3fAnglePlane(rotInc, xy, xz, yz);
-            state->camera.orientation = rotor3fMulRotor3f(state->camera.orientation, rot);
+            state->camera.targetOrientation = rotor3fMulRotor3f(state->camera.targetOrientation, rot);
         }
     }
 
-    Rotor3f cubeRotation = createRotor3fAnglePlane(40 * deltaSec, 1, 1, 1);
+    // NOTE(khvorov) Camera rotation (mouse-based)
+    {
+        f32 xy = 0;
+        f32 xz = -(f32)state->input.mouse.dx;
+        f32 yz = (f32)state->input.mouse.dy;
+        if (xy != 0 || xz != 0 || yz != 0) {
+            V2f     mouseSens = {100, 100};  // TODO(khvorov) Config
+            V2f     mouseMove = v2fhadamard(mouseSens, {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
+            f32     mouseMoveCoef = v2flen(mouseMove);
+            f32     rotInc = mouseMoveCoef * deltaSec;
+            Rotor3f rot = createRotor3fAnglePlane(rotInc, xy, xz, yz);
+            state->camera.targetOrientation = rotor3fMulRotor3f(state->camera.targetOrientation, rot);
+        }
+    }
+
+    // NOTE(khvorov) Smooth camera update
+    {
+        f32 smoothUpdateCoef = 0.25f;  // TODO(khvorov) Config
+        state->camera.currentOrientation = rotor3fLerpN(state->camera.currentOrientation, state->camera.targetOrientation, smoothUpdateCoef);
+    }
+
+    Rotor3f cubeRotation = createRotor3fAnglePlane(0 * deltaSec, 1, 1, 1);
     for (isize ind = 0; ind < state->meshes.len; ind++) {
         Mesh* mesh = state->meshes.ptr + ind;
         mesh->orientation = rotor3fMulRotor3f(mesh->orientation, cubeRotation);
