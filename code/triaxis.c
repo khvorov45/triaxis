@@ -2240,12 +2240,20 @@ update(State* state, f32 deltaSec) {
         f32 xz = -(f32)state->input.mouse.dx;
         f32 yz = (f32)state->input.mouse.dy;
         if (xy != 0 || xz != 0 || yz != 0) {
-            V2f     mouseSens = {100, 100};  // TODO(khvorov) Config
-            V2f     mouseMove = v2fhadamard(mouseSens, {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
-            f32     mouseMoveCoef = v2flen(mouseMove);
-            f32     rotInc = mouseMoveCoef * deltaSec;
-            Rotor3f rot = createRotor3fAnglePlane(rotInc, xy, xz, yz);
-            state->camera.targetOrientation = rotor3fMulRotor3f(state->camera.targetOrientation, rot);
+            V2f mouseSens = {100, 100};  // TODO(khvorov) Config
+            V2f mouseMove = v2fhadamard(mouseSens, {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
+            f32 mouseMoveCoef = v2flen(mouseMove);
+            f32 rotInc = mouseMoveCoef * deltaSec;
+
+            // NOTE(khvorov) XZ rotations happen around the world's xz
+            if (xy != 0 || yz != 0) {
+                Rotor3f rot = createRotor3fAnglePlane(rotInc, xy, 0, yz);
+                state->camera.targetOrientation = rotor3fMulRotor3f(state->camera.targetOrientation, rot);
+            }
+            if (xz != 0) {
+                Rotor3f rot = createRotor3fAnglePlane(rotInc, 0, xz, 0);
+                state->camera.targetOrientation = rotor3fMulRotor3f(rot, state->camera.targetOrientation);
+            }
         }
     }
 
