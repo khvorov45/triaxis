@@ -671,7 +671,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                             case 'S': key = InputKey_Back; break;
                             case 'A': key = InputKey_Left; break;
                             case 'D': key = InputKey_Right; break;
-                            case VK_SHIFT: key = InputKey_Up; break;
+                            case VK_SPACE: key = InputKey_Up; break;
                             case VK_CONTROL: key = InputKey_Down; break;
                             case VK_UP: key = InputKey_RotateZY; break;
                             case VK_DOWN: key = InputKey_RotateYZ; break;
