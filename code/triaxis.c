@@ -964,7 +964,7 @@ typedef struct Camera {
 function Camera
 createCamera(V3f pos, f32 width, f32 height) {
     f32    fovDegreesX = 90;
-    f32    fovx = tan(degreesToRadians(fovDegreesX / 2));
+    f32    fovx = tanf(degreesToRadians(fovDegreesX / 2));
     f32    fovy = height / width * fovx;
     Camera camera = {
         .pos = pos,
