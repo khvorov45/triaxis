@@ -547,7 +547,7 @@ windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     LRESULT result = 0;
     switch (uMsg) {
         case WM_DESTROY: PostQuitMessage(0); break;
-        case WM_ERASEBKGND: result = TRUE; break;  // NOTE(khvorov) Do nothing
+        case WM_ERASEBKGND: result = TRUE; break;
         default: result = DefWindowProcW(hwnd, uMsg, wParam, lParam); break;
     }
     return result;
@@ -624,8 +624,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         assert(RegisterRawInputDevices(&mouse, 1, sizeof(RAWINPUTDEVICE)) == TRUE);
     }
 
-    // TODO(khvorov) Trap mouse in window
-
 #ifdef TRIAXIS_debuginfo
     // NOTE(khvorov) To prevent a white flash
     ShowWindow(window, SW_SHOWMINIMIZED);
@@ -643,6 +641,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     D3D11Common   d3d11common = initD3D11Common(window, state->windowWidth, state->windowHeight, &state->perm);
     D3D11Blitter  d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight);
     D3D11Renderer d3d11renderer = initD3D11Renderer(&d3d11common, state);
+
+    bool prevWindowIsForeground = false;
+    bool curWindowIsForeground = false;
 
     Timer timer = {.clock = createClock(), .update = getClockMarker()};
     for (bool running = true; running;) {
@@ -715,6 +716,27 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 GetCursorPos(&point);
                 state->input.mouse.x = point.x;
                 state->input.mouse.y = point.y;
+            }
+
+            {
+                prevWindowIsForeground = curWindowIsForeground;
+                curWindowIsForeground = GetForegroundWindow() == window;
+
+                if (prevWindowIsForeground != curWindowIsForeground) {
+                    // NOTE(khvorov) Clip cursor
+                    if (curWindowIsForeground) {
+                        RECT rect = {};
+                        GetClientRect(window, &rect);
+                        POINT topleft = {rect.left, rect.top};
+                        ClientToScreen(window, &topleft);
+                        POINT bottomright = {rect.right, rect.bottom};
+                        ClientToScreen(window, &bottomright);
+                        RECT screen = {.left = topleft.x, .right = bottomright.x, .top = topleft.y, .bottom = bottomright.y};
+                        ClipCursor(&screen);
+                    }
+
+                    ShowCursor(FALSE);
+                }
             }
 
             TracyCZoneEnd(tracyCtx);
