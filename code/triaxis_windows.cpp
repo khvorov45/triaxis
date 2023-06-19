@@ -483,6 +483,8 @@ d3d11render(D3D11Renderer renderer, State* state) {
         renderer.common->context->DrawIndexed(mesh.indices.len * 3, baseIndex, baseVertex);
     }
 
+    // TODO(khvorov) Debug overlay
+
     HRESULT presentResult = renderer.common->swapChain->Present(1, 0);
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
@@ -637,7 +639,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         timeBeginPeriod(caps.wPeriodMin);
     }
 
-    swRendererSetImageSize(&state->renderer, state->windowWidth, state->windowHeight);
+    swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
     D3D11Common   d3d11common = initD3D11Common(window, state->windowWidth, state->windowHeight, &state->perm);
     D3D11Blitter  d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight);
     D3D11Renderer d3d11renderer = initD3D11Renderer(&d3d11common, state);
@@ -757,7 +759,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 TracyCZoneEnd(tracyCtx);
             }
 
-            d3d11blit(d3d11blitter, (Texture) {state->renderer.image.ptr, state->renderer.image.width, state->renderer.image.height});
+            d3d11blit(d3d11blitter, (Texture) {state->swRenderer.image.ptr, state->swRenderer.image.width, state->swRenderer.image.height});
         } else {
             d3d11render(d3d11renderer, state);
         }

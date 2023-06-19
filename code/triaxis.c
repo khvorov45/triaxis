@@ -210,9 +210,14 @@ streq(Str s1, Str s2) {
 //
 
 typedef struct StrBuilder {
-    char* ptr;
-    isize len;
-    isize cap;
+    union {
+        struct {
+            char* ptr;
+            isize len;
+            isize cap;
+        };
+        Str str;
+    };
 } StrBuilder;
 
 function void
@@ -237,15 +242,16 @@ typedef struct FmtInt {
 function void
 fmtInt(StrBuilder* builder, isize val, FmtInt spec) {
     assert(spec.chars >= 0);
-    assert(val >= 0);
 
     if (spec.padChar == '\0') {
         spec.padChar = ' ';
     }
 
+    isize valAbs = absval(val);
+
     isize pow10 = 1;
-    isize digitCount = 1;
-    for (isize valCopy = val / 10; valCopy / pow10 > 0; pow10 *= 10, digitCount++) {}
+    isize digitCount = 1 + (val < 0);
+    for (isize valCopy = valAbs / 10; valCopy / pow10 > 0; pow10 *= 10, digitCount++) {}
 
     if (spec.disallowOverflow && spec.chars < digitCount) {
         assert(!"overflow");
@@ -258,7 +264,12 @@ fmtInt(StrBuilder* builder, isize val, FmtInt spec) {
         }
     }
 
-    for (isize curVal = val; pow10 > 0 && spec.chars > 0; pow10 /= 10, spec.chars--) {
+    if (val < 0) {
+        arrpush(*builder, '-');
+        spec.chars -= 1;
+    }
+
+    for (isize curVal = valAbs; pow10 > 0 && spec.chars > 0; pow10 /= 10, spec.chars--) {
         isize digit = curVal / pow10;
         assert(digit >= 0 && digit <= 9);
         char digitChar = digit + '0';
@@ -281,10 +292,8 @@ typedef struct FmtF32 {
 
 function void
 fmtF32(StrBuilder* builder, f32 val, FmtF32 spec) {
-    assert(val >= 0);
-
     isize maxValLeft = 1;
-    for (isize ind = 0; ind < spec.charsLeft; ind++) {
+    for (isize ind = 0; ind < spec.charsLeft - (val < 0); ind++) {
         maxValLeft *= 10;
     }
 
@@ -293,20 +302,22 @@ fmtF32(StrBuilder* builder, f32 val, FmtF32 spec) {
         maxValRight *= 10;
     }
 
+    f32 valAbs = absval(val);
+
     bool  overflow = false;
-    isize whole = (isize)val;
+    isize whole = (isize)valAbs;
     if (whole > maxValLeft - 1) {
         overflow = true;
         f32 epsilon = 1.0f / (f32)maxValRight;
-        val = maxValLeft - epsilon;
-        whole = (isize)val;
+        valAbs = maxValLeft - epsilon;
+        whole = (isize)valAbs;
     }
     assert(whole <= maxValLeft - 1);
 
-    f32   frac = val - (f32)whole;
+    f32   frac = valAbs - (f32)whole;
     isize fracInt = (isize)((frac * (f32)(maxValRight)) + 0.5f);
 
-    fmtInt(builder, whole, (FmtInt) {.chars = spec.charsLeft, .align = FmtAlign_Right, .disallowOverflow = true});
+    fmtInt(builder, val < 0 ? -whole : whole, (FmtInt) {.chars = spec.charsLeft, .align = FmtAlign_Right, .disallowOverflow = true});
     fmtStr(builder, STR("."));
     fmtInt(builder, fracInt, (FmtInt) {.chars = spec.charsRight, .align = FmtAlign_Left, .padChar = '0'});
 
@@ -1030,12 +1041,15 @@ typedef struct Texture {
 } Texture;
 
 typedef struct SWRenderer {
-    struct {
-        u32*  ptr;
-        isize width;
-        isize height;
-        isize cap;
-    } image;
+    union {
+        struct {
+            u32*  ptr;
+            isize width;
+            isize height;
+            isize cap;
+        } image;
+        Texture texture;
+    };
 
     MeshStorage triangles;
 } SWRenderer;
@@ -1637,7 +1651,7 @@ initFont(Font* font, Arena* arena) {
 }
 
 function void
-drawGlyph(Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) {
+swDrawGlyph(Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) {
     for (i32 row = 0; row < glyph.height; row++) {
         i32 destRow = y + row;
         assert(destRow < dest.height);
@@ -1659,15 +1673,16 @@ drawGlyph(Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) {
     }
 }
 
-function void
-drawStr(Font* font, Str str, Texture dest, i32 top, Color01 color) {
+function i32
+swDrawStr(Font* font, Str str, Texture dest, i32 top, Color01 color) {
     i32 curX = 0;
     for (isize ind = 0; ind < str.len; ind++) {
         char  ch = str.ptr[ind];
         Glyph glyph = font->ascii[(u8)ch];
-        drawGlyph(glyph, dest, curX, top, color);
+        swDrawGlyph(glyph, dest, curX, top, color);
         curX += glyph.advance;
     }
+    return font->lineAdvance;
 }
 
 //
@@ -2007,32 +2022,36 @@ runTests(Arena* arena) {
         arenaAllocCap(arena, char, 1000, builder);
 
         fmtStr(&builder, STR("test"));
-        assert(streq((Str) {builder.ptr, builder.len}, STR("test")));
+        assert(streq(builder.str, STR("test")));
 
         fmtStr(&builder, STR(" and 2 "));
-        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 ")));
+        assert(streq(builder.str, STR("test and 2 ")));
 
         fmtInt(&builder, 123, (FmtInt) {.chars = 3});
-        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123")));
+        assert(streq(builder.str, STR("test and 2 123")));
         fmtStr(&builder, STR(" "));
 
         fmtInt(&builder, 0, (FmtInt) {.chars = 1});
-        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0")));
+        assert(streq(builder.str, STR("test and 2 123 0")));
         fmtStr(&builder, STR(" "));
 
         fmtF32(&builder, 123.4567, (FmtF32) {.charsLeft = 3, .charsRight = 2});
-        assert(streq((Str) {builder.ptr, builder.len}, STR("test and 2 123 0 123.46")));
+        assert(streq(builder.str, STR("test and 2 123 0 123.46")));
 
         fmtNull(&builder);
         assert(builder.ptr[builder.len - 1] == '\0');
 
         builder.len = 0;
         fmtInt(&builder, 123, (FmtInt) {.chars = 5, .align = FmtAlign_Left});
-        assert(streq((Str) {builder.ptr, builder.len}, STR("123  ")));
+        assert(streq(builder.str, STR("123  ")));
 
         builder.len = 0;
         fmtF32(&builder, 123.0f, (FmtF32) {.charsLeft = 2, .charsRight = 2});
-        assert(streq((Str) {builder.ptr, builder.len}, STR("99.9+")));
+        assert(streq(builder.str, STR("99.9+")));
+
+        builder.len = 0;
+        fmtInt(&builder, -123, (FmtInt) {.chars = 5, .align = FmtAlign_Right});
+        assert(streq(builder.str, STR(" -123")));
     }
 
     endTempMemory(temp);
@@ -2094,7 +2113,7 @@ runBench(Arena* arena) {
 // TODO(khvorov) Coordinate grid
 
 typedef struct State {
-    SWRenderer  renderer;
+    SWRenderer  swRenderer;
     MeshStorage meshStorage;
     Font        font;
     Arena       perm;
@@ -2114,6 +2133,10 @@ typedef struct State {
 
     bool showDebugTriangles;
     bool useSW;
+
+    struct {
+        Arena arena;
+    } debug;
 } State;
 
 function State*
@@ -2134,9 +2157,10 @@ initState(void* mem, isize bytes) {
     initFont(&state->font, &arena);
     state->scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
     state->perm = createArenaFromArena(&arena, 10 * 1024 * 1024);
+    state->debug.arena = createArenaFromArena(&arena, 10 * 1024 * 1024);
 
     isize perSystem = arenaFreeSize(&arena) / 3;
-    state->renderer = createSWRenderer(&arena, perSystem);
+    state->swRenderer = createSWRenderer(&arena, perSystem);
     state->meshStorage = createMeshStorage(&arena, perSystem);
     arenaAllocCap(&arena, Mesh, perSystem, state->meshes);
 
@@ -2156,6 +2180,7 @@ initState(void* mem, isize bytes) {
 
 function void
 update(State* state, f32 deltaSec) {
+    // NOTE(khvorov) Move camera
     {
         f32 moveInc = state->camera.moveWUPerSec;
         if (state->input.keys[InputKey_MoveFaster].down) {
@@ -2250,34 +2275,60 @@ update(State* state, f32 deltaSec) {
         state->camera.currentOrientation = rotor3fLerpN(state->camera.currentOrientation, state->camera.targetOrientation, smoothUpdateCoef);
     }
 
-    Rotor3f cubeRotation = createRotor3fAnglePlane(0.2 * deltaSec, 1, 1, 1);
-    for (isize ind = 0; ind < state->meshes.len; ind++) {
-        Mesh* mesh = state->meshes.ptr + ind;
-        mesh->orientation = rotor3fMulRotor3f(mesh->orientation, cubeRotation);
-        cubeRotation = rotor3fReverse(cubeRotation);
+    // NOTE(khvorov) Entity update?
+    {
+        Rotor3f cubeRotation = createRotor3fAnglePlane(0.2 * deltaSec, 1, 1, 1);
+        for (isize ind = 0; ind < state->meshes.len; ind++) {
+            Mesh* mesh = state->meshes.ptr + ind;
+            mesh->orientation = rotor3fMulRotor3f(mesh->orientation, cubeRotation);
+            cubeRotation = rotor3fReverse(cubeRotation);
+        }
     }
 
-    if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
-        state->showDebugTriangles = !state->showDebugTriangles;
-    }
+    // NOTE(khvorov) Misc
+    {
+        if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
+            state->showDebugTriangles = !state->showDebugTriangles;
+        }
 
-    if (inputKeyWasPressed(&state->input, InputKey_ToggleSW)) {
-        state->useSW = !state->useSW;
+        if (inputKeyWasPressed(&state->input, InputKey_ToggleSW)) {
+            state->useSW = !state->useSW;
+        }
     }
 }
 
 function void
 swRender(State* state) {
-    meshStorageClearBuffers(&state->renderer.triangles);
+    meshStorageClearBuffers(&state->swRenderer.triangles);
     if (state->showDebugTriangles) {
-        swRendererDrawDebugTriangles(&state->renderer, state->windowWidth, state->windowHeight, &state->scratch);
+        swRendererDrawDebugTriangles(&state->swRenderer, state->windowWidth, state->windowHeight, &state->scratch);
     } else {
         for (isize meshIndex = 0; meshIndex < state->meshes.len; meshIndex++) {
             Mesh mesh = state->meshes.ptr[meshIndex];
-            swRendererPushMesh(&state->renderer, mesh, state->camera);
+            swRendererPushMesh(&state->swRenderer, mesh, state->camera);
         }
-        swRendererSetImageSize(&state->renderer, state->windowWidth, state->windowHeight);
-        swRendererClearImage(&state->renderer);
-        swRendererFillTriangles(&state->renderer);
+        swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
+        swRendererClearImage(&state->swRenderer);
+        swRendererFillTriangles(&state->swRenderer);
+    }
+
+    // NOTE(khvorov) Debug
+    {
+        StrBuilder builder = {.ptr = (char*)arenaFreePtr(&state->scratch), .cap = arenaFreeSize(&state->scratch)};
+
+        {
+            Color01 col = {.a = 1, .r = 1, .g = 1, .b = 1};
+            i32     top = 0;
+            top += swDrawStr(&state->font, STR("   camera pos"), state->swRenderer.texture, top, col);
+            top += swDrawStr(&state->font, STR("  x  |  y  |  z"), state->swRenderer.texture, top, col);
+
+            FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
+            fmtF32(&builder, state->camera.pos.x, posFmt);
+            fmtStr(&builder, STR(" "));
+            fmtF32(&builder, state->camera.pos.y, posFmt);
+            fmtStr(&builder, STR(" "));
+            fmtF32(&builder, state->camera.pos.z, posFmt);
+            swDrawStr(&state->font, builder.str, state->swRenderer.texture, top, col);
+        }
     }
 }
