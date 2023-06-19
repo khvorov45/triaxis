@@ -7,9 +7,6 @@
 #include <stdalign.h>
 #include <immintrin.h>
 
-// TODO(khvorov) Remove
-#include <math.h>
-
 #include "TracyC.h"
 
 // clang-format off
@@ -327,6 +324,12 @@ fmtNull(StrBuilder* builder) {
 // SECTION Math
 //
 
+function bool
+feqEplislon(f32 v1, f32 v2, f32 epsilon) {
+    bool result = absval(v1 - v2) < epsilon;
+    return result;
+}
+
 function f32
 squareRootf(f32 val) {
     __m128 val128 = _mm_set_ss(val);
@@ -351,14 +354,35 @@ safeRatio1f(f32 v1, f32 v2) {
 }
 
 function f32
-lerpf(f32 start, f32 end, f32 by) {
-    f32 result = start + (end - start) * by;
+sinef(f32 valTurns) {
+    f32 val01 = valTurns - (f32)(i32)valTurns;
+    if (val01 < 0) {
+        val01 += 1.0f;
+    }
+    f32 result = 0;
+    if (val01 < 0.5f) {
+        result = -16.0f * val01 * (val01 - 0.5);
+    } else {
+        result = 16.0f * (val01 - 0.5) * (val01 - 1);
+    }
     return result;
 }
 
 function f32
-degreesToRadians(f32 degrees) {
-    f32 result = degrees / 180 * PI;
+cosinef(f32 valTurns) {
+    f32 result = sinef(valTurns + 0.25);
+    return result;
+}
+
+function f32
+tangentf(f32 valTurns) {
+    f32 result = safeRatio1f(sinef(valTurns), cosinef(valTurns));
+    return result;
+}
+
+function f32
+lerpf(f32 start, f32 end, f32 by) {
+    f32 result = start + (end - start) * by;
     return result;
 }
 
@@ -500,13 +524,13 @@ createRotor3f(void) {
 }
 
 function Rotor3f
-createRotor3fAnglePlane(f32 angleDegrees, f32 xy, f32 xz, f32 yz) {
+createRotor3fAnglePlane(f32 angleTurns, f32 xy, f32 xz, f32 yz) {
     assert(xy != 0 || xz != 0 || yz != 0);
     f32 area = squareRootf(squaref(xy) + squaref(xz) + squaref(yz));
-    f32 angleRadians = degreesToRadians(angleDegrees);
-    f32 halfa = angleRadians / 2;
-    f32 sina = sinf(halfa);
-    f32 cosa = cosf(halfa);
+
+    f32 halfAngleTurns = angleTurns / 2;
+    f32 sina = sinef(halfAngleTurns);
+    f32 cosa = cosinef(halfAngleTurns);
 
     Rotor3f result = {
         .dt = cosa,
@@ -525,7 +549,7 @@ rotor3fEq(Rotor3f r1, Rotor3f r2) {
 
 function Rotor3f
 rotor3fNormalise(Rotor3f r) {
-    f32 l = sqrtf(squaref(r.dt) + squaref(r.xy) + squaref(r.xz) + squaref(r.yz));
+    f32 l = squareRootf(squaref(r.dt) + squaref(r.xy) + squaref(r.xz) + squaref(r.yz));
     assert(l > 0);
     Rotor3f result = {
         .dt = r.dt / l,
@@ -727,58 +751,6 @@ isTopLeft(V2f v1, V2f v2) {
     return result;
 }
 
-typedef struct M4x4f {
-    f32 m11, m12, m13, m14;
-    f32 m21, m22, m23, m24;
-    f32 m31, m32, m33, m34;
-    f32 m41, m42, m43, m44;
-} M4x4f;
-
-function M4x4f
-m4x4fidentity(void) {
-    M4x4f result = {.m11 = 1, .m22 = 1, .m33 = 1, .m44 = 1};
-    return result;
-}
-
-function M4x4f
-m4x4ftranslation(V3f pos) {
-    M4x4f result = {.m11 = 1, .m22 = 1, .m33 = 1, .m44 = 1, .m14 = pos.x, .m24 = pos.y, .m34 = pos.z};
-    return result;
-}
-
-function M4x4f
-m4x4fprojection(void) {
-    M4x4f result = {.m11 = 1, .m22 = 1, .m33 = 1, .m44 = 0, .m43 = 1};
-    return result;
-}
-
-function M4x4f
-m4x4fmul(M4x4f mat1, M4x4f mat2) {
-    M4x4f result = {};
-
-    result.m11 = mat1.m11 * mat2.m11 + mat1.m12 * mat2.m21 + mat1.m13 * mat2.m31 + mat1.m14 * mat2.m41;
-    result.m12 = mat1.m11 * mat2.m12 + mat1.m12 * mat2.m22 + mat1.m13 * mat2.m32 + mat1.m14 * mat2.m42;
-    result.m13 = mat1.m11 * mat2.m13 + mat1.m12 * mat2.m23 + mat1.m13 * mat2.m33 + mat1.m14 * mat2.m43;
-    result.m14 = mat1.m11 * mat2.m14 + mat1.m12 * mat2.m24 + mat1.m13 * mat2.m34 + mat1.m14 * mat2.m44;
-
-    result.m21 = mat1.m21 * mat2.m11 + mat1.m22 * mat2.m21 + mat1.m23 * mat2.m31 + mat1.m24 * mat2.m41;
-    result.m22 = mat1.m21 * mat2.m12 + mat1.m22 * mat2.m22 + mat1.m23 * mat2.m32 + mat1.m24 * mat2.m42;
-    result.m23 = mat1.m21 * mat2.m13 + mat1.m22 * mat2.m23 + mat1.m23 * mat2.m33 + mat1.m24 * mat2.m43;
-    result.m24 = mat1.m21 * mat2.m14 + mat1.m22 * mat2.m24 + mat1.m23 * mat2.m34 + mat1.m24 * mat2.m44;
-
-    result.m31 = mat1.m31 * mat2.m11 + mat1.m32 * mat2.m21 + mat1.m33 * mat2.m31 + mat1.m34 * mat2.m41;
-    result.m32 = mat1.m31 * mat2.m12 + mat1.m32 * mat2.m22 + mat1.m33 * mat2.m32 + mat1.m34 * mat2.m42;
-    result.m33 = mat1.m31 * mat2.m13 + mat1.m32 * mat2.m23 + mat1.m33 * mat2.m33 + mat1.m34 * mat2.m43;
-    result.m34 = mat1.m31 * mat2.m14 + mat1.m32 * mat2.m24 + mat1.m33 * mat2.m34 + mat1.m34 * mat2.m44;
-
-    result.m41 = mat1.m41 * mat2.m11 + mat1.m42 * mat2.m21 + mat1.m43 * mat2.m31 + mat1.m44 * mat2.m41;
-    result.m42 = mat1.m41 * mat2.m12 + mat1.m42 * mat2.m22 + mat1.m43 * mat2.m32 + mat1.m44 * mat2.m42;
-    result.m43 = mat1.m41 * mat2.m13 + mat1.m42 * mat2.m23 + mat1.m43 * mat2.m33 + mat1.m44 * mat2.m43;
-    result.m44 = mat1.m41 * mat2.m14 + mat1.m42 * mat2.m24 + mat1.m43 * mat2.m34 + mat1.m44 * mat2.m44;
-
-    return result;
-}
-
 //
 // SECTION Meshes
 //
@@ -958,13 +930,13 @@ typedef struct Camera {
     Rotor3f targetOrientation;
     f32     moveWUPerSec;
     f32     moveWUPerSecAccelerated;
-    f32     rotDegreesPerSec;
+    f32     rotTurnsPerSec;
 } Camera;
 
 function Camera
 createCamera(V3f pos, f32 width, f32 height) {
-    f32    fovDegreesX = 90;
-    f32    fovx = tanf(degreesToRadians(fovDegreesX / 2));
+    f32    fovxTurns = 0.25;
+    f32    fovx = tangentf(fovxTurns / 2);
     f32    fovy = height / width * fovx;
     Camera camera = {
         .pos = pos,
@@ -973,7 +945,7 @@ createCamera(V3f pos, f32 width, f32 height) {
         .targetOrientation = createRotor3f(),
         .moveWUPerSec = 5,
         .moveWUPerSecAccelerated = 15,
-        .rotDegreesPerSec = 70,
+        .rotTurnsPerSec = 0.2,
     };
     return camera;
 }
@@ -1933,9 +1905,6 @@ runTests(Arena* arena) {
         assert(squaref(5) == 25);
         assert(lerpf(5, 15, 0.3) == 8);
 
-        assert(degreesToRadians(0) == 0);
-        assert(degreesToRadians(30) < degreesToRadians(60));
-
         assert(v2feq(v2fadd((V2f) {1, 2}, (V2f) {3, -5}), (V2f) {4, -3}));
         assert(v3feq(v3fadd((V3f) {.x = 1, .y = 2, .z = 3}, (V3f) {.x = 3, .y = -5, .z = 10}), (V3f) {.x = 4, .y = -3, .z = 13}));
 
@@ -1953,18 +1922,34 @@ runTests(Arena* arena) {
     }
 
     {
+        f32 turns[] = {-1, -0.2, -0.5, -0.7, 0, 0.1, 0.5, 0.9, 1};
+        f32 expectedSin[] = {2.44921270764475e-16, -0.951056516295154, -1.22460635382238e-16, 0.951056516295154, 0, 0.587785252292473, 1.22460635382238e-16, -0.587785252292473, -2.44921270764475e-16};
+        for (i32 turnInd = 0; turnInd < arrayCount(turns); turnInd++) {
+            f32 turn = turns[turnInd];
+
+            f32 got = sinef(turn);
+            f32 expected = expectedSin[turnInd];
+
+            assert(feqEplislon(got, expected, 0.1));
+        }
+    }
+
+    {
         assert(rotor3fEq(rotor3fNormalise((Rotor3f) {4, 4, 4, 4}), (Rotor3f) {0.5, 0.5, 0.5, 0.5}));
         assert(rotor3fEq(rotor3fReverse((Rotor3f) {1, 2, 3, 4}), (Rotor3f) {1, -2, -3, -4}));
 
-        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, 1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0}).y == 1);
-        assert(rotor3fRotateV3f(createRotor3fAnglePlane(90, -1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0}).y == -1);
+        {
+            V3f result = rotor3fRotateV3f(createRotor3fAnglePlane(0.25, 1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0});
+            assert(feqEplislon(result.y, 1, 0.2));
+        }
+        assert(feqEplislon(rotor3fRotateV3f(createRotor3fAnglePlane(0.25, -1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0}).y, -1, 0.2));
 
         {
-            Rotor3f r1 = createRotor3fAnglePlane(30, 1, 0, 0);
-            Rotor3f r2 = createRotor3fAnglePlane(60, 1, 0, 0);
+            Rotor3f r1 = createRotor3fAnglePlane(0.1, 1, 0, 0);
+            Rotor3f r2 = createRotor3fAnglePlane(0.15, 1, 0, 0);
             Rotor3f rmul = rotor3fMulRotor3f(r1, r2);
             V3f     vrot = rotor3fRotateV3f(rmul, (V3f) {.x = 1, .y = 0, .z = 0});
-            assert(absval(vrot.y - 1) < 0.001);
+            assert(feqEplislon(vrot.y, 1, 0.2));
         }
     }
 
@@ -2106,6 +2091,7 @@ runBench(Arena* arena) {
 //
 
 // TODO(khvorov) Debug overlay with a log panel
+// TODO(khvorov) Coordinate grid
 
 typedef struct State {
     SWRenderer  renderer;
@@ -2229,7 +2215,7 @@ update(State* state, f32 deltaSec) {
         }
 
         if (xy != 0 || xz != 0 || yz != 0) {
-            f32     rotInc = state->camera.rotDegreesPerSec * deltaSec;
+            f32     rotInc = state->camera.rotTurnsPerSec * deltaSec;
             Rotor3f rot = createRotor3fAnglePlane(rotInc, xy, xz, yz);
             state->camera.targetOrientation = rotor3fMulRotor3f(state->camera.targetOrientation, rot);
         }
@@ -2241,7 +2227,7 @@ update(State* state, f32 deltaSec) {
         f32 xz = -(f32)state->input.mouse.dx;
         f32 yz = (f32)state->input.mouse.dy;
         if (xy != 0 || xz != 0 || yz != 0) {
-            V2f mouseSens = {100, 100};  // TODO(khvorov) Config
+            V2f mouseSens = {0.25, 0.25};  // TODO(khvorov) Config
             V2f mouseMove = v2fhadamard(mouseSens, {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
             f32 mouseMoveCoef = v2flen(mouseMove);
             f32 rotInc = mouseMoveCoef * deltaSec;
@@ -2264,7 +2250,7 @@ update(State* state, f32 deltaSec) {
         state->camera.currentOrientation = rotor3fLerpN(state->camera.currentOrientation, state->camera.targetOrientation, smoothUpdateCoef);
     }
 
-    Rotor3f cubeRotation = createRotor3fAnglePlane(0 * deltaSec, 1, 1, 1);
+    Rotor3f cubeRotation = createRotor3fAnglePlane(0.2 * deltaSec, 1, 1, 1);
     for (isize ind = 0; ind < state->meshes.len; ind++) {
         Mesh* mesh = state->meshes.ptr + ind;
         mesh->orientation = rotor3fMulRotor3f(mesh->orientation, cubeRotation);
