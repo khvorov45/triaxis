@@ -957,7 +957,7 @@ typedef struct Camera {
     Rotor3f currentOrientation;
     Rotor3f targetOrientation;
     f32     moveWUPerSec;
-    f32     moveAccelerationCoef;
+    f32     moveWUPerSecAccelerated;
     f32     rotDegreesPerSec;
 } Camera;
 
@@ -971,8 +971,8 @@ createCamera(V3f pos, f32 width, f32 height) {
         .tanHalfFov = {fovx, fovy},
         .currentOrientation = createRotor3f(),
         .targetOrientation = createRotor3f(),
-        .moveWUPerSec = 1,
-        .moveAccelerationCoef = 10,
+        .moveWUPerSec = 5,
+        .moveWUPerSecAccelerated = 15,
         .rotDegreesPerSec = 70,
     };
     return camera;
@@ -2171,10 +2171,11 @@ initState(void* mem, isize bytes) {
 function void
 update(State* state, f32 deltaSec) {
     {
-        f32 moveInc = state->camera.moveWUPerSec * deltaSec;
+        f32 moveInc = state->camera.moveWUPerSec;
         if (state->input.keys[InputKey_MoveFaster].down) {
-            moveInc *= state->camera.moveAccelerationCoef;
+            moveInc = state->camera.moveWUPerSecAccelerated;
         }
+        moveInc *= deltaSec;
 
         V3f cameraMoveInCameraSpace = {};
         if (state->input.keys[InputKey_Forward].down) {
