@@ -1,6 +1,7 @@
 #include "triaxis.c"
 
 #undef function
+#undef BYTE
 #define WIN32_LEAN_AND_MEAN 1
 #define VC_EXTRALEAN 1
 #include <Windows.h>
@@ -484,6 +485,32 @@ d3d11render(D3D11Renderer renderer, State* state) {
     }
 
     // TODO(khvorov) Debug overlay
+    {
+        const struct nk_command* cmd = 0;
+        nk_foreach(cmd, &state->ui) {
+            switch (cmd->type) {
+                case NK_COMMAND_NOP: break;
+                case NK_COMMAND_SCISSOR: break;
+                case NK_COMMAND_LINE: break;
+                case NK_COMMAND_CURVE: break;
+                case NK_COMMAND_RECT: break;
+                case NK_COMMAND_RECT_FILLED: break;
+                case NK_COMMAND_RECT_MULTI_COLOR: break;
+                case NK_COMMAND_CIRCLE: break;
+                case NK_COMMAND_CIRCLE_FILLED: break;
+                case NK_COMMAND_ARC: break;
+                case NK_COMMAND_ARC_FILLED: break;
+                case NK_COMMAND_TRIANGLE: break;
+                case NK_COMMAND_TRIANGLE_FILLED: break;
+                case NK_COMMAND_POLYGON: break;
+                case NK_COMMAND_POLYGON_FILLED: break;
+                case NK_COMMAND_POLYLINE: break;
+                case NK_COMMAND_TEXT: break;
+                case NK_COMMAND_IMAGE: break;
+                case NK_COMMAND_CUSTOM: break;
+            }
+        }
+    }
 
     HRESULT presentResult = renderer.common->swapChain->Present(1, 0);
     asserthr(presentResult);
@@ -764,6 +791,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             d3d11render(d3d11renderer, state);
         }
 
+        nk_clear(&state->ui);
         TracyCZoneEnd(tracyFrameCtx);
     }
 

@@ -10,12 +10,17 @@
 #include "TracyC.h"
 
 // clang-format off
-#define PI 3.14159
+#define BYTE (1)
+#define KILOBYTE (1024 * BYTE)
+#define MEGABYTE (1024 * KILOBYTE)
+#define GIGABYTE (1024 * MEGABYTE)
+#define PI (3.14159)
 #define function static
 #define arrayCount(x) (int)(sizeof(x) / sizeof(x[0]))
 #define unused(x) (x) = (x)
 #define min(x, y) (((x) < (y)) ? (x) : (y))
 #define max(x, y) (((x) > (y)) ? (x) : (y))
+#define clamp(val, low, high) (max(low, min(val, high)))
 #define absval(x) ((x) >= 0 ? (x) : -(x))
 #define arenaAllocArray(arena, type, count) (type*)arenaAlloc(arena, sizeof(type)*count, alignof(type))
 #define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
@@ -76,23 +81,23 @@ memeq(const void* ptr1, const void* ptr2, isize len) {
 }
 
 function void
-zeromem(void* ptr, isize len) {
+setmem(void* ptr, int val, isize len) {
     isize    wholeCount = len / sizeof(__m512i);
     __m512i* ptr512 = (__m512i*)ptr;
+    __m512i  val512 = _mm512_set1_epi32(val);
 
-    {
-        __m512i zero512 = _mm512_setzero_si512();
-        for (isize ind = 0; ind < wholeCount; ind++) {
-            _mm512_storeu_si512(ptr512 + ind, zero512);
-        }
+    for (isize ind = 0; ind < wholeCount; ind++) {
+        _mm512_storeu_si512(ptr512 + ind, val512);
     }
 
-    {
-        __m512i   zeros512 = _mm512_set1_epi8(0);
-        isize     remaining = len - wholeCount * sizeof(__m512i);
-        __mmask64 tailMask = globalTailByteMasks512[remaining];
-        _mm512_mask_storeu_epi8(ptr512 + wholeCount, tailMask, zeros512);
-    }
+    isize     remaining = len - wholeCount * sizeof(__m512i);
+    __mmask64 tailMask = globalTailByteMasks512[remaining];
+    _mm512_mask_storeu_epi8(ptr512 + wholeCount, tailMask, val512);
+}
+
+function void
+zeromem(void* ptr, isize len) {
+    setmem(ptr, 0, len);
 }
 
 function void
@@ -762,6 +767,16 @@ isTopLeft(V2f v1, V2f v2) {
     return result;
 }
 
+#define NK_PRIVATE 1
+#define NK_INCLUDE_FIXED_TYPES 1
+#define NK_INCLUDE_STANDARD_BOOL 1
+#define NK_ASSERT(cond) assert(cond)
+#define NK_MEMSET(ptr, val, size) setmem(ptr, val, size)
+#define NK_MEMCPY(dest, src, size) copymem(dest, src, size)
+#define NK_INV_SQRT(n) (1 / squareRootf(n))
+#define NK_IMPLEMENTATION 1
+#include "nuklear.h"
+
 //
 // SECTION Meshes
 //
@@ -1031,7 +1046,7 @@ inputKeyWasPressed(Input* input, InputKey key) {
 }
 
 //
-// SECTION SWRenderer
+// SECTION Texture
 //
 
 typedef struct Texture {
@@ -1039,6 +1054,74 @@ typedef struct Texture {
     isize width;
     isize height;
 } Texture;
+
+function void
+swContrast(Texture texture, isize row, isize col) {
+    assert(row >= 0 && col >= 0 && row < texture.height && col < texture.width);
+    isize index = row * texture.width + col;
+    u32   oldVal = texture.ptr[index];
+    u32   inverted = coloru32GetContrast(oldVal);
+    texture.ptr[index] = inverted;
+}
+
+function void
+swDrawContrastLine(Texture texture, V2f v1, V2f v2) {
+    i32 x0 = (i32)(v1.x + 0.5);
+    i32 y0 = (i32)(v1.y + 0.5);
+    i32 x1 = (i32)(v2.x + 0.5);
+    i32 y1 = (i32)(v2.y + 0.5);
+
+    i32 dx = absval(x1 - x0);
+    i32 sx = x0 < x1 ? 1 : -1;
+    i32 dy = -absval(y1 - y0);
+    i32 sy = y0 < y1 ? 1 : -1;
+    i32 error = dx + dy;
+
+    for (;;) {
+        if (y0 >= 0 && x0 >= 0 && y0 < texture.height && x0 < texture.width) {
+            swContrast(texture, y0, x0);
+        }
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        i32 e2 = 2 * error;
+
+        if (e2 >= dy) {
+            if (x0 == x1) {
+                break;
+            }
+            error = error + dy;
+            x0 = x0 + sx;
+        }
+
+        if (e2 <= dx) {
+            if (y0 == y1) {
+                break;
+            }
+            error = error + dx;
+            y0 = y0 + sy;
+        }
+    }
+}
+
+function void
+swDrawContrastRect(Texture texture, Rect2f rect) {
+    Rect2f rectClipped = rect2fClip(rect, (Rect2f) {{-0.5, -0.5}, {(f32)texture.width, (f32)texture.height}});
+    i32    x0 = (i32)(rectClipped.topleft.x + 0.5);
+    i32    x1 = (i32)(rectClipped.topleft.x + rectClipped.dim.x + 0.5);
+    i32    y0 = (i32)(rectClipped.topleft.y + 0.5);
+    i32    y1 = (i32)(rectClipped.topleft.y + rectClipped.dim.y + 0.5);
+
+    for (i32 ycoord = y0; ycoord < y1; ycoord++) {
+        for (i32 xcoord = x0; xcoord < x1; xcoord++) {
+            swContrast(texture, ycoord, xcoord);
+        }
+    }
+}
+
+//
+// SECTION SWRenderer
+//
 
 typedef struct SWRenderer {
     union {
@@ -1192,70 +1275,6 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
 }
 
 function void
-swRendererContrast(SWRenderer* renderer, isize row, isize col) {
-    assert(row >= 0 && col >= 0 && row < renderer->image.height && col < renderer->image.width);
-    isize index = row * renderer->image.width + col;
-    u32   oldVal = renderer->image.ptr[index];
-    u32   inverted = coloru32GetContrast(oldVal);
-    renderer->image.ptr[index] = inverted;
-}
-
-function void
-swRendererDrawContrastLine(SWRenderer* renderer, V2f v1, V2f v2) {
-    i32 x0 = (i32)(v1.x + 0.5);
-    i32 y0 = (i32)(v1.y + 0.5);
-    i32 x1 = (i32)(v2.x + 0.5);
-    i32 y1 = (i32)(v2.y + 0.5);
-
-    i32 dx = absval(x1 - x0);
-    i32 sx = x0 < x1 ? 1 : -1;
-    i32 dy = -absval(y1 - y0);
-    i32 sy = y0 < y1 ? 1 : -1;
-    i32 error = dx + dy;
-
-    for (;;) {
-        if (y0 >= 0 && x0 >= 0 && y0 < renderer->image.height && x0 < renderer->image.width) {
-            swRendererContrast(renderer, y0, x0);
-        }
-        if (x0 == x1 && y0 == y1) {
-            break;
-        }
-        i32 e2 = 2 * error;
-
-        if (e2 >= dy) {
-            if (x0 == x1) {
-                break;
-            }
-            error = error + dy;
-            x0 = x0 + sx;
-        }
-
-        if (e2 <= dx) {
-            if (y0 == y1) {
-                break;
-            }
-            error = error + dx;
-            y0 = y0 + sy;
-        }
-    }
-}
-
-function void
-swRendererDrawContrastRect(SWRenderer* renderer, Rect2f rect) {
-    Rect2f rectClipped = rect2fClip(rect, (Rect2f) {{-0.5, -0.5}, {(f32)renderer->image.width, (f32)renderer->image.height}});
-    i32    x0 = (i32)(rectClipped.topleft.x + 0.5);
-    i32    x1 = (i32)(rectClipped.topleft.x + rectClipped.dim.x + 0.5);
-    i32    y0 = (i32)(rectClipped.topleft.y + 0.5);
-    i32    y1 = (i32)(rectClipped.topleft.y + rectClipped.dim.y + 0.5);
-
-    for (i32 ycoord = y0; ycoord < y1; ycoord++) {
-        for (i32 xcoord = x0; xcoord < x1; xcoord++) {
-            swRendererContrast(renderer, ycoord, xcoord);
-        }
-    }
-}
-
-function void
 swRendererOutlineTriangle(SWRenderer* renderer, TriangleIndices trig) {
     Triangle tr = swRendererPullTriangle(renderer, trig);
 
@@ -1264,14 +1283,14 @@ swRendererOutlineTriangle(SWRenderer* renderer, TriangleIndices trig) {
     V2f v3 = tr.v3;
 
     if (tr.area > 0 && !tr.isBehind) {
-        swRendererDrawContrastLine(renderer, v1, v2);
-        swRendererDrawContrastLine(renderer, v2, v3);
-        swRendererDrawContrastLine(renderer, v3, v1);
+        swDrawContrastLine(renderer->texture, v1, v2);
+        swDrawContrastLine(renderer->texture, v2, v3);
+        swDrawContrastLine(renderer->texture, v3, v1);
 
         V2f vertexRectDim = {10, 10};
-        swRendererDrawContrastRect(renderer, rect2fCenterDim(v1, vertexRectDim));
-        swRendererDrawContrastRect(renderer, rect2fCenterDim(v2, vertexRectDim));
-        swRendererDrawContrastRect(renderer, rect2fCenterDim(v3, vertexRectDim));
+        swDrawContrastRect(renderer->texture, rect2fCenterDim(v1, vertexRectDim));
+        swDrawContrastRect(renderer->texture, rect2fCenterDim(v2, vertexRectDim));
+        swDrawContrastRect(renderer->texture, rect2fCenterDim(v3, vertexRectDim));
     }
 }
 
@@ -1405,16 +1424,16 @@ swRendererScaleOntoAPixelGrid(SWRenderer* renderer, isize width, isize height, A
         for (isize oldCol = 0; oldCol < oldWidth; oldCol++) {
             isize topleftX = oldCol * scaleX;
             for (isize toplineX = topleftX; toplineX < topleftX + scaleX; toplineX++) {
-                swRendererContrast(renderer, topleftY, toplineX);
+                swContrast(renderer->texture, topleftY, toplineX);
             }
             for (isize leftlineY = topleftY + 1; leftlineY < topleftY + scaleY; leftlineY++) {
-                swRendererContrast(renderer, leftlineY, topleftX);
+                swContrast(renderer->texture, leftlineY, topleftX);
             }
 
             {
                 isize centerY = topleftY + scaleY / 2;
                 isize centerX = topleftX + scaleX / 2;
-                swRendererContrast(renderer, centerY, centerX);
+                swContrast(renderer->texture, centerY, centerX);
             }
         }
     }
@@ -1659,23 +1678,33 @@ swDrawGlyph(Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) {
             i32 destCol = x + col;
             assert(destCol < dest.width);
 
-            i32      index = row * glyph.width + col;
-            u8       alpha = glyph.ptr[index];
-            Color255 og255 = {.r = alpha, .g = alpha, .b = alpha, .a = 255};
-            Color01  og01 = color255to01(og255);
-            Color01  dest01 = color01mul(og01, color);
-            Color255 dest255 = color01to255(dest01);
-            u32      dest32 = color255tou32(dest255);
+            i32     index = row * glyph.width + col;
+            u8      alpha = glyph.ptr[index];
+            Color01 thisColor = color;
+            thisColor.a *= ((f32)alpha) / 255.0f;
 
-            i32 destIndex = destRow * dest.width + destCol;
-            dest.ptr[destIndex] = dest32;
+            i32      destIndex = destRow * dest.width + destCol;
+            u32      old32 = dest.ptr[destIndex];
+            Color255 old255 = coloru32to255(old32);
+            Color01  old01 = color255to01(old255);
+
+            Color01 new01 = {
+                .r = lerpf(old01.r, thisColor.r, thisColor.a),
+                .g = lerpf(old01.g, thisColor.g, thisColor.a),
+                .b = lerpf(old01.b, thisColor.b, thisColor.a),
+                .a = 1,  // NOTE(khvorov) Assuming dest texture won't be blended further
+            };
+
+            Color255 new255 = color01to255(new01);
+            u32      new32 = color255tou32(new255);
+            dest.ptr[destIndex] = new32;
         }
     }
 }
 
 function i32
-swDrawStr(Font* font, Str str, Texture dest, i32 top, Color01 color) {
-    i32 curX = 0;
+swDrawStr(Font* font, Str str, Texture dest, i32 left, i32 top, Color01 color) {
+    i32 curX = left;
     for (isize ind = 0; ind < str.len; ind++) {
         char  ch = str.ptr[ind];
         Glyph glyph = font->ascii[(u8)ch];
@@ -2000,7 +2029,7 @@ runTests(Arena* arena) {
     }
 
     {
-        MeshStorage store = createMeshStorage(arena, 1024 * 1024);
+        MeshStorage store = createMeshStorage(arena, MEGABYTE);
 
         Mesh cube1 = createCubeMesh(&store, 2, (V3f) {}, createRotor3f());
         assert(store.vertices.len == cube1.vertices.len);
@@ -2134,10 +2163,22 @@ typedef struct State {
     bool showDebugTriangles;
     bool useSW;
 
+    struct nk_context   ui;
+    struct nk_user_font uifont;
+
     struct {
         Arena arena;
     } debug;
 } State;
+
+function float
+initState_uifontTextWidthCalc(nk_handle handle, float height, const char* text, int len) {
+    unused(height);
+    unused(text);
+    Font* font = (Font*)handle.ptr;
+    float result = len * font->ascii->width;
+    return result;
+}
 
 function State*
 initState(void* mem, isize bytes) {
@@ -2155,9 +2196,19 @@ initState(void* mem, isize bytes) {
     State* state = arenaAllocArray(&arena, State, 1);
 
     initFont(&state->font, &arena);
-    state->scratch = createArenaFromArena(&arena, 10 * 1024 * 1024);
-    state->perm = createArenaFromArena(&arena, 10 * 1024 * 1024);
-    state->debug.arena = createArenaFromArena(&arena, 10 * 1024 * 1024);
+    state->scratch = createArenaFromArena(&arena, 10 * MEGABYTE);
+    state->perm = createArenaFromArena(&arena, 10 * MEGABYTE);
+    state->debug.arena = createArenaFromArena(&arena, 10 * MEGABYTE);
+
+    {
+        state->uifont.userdata.ptr = &state->font;
+        state->uifont.height = state->font.lineAdvance;
+        state->uifont.width = initState_uifontTextWidthCalc;
+
+        isize nkMemSize = 16 * MEGABYTE;
+        u8*   nkmem = arenaAllocArray(&arena, u8, nkMemSize);
+        nk_init_fixed(&state->ui, nkmem, nkMemSize, &state->uifont);
+    }
 
     isize perSystem = arenaFreeSize(&arena) / 3;
     state->swRenderer = createSWRenderer(&arena, perSystem);
@@ -2172,8 +2223,6 @@ initState(void* mem, isize bytes) {
 
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0)));
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0)));
-
-    state->showDebugTriangles = false;
 
     return state;
 }
@@ -2295,6 +2344,26 @@ update(State* state, f32 deltaSec) {
             state->useSW = !state->useSW;
         }
     }
+
+    // NOTE(khvorov) Debug UI
+    if (nk_begin(&state->ui, "test", nk_rect(0, 0, 500, 500), 0)) {
+        nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->width, 3);
+
+        nk_text(&state->ui, "x", 1, NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, "y", 1, NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, "z", 1, NK_TEXT_ALIGN_CENTERED);
+
+        nk_text(&state->ui, "1", 1, NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, "2", 1, NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, "3", 1, NK_TEXT_ALIGN_CENTERED);
+    }
+    nk_end(&state->ui);
+}
+
+function Color255
+swRender_colorconv(struct nk_color c) {
+    Color255 result = {.a = c.a, .r = c.r, .g = c.g, .b = c.b};
+    return result;
 }
 
 function void
@@ -2314,21 +2383,70 @@ swRender(State* state) {
 
     // NOTE(khvorov) Debug
     {
-        StrBuilder builder = {.ptr = (char*)arenaFreePtr(&state->scratch), .cap = arenaFreeSize(&state->scratch)};
+        Texture tex = state->swRenderer.texture;
 
-        {
-            Color01 col = {.a = 1, .r = 1, .g = 1, .b = 1};
-            i32     top = 0;
-            top += swDrawStr(&state->font, STR("   camera pos"), state->swRenderer.texture, top, col);
-            top += swDrawStr(&state->font, STR("  x  |  y  |  z"), state->swRenderer.texture, top, col);
+        const struct nk_command* cmd = 0;
+        nk_foreach(cmd, &state->ui) {
+            switch (cmd->type) {
+                case NK_COMMAND_NOP: break;
+                case NK_COMMAND_SCISSOR: break;
+                case NK_COMMAND_LINE: break;
+                case NK_COMMAND_CURVE: break;
+                case NK_COMMAND_RECT: break;
 
-            FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
-            fmtF32(&builder, state->camera.pos.x, posFmt);
-            fmtStr(&builder, STR(" "));
-            fmtF32(&builder, state->camera.pos.y, posFmt);
-            fmtStr(&builder, STR(" "));
-            fmtF32(&builder, state->camera.pos.z, posFmt);
-            swDrawStr(&state->font, builder.str, state->swRenderer.texture, top, col);
+                case NK_COMMAND_RECT_FILLED: {
+                    struct nk_command_rect_filled* rect = (struct nk_command_rect_filled*)cmd;
+
+                    i32 y0 = clamp(rect->y, 0, tex.height);
+                    i32 y1 = clamp(rect->y + rect->h, 0, tex.height);
+                    i32 x0 = clamp(rect->x, 0, tex.width);
+                    i32 x1 = clamp(rect->x + rect->w, 0, tex.width);
+
+                    u32 color = color255tou32(swRender_colorconv(rect->color));
+
+                    for (i32 ycoord = y0; ycoord < y1; ycoord++) {
+                        for (i32 xcoord = x0; xcoord < x1; xcoord++) {
+                            tex.ptr[ycoord * tex.width + xcoord] = color;
+                        }
+                    }
+                } break;
+
+                case NK_COMMAND_RECT_MULTI_COLOR: break;
+                case NK_COMMAND_CIRCLE: break;
+                case NK_COMMAND_CIRCLE_FILLED: break;
+                case NK_COMMAND_ARC: break;
+                case NK_COMMAND_ARC_FILLED: break;
+                case NK_COMMAND_TRIANGLE: break;
+                case NK_COMMAND_TRIANGLE_FILLED: break;
+                case NK_COMMAND_POLYGON: break;
+                case NK_COMMAND_POLYGON_FILLED: break;
+                case NK_COMMAND_POLYLINE: break;
+                case NK_COMMAND_TEXT: {
+                    struct nk_command_text* text = (struct nk_command_text*)cmd;
+
+                    Str     str = {text->string, text->length};
+                    Color01 color = color255to01(swRender_colorconv(text->foreground));
+                    swDrawStr(&state->font, str, tex, text->x, text->y, color);
+                } break;
+                case NK_COMMAND_IMAGE: break;
+                case NK_COMMAND_CUSTOM: break;
+            }
         }
+
+        // TODO(khvorov) Convert to new ui
+        // {
+        //     Color01 col = {.a = 1, .r = 1, .g = 1, .b = 1};
+        //     i32     top = 0;
+        //     top += swDrawStr(&state->font, STR("   camera pos"), state->swRenderer.texture, top, col);
+        //     top += swDrawStr(&state->font, STR("  x  |  y  |  z"), state->swRenderer.texture, top, col);
+
+        //     FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
+        //     fmtF32(&builder, state->camera.pos.x, posFmt);
+        //     fmtStr(&builder, STR(" "));
+        //     fmtF32(&builder, state->camera.pos.y, posFmt);
+        //     fmtStr(&builder, STR(" "));
+        //     fmtF32(&builder, state->camera.pos.z, posFmt);
+        //     swDrawStr(&state->font, builder.str, state->swRenderer.texture, top, col);
+        // }
     }
 }
