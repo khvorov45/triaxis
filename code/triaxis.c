@@ -24,7 +24,7 @@
 #define absval(x) ((x) >= 0 ? (x) : -(x))
 #define arenaAllocArray(arena, type, count) (type*)arenaAlloc(arena, sizeof(type)*count, alignof(type))
 #define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
-#define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = val, (arr).len++) : (__debugbreak(), 0))
+#define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = (val), (arr).len++) : (__debugbreak(), 0))
 #define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
 
 #ifdef TRIAXIS_asserts
@@ -2225,8 +2225,6 @@ initState(void* mem, isize bytes) {
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0)));
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0)));
 
-    state->useSW = true;
-
     return state;
 }
 
@@ -2377,7 +2375,7 @@ update(State* state, f32 deltaSec) {
 }
 
 function Color255
-swRender_colorconv(struct nk_color c) {
+nkcolorTo255(struct nk_color c) {
     Color255 result = {.a = c.a, .r = c.r, .g = c.g, .b = c.b};
     return result;
 }
@@ -2418,7 +2416,7 @@ swRender(State* state) {
                     i32 x0 = clamp(rect->x, 0, tex.width);
                     i32 x1 = clamp(rect->x + rect->w, 0, tex.width);
 
-                    u32 color = color255tou32(swRender_colorconv(rect->color));
+                    u32 color = color255tou32(nkcolorTo255(rect->color));
 
                     for (i32 ycoord = y0; ycoord < y1; ycoord++) {
                         for (i32 xcoord = x0; xcoord < x1; xcoord++) {
@@ -2437,13 +2435,15 @@ swRender(State* state) {
                 case NK_COMMAND_POLYGON: break;
                 case NK_COMMAND_POLYGON_FILLED: break;
                 case NK_COMMAND_POLYLINE: break;
+
                 case NK_COMMAND_TEXT: {
                     struct nk_command_text* text = (struct nk_command_text*)cmd;
 
                     Str     str = {text->string, text->length};
-                    Color01 color = color255to01(swRender_colorconv(text->foreground));
+                    Color01 color = color255to01(nkcolorTo255(text->foreground));
                     swDrawStr(&state->font, str, tex, text->x, text->y, color);
                 } break;
+
                 case NK_COMMAND_IMAGE: break;
                 case NK_COMMAND_CUSTOM: break;
             }

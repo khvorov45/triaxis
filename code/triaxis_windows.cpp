@@ -336,6 +336,11 @@ typedef struct D3D11ConstMesh {
     u8      pad1[4];
 } D3D11ConstMesh;
 
+typedef struct D3D11TriFilledVertex {
+    V2f     pos;
+    Color01 color;
+} D3D11TriFilledVertex;
+
 typedef struct D3D11Renderer {
     D3D11Common*           common;
     ID3D11Buffer*          vbuffer;
@@ -348,6 +353,14 @@ typedef struct D3D11Renderer {
 
     ID3D11Buffer* constCamera;
     ID3D11Buffer* constMesh;
+
+    struct {
+        isize               vertexCap;
+        ID3D11Buffer*       vertices;
+        ID3D11VertexShader* vshader;
+        ID3D11InputLayout*  layout;
+        ID3D11PixelShader*  pshader;
+    } triFilled;
 } D3D11Renderer;
 
 static D3D11Renderer
@@ -385,6 +398,17 @@ initD3D11Renderer(D3D11Common* common, State* state) {
     }
 
     {
+        renderer.triFilled.vertexCap = 1024;
+        D3D11_BUFFER_DESC desc = {
+            .ByteWidth = (UINT)(renderer.triFilled.vertexCap * sizeof(D3D11TriFilledVertex)),
+            .Usage = D3D11_USAGE_DYNAMIC,
+            .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+            .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
+        };
+        common->device->CreateBuffer(&desc, 0, &renderer.triFilled.vertices);
+    }
+
+    {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -400,6 +424,27 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         {
             ID3DBlob* pblob = compileShader(common->hlsl, "rendererps", "ps_5_0");
             common->device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &renderer.pshader);
+            pblob->Release();
+        }
+    }
+
+    // TODO(khvorov) Compress?
+    {
+        D3D11_INPUT_ELEMENT_DESC desc[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(D3D11TriFilledVertex, pos), D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(D3D11TriFilledVertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+
+        {
+            ID3DBlob* blob = compileShader(common->hlsl, "trifilledvs", "vs_5_0");
+            common->device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), NULL, &renderer.triFilled.vshader);
+            common->device->CreateInputLayout(desc, ARRAYSIZE(desc), blob->GetBufferPointer(), blob->GetBufferSize(), &renderer.triFilled.layout);
+            blob->Release();
+        }
+
+        {
+            ID3DBlob* pblob = compileShader(common->hlsl, "trifilledps", "ps_5_0");
+            common->device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &renderer.triFilled.pshader);
             pblob->Release();
         }
     }
@@ -431,15 +476,10 @@ initD3D11Renderer(D3D11Common* common, State* state) {
 static void
 d3d11render(D3D11Renderer renderer, State* state) {
     {
-        UINT offset = 0;
-        UINT stride = sizeof(*state->meshStorage.vertices.ptr);
-        renderer.common->context->IASetVertexBuffers(0, 1, &renderer.vbuffer, &stride, &offset);
-    }
-
-    {
-        UINT offset = 0;
-        UINT stride = sizeof(*state->meshStorage.colors.ptr);
-        renderer.common->context->IASetVertexBuffers(1, 1, &renderer.colorBuffer, &stride, &offset);
+        UINT          offsets[] = {0, 0};
+        UINT          strides[] = {sizeof(*state->meshStorage.vertices.ptr), sizeof(*state->meshStorage.colors.ptr)};
+        ID3D11Buffer* buffers[] = {renderer.vbuffer, renderer.colorBuffer};
+        renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
     }
 
     renderer.common->context->IASetIndexBuffer(renderer.ibuffer, DXGI_FORMAT_R32_UINT, 0);
@@ -450,7 +490,11 @@ d3d11render(D3D11Renderer renderer, State* state) {
     renderer.common->context->PSSetShader(renderer.pshader, NULL, 0);
     renderer.common->context->RSSetState(renderer.rasterizerState);
 
-    renderer.common->context->VSSetConstantBuffers(0, 2, &renderer.constCamera);
+    {
+        ID3D11Buffer* buffers[] = {renderer.constCamera, renderer.constMesh};
+        renderer.common->context->VSSetConstantBuffers(0, arrayCount(buffers), buffers);
+    }
+
     {
         D3D11_MAPPED_SUBRESOURCE mappedCamera = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
@@ -486,6 +530,15 @@ d3d11render(D3D11Renderer renderer, State* state) {
 
     // TODO(khvorov) Debug overlay
     {
+        D3D11_MAPPED_SUBRESOURCE mappedTriFilledVertices = {};
+        renderer.common->context->Map((ID3D11Resource*)renderer.triFilled.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTriFilledVertices);
+
+        struct {
+            D3D11TriFilledVertex* ptr;
+            isize                 len;
+            isize                 cap;
+        } triFilled = {(D3D11TriFilledVertex*)mappedTriFilledVertices.pData, 0, renderer.triFilled.vertexCap};
+
         const struct nk_command* cmd = 0;
         nk_foreach(cmd, &state->ui) {
             switch (cmd->type) {
@@ -494,7 +547,31 @@ d3d11render(D3D11Renderer renderer, State* state) {
                 case NK_COMMAND_LINE: break;
                 case NK_COMMAND_CURVE: break;
                 case NK_COMMAND_RECT: break;
-                case NK_COMMAND_RECT_FILLED: break;
+
+                case NK_COMMAND_RECT_FILLED: {
+                    struct nk_command_rect_filled* rect = (struct nk_command_rect_filled*)cmd;
+
+                    i32 x0 = rect->x;
+                    i32 x1 = rect->x + rect->w;
+                    i32 y0 = rect->y;
+                    i32 y1 = rect->y + rect->h;
+
+                    V2f topleft = {(f32)x0, (f32)y0};
+                    V2f topright = {(f32)x1, (f32)y0};
+                    V2f bottomleft = {(f32)x0, (f32)y1};
+                    V2f bottomright = {(f32)x1, (f32)y1};
+
+                    Color01 color = color255to01(nkcolorTo255(rect->color));
+
+                    arrpush(triFilled, ((D3D11TriFilledVertex) {topleft, color}));
+                    arrpush(triFilled, ((D3D11TriFilledVertex) {topright, color}));
+                    arrpush(triFilled, ((D3D11TriFilledVertex) {bottomleft, color}));
+
+                    arrpush(triFilled, ((D3D11TriFilledVertex) {topright, color}));
+                    arrpush(triFilled, ((D3D11TriFilledVertex) {bottomright, color}));
+                    arrpush(triFilled, ((D3D11TriFilledVertex) {bottomleft, color}));
+                } break;
+
                 case NK_COMMAND_RECT_MULTI_COLOR: break;
                 case NK_COMMAND_CIRCLE: break;
                 case NK_COMMAND_CIRCLE_FILLED: break;
@@ -510,6 +587,23 @@ d3d11render(D3D11Renderer renderer, State* state) {
                 case NK_COMMAND_CUSTOM: break;
             }
         }
+
+        renderer.common->context->Unmap((ID3D11Resource*)renderer.triFilled.vertices, 0);
+
+        {
+            UINT          offsets[] = {0};
+            UINT          strides[] = {sizeof(D3D11TriFilledVertex)};
+            ID3D11Buffer* buffers[] = {renderer.triFilled.vertices};
+            renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
+        }
+
+        renderer.common->context->VSSetShader(renderer.triFilled.vshader, NULL, 0);
+        renderer.common->context->IASetInputLayout(renderer.triFilled.layout);
+        renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+        renderer.common->context->PSSetShader(renderer.triFilled.pshader, NULL, 0);
+
+        renderer.common->context->Draw(triFilled.len, 0);
     }
 
     HRESULT presentResult = renderer.common->swapChain->Present(1, 0);
@@ -808,6 +902,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         d3d11renderer.rasterizerState->Release();
         d3d11renderer.constCamera->Release();
         d3d11renderer.constMesh->Release();
+
+        d3d11renderer.triFilled.vertices->Release();
+        d3d11renderer.triFilled.vshader->Release();
+        d3d11renderer.triFilled.layout->Release();
+        d3d11renderer.triFilled.pshader->Release();
 
         d3d11blitter.vbuffer->Release();
         d3d11blitter.vshader->Release();

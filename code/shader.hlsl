@@ -114,3 +114,31 @@ rendererps(RendererPSInput input) : SV_TARGET {
     float4 color = float4(input.color, 1);
     return color;
 }
+
+//
+// SECTION Filled tris
+//
+
+struct TriFilledVSInput {
+    float2 pos : POSITION;
+    float4 color : COLOR;
+};
+
+struct TriFilledPSInput {
+    float4 pos : SV_POSITION;
+    float4 color : COLOR;
+};
+
+TriFilledPSInput
+trifilledvs(TriFilledVSInput input) {
+    TriFilledPSInput output;
+    // TODO(khvorov) Pass viewport width/height probably
+    output.pos = float4(input.pos.x / 1600 * 2 - 1, -(input.pos.y / 800 * 2 - 1), 1, 1);
+    output.color = input.color;
+    return output;
+}
+
+float4
+trifilledps(TriFilledPSInput input) : SV_TARGET {
+    return input.color;
+}
