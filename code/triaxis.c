@@ -196,6 +196,7 @@ endTempMemory(TempMemory temp) {
 //
 
 #define STR(x) ((Str) {.ptr = x, .len = sizeof(x) - 1})
+#define NKSTRARG(x) x, sizeof(x) - 1
 typedef struct Str {
     const char* ptr;
     isize       len;
@@ -2224,6 +2225,8 @@ initState(void* mem, isize bytes) {
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0)));
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0)));
 
+    state->useSW = true;
+
     return state;
 }
 
@@ -2347,15 +2350,28 @@ update(State* state, f32 deltaSec) {
 
     // NOTE(khvorov) Debug UI
     if (nk_begin(&state->ui, "test", nk_rect(0, 0, 500, 500), 0)) {
-        nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->width, 3);
+        nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->width, 4);
 
-        nk_text(&state->ui, "x", 1, NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, "y", 1, NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, "z", 1, NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, NKSTRARG("pos"), NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, NKSTRARG("x"), NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, NKSTRARG("y"), NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, NKSTRARG("z"), NK_TEXT_ALIGN_CENTERED);
 
-        nk_text(&state->ui, "1", 1, NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, "2", 1, NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, "3", 1, NK_TEXT_ALIGN_CENTERED);
+        StrBuilder builder = {.ptr = (char*)arenaFreePtr(&state->scratch), .cap = arenaFreeSize(&state->scratch)};
+
+        FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
+        fmtF32(&builder, state->camera.pos.x, posFmt);
+
+        nk_text(&state->ui, NKSTRARG("cmr"), NK_TEXT_ALIGN_CENTERED);
+        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
+
+        builder.len = 0;
+        fmtF32(&builder, state->camera.pos.y, posFmt);
+        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
+
+        builder.len = 0;
+        fmtF32(&builder, state->camera.pos.z, posFmt);
+        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
     }
     nk_end(&state->ui);
 }
@@ -2432,21 +2448,5 @@ swRender(State* state) {
                 case NK_COMMAND_CUSTOM: break;
             }
         }
-
-        // TODO(khvorov) Convert to new ui
-        // {
-        //     Color01 col = {.a = 1, .r = 1, .g = 1, .b = 1};
-        //     i32     top = 0;
-        //     top += swDrawStr(&state->font, STR("   camera pos"), state->swRenderer.texture, top, col);
-        //     top += swDrawStr(&state->font, STR("  x  |  y  |  z"), state->swRenderer.texture, top, col);
-
-        //     FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
-        //     fmtF32(&builder, state->camera.pos.x, posFmt);
-        //     fmtStr(&builder, STR(" "));
-        //     fmtF32(&builder, state->camera.pos.y, posFmt);
-        //     fmtStr(&builder, STR(" "));
-        //     fmtF32(&builder, state->camera.pos.z, posFmt);
-        //     swDrawStr(&state->font, builder.str, state->swRenderer.texture, top, col);
-        // }
     }
 }
