@@ -507,7 +507,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
     }
 
     {
-        FLOAT color[] = {0.1f, 0.1, 0.1f, 1.f};
+        FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
         renderer.common->context->ClearRenderTargetView(renderer.common->rtView, color);
     }
 
