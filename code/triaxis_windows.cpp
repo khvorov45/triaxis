@@ -33,6 +33,22 @@
 #pragma comment(lib, "dxguid")
 #pragma comment(lib, "d3dcompiler")
 
+static Str
+readEntireFile(Arena* arena, LPCWSTR path) {
+    void*         buf = arenaFreePtr(arena);
+    HANDLE        handle = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    DWORD         bytesRead = 0;
+    LARGE_INTEGER filesize = {};
+    assert(filesize.QuadPart <= arenaFreeSize(arena));
+    GetFileSizeEx(handle, &filesize);
+    ReadFile(handle, buf, filesize.QuadPart, &bytesRead, 0);
+    assert(bytesRead == filesize.QuadPart);
+    CloseHandle(handle);
+    arenaChangeUsed(arena, bytesRead);
+    Str result = (Str) {(char*)buf, (isize)bytesRead};
+    return result;
+}
+
 // TODO(khvorov) Handle resizing
 
 typedef struct D3D11Common {
@@ -41,11 +57,10 @@ typedef struct D3D11Common {
     ID3D11RenderTargetView* rtView;
     IDXGISwapChain1*        swapChain;
     TracyD3D11Ctx           tracyD3D11Context;
-    Str                     hlsl;
 } D3D11Common;
 
 static D3D11Common
-initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight, Arena* perm) {
+initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
     ID3D11Device*        device = 0;
     ID3D11DeviceContext* context = 0;
     {
@@ -132,27 +147,12 @@ initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight, Arena* p
 
     TracyD3D11Ctx tracyD3D11Context = TracyD3D11Context(device, context);
 
-    Str hlsl = {};
-    {
-        void*         buf = arenaFreePtr(perm);
-        HANDLE        handle = CreateFileW(L"code/shader.hlsl", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-        DWORD         bytesRead = 0;
-        LARGE_INTEGER filesize = {};
-        GetFileSizeEx(handle, &filesize);
-        ReadFile(handle, buf, filesize.QuadPart, &bytesRead, 0);
-        assert(bytesRead == filesize.QuadPart);
-        CloseHandle(handle);
-        arenaChangeUsed(perm, bytesRead);
-        hlsl = (Str) {(char*)buf, (isize)bytesRead};
-    }
-
     D3D11Common common = {
         .context = context,
         .device = device,
         .rtView = rtView,
         .swapChain = swapChain,
         .tracyD3D11Context = tracyD3D11Context,
-        .hlsl = hlsl,
     };
     return common;
 }
@@ -180,6 +180,37 @@ compileShader(Str hlsl, const char* name, const char* kind) {
     return blob;
 }
 
+typedef struct VSPS {
+    ID3D11VertexShader* vs;
+    ID3D11InputLayout*  layout;
+    ID3D11PixelShader*  ps;
+} VSPS;
+
+static VSPS
+compileVSPS(D3D11_INPUT_ELEMENT_DESC* desc, isize descCount, LPCWSTR path, ID3D11Device* device, Arena* scratch) {
+    TempMemory temp = beginTempMemory(scratch);
+
+    VSPS result = {};
+
+    Str hlsl = readEntireFile(scratch, path);
+
+    {
+        ID3DBlob* blob = compileShader(hlsl, "vs", "vs_5_0");
+        device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), NULL, &result.vs);
+        device->CreateInputLayout(desc, descCount, blob->GetBufferPointer(), blob->GetBufferSize(), &result.layout);
+        blob->Release();
+    }
+
+    {
+        ID3DBlob* pblob = compileShader(hlsl, "ps", "ps_5_0");
+        device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &result.ps);
+        pblob->Release();
+    }
+
+    endTempMemory(temp);
+    return result;
+}
+
 typedef struct D3D11BlitterVertex {
     f32 pos[2];
     f32 uv[2];
@@ -188,9 +219,7 @@ typedef struct D3D11BlitterVertex {
 typedef struct D3D11Blitter {
     D3D11Common*              common;
     ID3D11Buffer*             vbuffer;
-    ID3D11VertexShader*       vshader;
-    ID3D11PixelShader*        pshader;
-    ID3D11InputLayout*        layout;
+    VSPS                      vsps;
     ID3D11Texture2D*          texture;
     ID3D11ShaderResourceView* textureView;
     ID3D11SamplerState*       sampler;
@@ -198,7 +227,9 @@ typedef struct D3D11Blitter {
 } D3D11Blitter;
 
 static D3D11Blitter
-initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight) {
+initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, Arena* scratch) {
+    TempMemory temp = beginTempMemory(scratch);
+
     D3D11Blitter blitter = {.common = common};
 
     {
@@ -225,18 +256,7 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight) {
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(D3D11BlitterVertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
 
-        {
-            ID3DBlob* blob = compileShader(common->hlsl, "blittervs", "vs_5_0");
-            common->device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), NULL, &blitter.vshader);
-            common->device->CreateInputLayout(desc, ARRAYSIZE(desc), blob->GetBufferPointer(), blob->GetBufferSize(), &blitter.layout);
-            blob->Release();
-        }
-
-        {
-            ID3DBlob* pblob = compileShader(common->hlsl, "blitterps", "ps_5_0");
-            common->device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &blitter.pshader);
-            pblob->Release();
-        }
+        blitter.vsps = compileVSPS(desc, arrayCount(desc), L"code/blitter.hlsl", common->device, scratch);
     }
 
     {
@@ -274,6 +294,7 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight) {
         common->device->CreateRasterizerState(&desc, &blitter.rasterizerState);
     }
 
+    endTempMemory(temp);
     return blitter;
 }
 
@@ -285,10 +306,10 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
         blitter.common->context->IASetVertexBuffers(0, 1, &blitter.vbuffer, &stride, &offset);
     }
 
-    blitter.common->context->VSSetShader(blitter.vshader, NULL, 0);
-    blitter.common->context->IASetInputLayout(blitter.layout);
+    blitter.common->context->VSSetShader(blitter.vsps.vs, NULL, 0);
+    blitter.common->context->IASetInputLayout(blitter.vsps.layout);
     blitter.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-    blitter.common->context->PSSetShader(blitter.pshader, NULL, 0);
+    blitter.common->context->PSSetShader(blitter.vsps.ps, NULL, 0);
     blitter.common->context->PSSetShaderResources(0, 1, &blitter.textureView);
     blitter.common->context->PSSetSamplers(0, 1, &blitter.sampler);
     blitter.common->context->RSSetState(blitter.rasterizerState);
@@ -342,29 +363,30 @@ typedef struct D3D11TriFilledVertex {
 } D3D11TriFilledVertex;
 
 typedef struct D3D11Renderer {
-    D3D11Common*           common;
-    ID3D11Buffer*          vbuffer;
-    ID3D11Buffer*          ibuffer;
-    ID3D11Buffer*          colorBuffer;
-    ID3D11VertexShader*    vshader;
-    ID3D11InputLayout*     layout;
-    ID3D11PixelShader*     pshader;
+    D3D11Common* common;
+
     ID3D11RasterizerState* rasterizerState;
 
-    ID3D11Buffer* constCamera;
-    ID3D11Buffer* constMesh;
+    struct {
+        ID3D11Buffer* vbuffer;
+        ID3D11Buffer* ibuffer;
+        ID3D11Buffer* colorBuffer;
+        VSPS          vsps;
+        ID3D11Buffer* constCamera;
+        ID3D11Buffer* constMesh;
+    } mesh;
 
     struct {
-        isize               vertexCap;
-        ID3D11Buffer*       vertices;
-        ID3D11VertexShader* vshader;
-        ID3D11InputLayout*  layout;
-        ID3D11PixelShader*  pshader;
+        isize         vertexCap;
+        ID3D11Buffer* vertices;
+        VSPS          vsps;
     } triFilled;
 } D3D11Renderer;
 
 static D3D11Renderer
 initD3D11Renderer(D3D11Common* common, State* state) {
+    TempMemory temp = beginTempMemory(&state->scratch);
+
     D3D11Renderer renderer = {.common = common};
 
     {
@@ -374,7 +396,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
         };
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->meshStorage.vertices.ptr};
-        common->device->CreateBuffer(&desc, &initial, &renderer.vbuffer);
+        common->device->CreateBuffer(&desc, &initial, &renderer.mesh.vbuffer);
     }
 
     {
@@ -384,7 +406,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_INDEX_BUFFER,
         };
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->meshStorage.indices.ptr};
-        common->device->CreateBuffer(&desc, &initial, &renderer.ibuffer);
+        common->device->CreateBuffer(&desc, &initial, &renderer.mesh.ibuffer);
     }
 
     {
@@ -394,7 +416,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
         };
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->meshStorage.colors.ptr};
-        common->device->CreateBuffer(&desc, &initial, &renderer.colorBuffer);
+        common->device->CreateBuffer(&desc, &initial, &renderer.mesh.colorBuffer);
     }
 
     {
@@ -414,39 +436,16 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
 
-        {
-            ID3DBlob* blob = compileShader(common->hlsl, "renderervs", "vs_5_0");
-            common->device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), NULL, &renderer.vshader);
-            common->device->CreateInputLayout(desc, ARRAYSIZE(desc), blob->GetBufferPointer(), blob->GetBufferSize(), &renderer.layout);
-            blob->Release();
-        }
-
-        {
-            ID3DBlob* pblob = compileShader(common->hlsl, "rendererps", "ps_5_0");
-            common->device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &renderer.pshader);
-            pblob->Release();
-        }
+        renderer.mesh.vsps = compileVSPS(desc, arrayCount(desc), L"code/renderer.hlsl", common->device, &state->scratch);
     }
 
-    // TODO(khvorov) Compress?
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(D3D11TriFilledVertex, pos), D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(D3D11TriFilledVertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
 
-        {
-            ID3DBlob* blob = compileShader(common->hlsl, "trifilledvs", "vs_5_0");
-            common->device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), NULL, &renderer.triFilled.vshader);
-            common->device->CreateInputLayout(desc, ARRAYSIZE(desc), blob->GetBufferPointer(), blob->GetBufferSize(), &renderer.triFilled.layout);
-            blob->Release();
-        }
-
-        {
-            ID3DBlob* pblob = compileShader(common->hlsl, "trifilledps", "ps_5_0");
-            common->device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &renderer.triFilled.pshader);
-            pblob->Release();
-        }
+        renderer.triFilled.vsps = compileVSPS(desc, arrayCount(desc), L"code/trifilled.hlsl", common->device, &state->scratch);
     }
 
     {
@@ -464,12 +463,13 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
-        common->device->CreateBuffer(&desc, 0, &renderer.constCamera);
+        common->device->CreateBuffer(&desc, 0, &renderer.mesh.constCamera);
 
         desc.ByteWidth = sizeof(D3D11ConstMesh);
-        common->device->CreateBuffer(&desc, 0, &renderer.constMesh);
+        common->device->CreateBuffer(&desc, 0, &renderer.mesh.constMesh);
     }
 
+    endTempMemory(temp);
     return renderer;
 }
 
@@ -478,32 +478,32 @@ d3d11render(D3D11Renderer renderer, State* state) {
     {
         UINT          offsets[] = {0, 0};
         UINT          strides[] = {sizeof(*state->meshStorage.vertices.ptr), sizeof(*state->meshStorage.colors.ptr)};
-        ID3D11Buffer* buffers[] = {renderer.vbuffer, renderer.colorBuffer};
+        ID3D11Buffer* buffers[] = {renderer.mesh.vbuffer, renderer.mesh.colorBuffer};
         renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
     }
 
-    renderer.common->context->IASetIndexBuffer(renderer.ibuffer, DXGI_FORMAT_R32_UINT, 0);
-    renderer.common->context->VSSetShader(renderer.vshader, NULL, 0);
-    renderer.common->context->IASetInputLayout(renderer.layout);
+    renderer.common->context->IASetIndexBuffer(renderer.mesh.ibuffer, DXGI_FORMAT_R32_UINT, 0);
+    renderer.common->context->VSSetShader(renderer.mesh.vsps.vs, NULL, 0);
+    renderer.common->context->IASetInputLayout(renderer.mesh.vsps.layout);
     renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    renderer.common->context->PSSetShader(renderer.pshader, NULL, 0);
+    renderer.common->context->PSSetShader(renderer.mesh.vsps.ps, NULL, 0);
     renderer.common->context->RSSetState(renderer.rasterizerState);
 
     {
-        ID3D11Buffer* buffers[] = {renderer.constCamera, renderer.constMesh};
+        ID3D11Buffer* buffers[] = {renderer.mesh.constCamera, renderer.mesh.constMesh};
         renderer.common->context->VSSetConstantBuffers(0, arrayCount(buffers), buffers);
     }
 
     {
         D3D11_MAPPED_SUBRESOURCE mappedCamera = {};
-        renderer.common->context->Map((ID3D11Resource*)renderer.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
+        renderer.common->context->Map((ID3D11Resource*)renderer.mesh.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
         D3D11ConstCamera* constCamera = (D3D11ConstCamera*)mappedCamera.pData;
         constCamera->orientation = state->camera.currentOrientation;
         constCamera->pos = state->camera.pos;
         constCamera->tanHalfFovX = state->camera.tanHalfFov.x;
         constCamera->tanHalfFovY = state->camera.tanHalfFov.y;
-        renderer.common->context->Unmap((ID3D11Resource*)renderer.constCamera, 0);
+        renderer.common->context->Unmap((ID3D11Resource*)renderer.mesh.constCamera, 0);
     }
 
     {
@@ -517,11 +517,11 @@ d3d11render(D3D11Renderer renderer, State* state) {
         Mesh mesh = state->meshes.ptr[meshIndex];
 
         D3D11_MAPPED_SUBRESOURCE mappedMesh = {};
-        renderer.common->context->Map((ID3D11Resource*)renderer.constMesh, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedMesh);
+        renderer.common->context->Map((ID3D11Resource*)renderer.mesh.constMesh, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedMesh);
         D3D11ConstMesh* constMesh = (D3D11ConstMesh*)mappedMesh.pData;
         constMesh->orientation = mesh.orientation;
         constMesh->pos = mesh.pos;
-        renderer.common->context->Unmap((ID3D11Resource*)renderer.constMesh, 0);
+        renderer.common->context->Unmap((ID3D11Resource*)renderer.mesh.constMesh, 0);
 
         i32 baseVertex = mesh.vertices.ptr - state->meshStorage.vertices.ptr;
         i32 baseIndex = (i32*)mesh.indices.ptr - (i32*)state->meshStorage.indices.ptr;
@@ -597,11 +597,11 @@ d3d11render(D3D11Renderer renderer, State* state) {
             renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
         }
 
-        renderer.common->context->VSSetShader(renderer.triFilled.vshader, NULL, 0);
-        renderer.common->context->IASetInputLayout(renderer.triFilled.layout);
+        renderer.common->context->VSSetShader(renderer.triFilled.vsps.vs, NULL, 0);
+        renderer.common->context->IASetInputLayout(renderer.triFilled.vsps.layout);
         renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        renderer.common->context->PSSetShader(renderer.triFilled.pshader, NULL, 0);
+        renderer.common->context->PSSetShader(renderer.triFilled.vsps.ps, NULL, 0);
 
         renderer.common->context->Draw(triFilled.len, 0);
     }
@@ -761,8 +761,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     }
 
     swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
-    D3D11Common   d3d11common = initD3D11Common(window, state->windowWidth, state->windowHeight, &state->perm);
-    D3D11Blitter  d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight);
+    D3D11Common   d3d11common = initD3D11Common(window, state->windowWidth, state->windowHeight);
+    D3D11Blitter  d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight, &state->scratch);
     D3D11Renderer d3d11renderer = initD3D11Renderer(&d3d11common, state);
 
     bool prevWindowIsForeground = false;
@@ -893,25 +893,25 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     // TODO(khvorov) Does this prevent bluescreens?
     {
-        d3d11renderer.vbuffer->Release();
-        d3d11renderer.ibuffer->Release();
-        d3d11renderer.colorBuffer->Release();
-        d3d11renderer.vshader->Release();
-        d3d11renderer.layout->Release();
-        d3d11renderer.pshader->Release();
+        d3d11renderer.mesh.vbuffer->Release();
+        d3d11renderer.mesh.ibuffer->Release();
+        d3d11renderer.mesh.colorBuffer->Release();
+        d3d11renderer.mesh.vsps.vs->Release();
+        d3d11renderer.mesh.vsps.layout->Release();
+        d3d11renderer.mesh.vsps.ps->Release();
         d3d11renderer.rasterizerState->Release();
-        d3d11renderer.constCamera->Release();
-        d3d11renderer.constMesh->Release();
+        d3d11renderer.mesh.constCamera->Release();
+        d3d11renderer.mesh.constMesh->Release();
 
         d3d11renderer.triFilled.vertices->Release();
-        d3d11renderer.triFilled.vshader->Release();
-        d3d11renderer.triFilled.layout->Release();
-        d3d11renderer.triFilled.pshader->Release();
+        d3d11renderer.triFilled.vsps.vs->Release();
+        d3d11renderer.triFilled.vsps.layout->Release();
+        d3d11renderer.triFilled.vsps.ps->Release();
 
         d3d11blitter.vbuffer->Release();
-        d3d11blitter.vshader->Release();
-        d3d11blitter.pshader->Release();
-        d3d11blitter.layout->Release();
+        d3d11blitter.vsps.vs->Release();
+        d3d11blitter.vsps.ps->Release();
+        d3d11blitter.vsps.layout->Release();
         d3d11blitter.texture->Release();
         d3d11blitter.textureView->Release();
         d3d11blitter.sampler->Release();
