@@ -84,7 +84,7 @@ function void
 setmem(void* ptr, int val, isize len) {
     isize    wholeCount = len / sizeof(__m512i);
     __m512i* ptr512 = (__m512i*)ptr;
-    __m512i  val512 = _mm512_set1_epi32(val);
+    __m512i  val512 = _mm512_set1_epi8(val);
 
     for (isize ind = 0; ind < wholeCount; ind++) {
         _mm512_storeu_si512(ptr512 + ind, val512);
@@ -1017,7 +1017,7 @@ typedef struct Input {
 
 function void
 inputClearKeys(Input* input) {
-for (i32 keyIndex = 0; keyIndex < InputKey_Count; keyIndex++) {
+    for (i32 keyIndex = 0; keyIndex < InputKey_Count; keyIndex++) {
         KeyState* state = input->keys + keyIndex;
         *state = (KeyState) {};
     }

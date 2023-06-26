@@ -362,6 +362,12 @@ typedef struct D3D11TriFilledVertex {
     Color01 color;
 } D3D11TriFilledVertex;
 
+typedef struct D3D11FontVertex {
+    V2f     scr;
+    V2f     tex;
+    Color01 color;
+} D3D11FontVertex;
+
 typedef struct D3D11Renderer {
     D3D11Common* common;
 
@@ -381,6 +387,14 @@ typedef struct D3D11Renderer {
         ID3D11Buffer* vertices;
         VSPS          vsps;
     } triFilled;
+
+    struct {
+        isize                     vertexCap;
+        ID3D11Buffer*             vertices;
+        VSPS                      vsps;
+        ID3D11ShaderResourceView* textureView;
+        ID3D11SamplerState*       sampler;
+    } font;
 } D3D11Renderer;
 
 static D3D11Renderer
@@ -431,6 +445,17 @@ initD3D11Renderer(D3D11Common* common, State* state) {
     }
 
     {
+        renderer.font.vertexCap = 1024;
+        D3D11_BUFFER_DESC desc = {
+            .ByteWidth = (UINT)(renderer.font.vertexCap * sizeof(D3D11FontVertex)),
+            .Usage = D3D11_USAGE_DYNAMIC,
+            .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+            .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
+        };
+        common->device->CreateBuffer(&desc, 0, &renderer.font.vertices);
+    }
+
+    {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -446,6 +471,47 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         };
 
         renderer.triFilled.vsps = compileVSPS(desc, arrayCount(desc), L"code/trifilled.hlsl", common->device, &state->scratch);
+    }
+
+    {
+        D3D11_INPUT_ELEMENT_DESC desc[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(D3D11FontVertex, scr), D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(D3D11FontVertex, tex), D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(D3D11FontVertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+
+        renderer.font.vsps = compileVSPS(desc, arrayCount(desc), L"code/font.hlsl", common->device, &state->scratch);
+    }
+
+    {
+        D3D11_TEXTURE2D_DESC desc = {
+            .Width = (UINT)state->font.atlasW,
+            .Height = (UINT)state->font.atlasH,
+            .MipLevels = 1,
+            .ArraySize = 1,
+            // TODO(khvorov) Alpha blend the font
+            .Format = DXGI_FORMAT_R8_UNORM,
+            .SampleDesc = {.Count = 1, .Quality = 0},
+            .Usage = D3D11_USAGE_IMMUTABLE,
+            .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+        };
+
+        D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->font.atlas, .SysMemPitch = (UINT)state->font.atlasW};
+
+        ID3D11Texture2D* tex = 0;
+        common->device->CreateTexture2D(&desc, &initial, &tex);
+        common->device->CreateShaderResourceView((ID3D11Resource*)tex, 0, &renderer.font.textureView);
+        tex->Release();
+    }
+
+    {
+        D3D11_SAMPLER_DESC desc = {
+            .Filter = D3D11_FILTER_MIN_MAG_MIP_POINT,
+            .AddressU = D3D11_TEXTURE_ADDRESS_WRAP,
+            .AddressV = D3D11_TEXTURE_ADDRESS_WRAP,
+            .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
+        };
+        common->device->CreateSamplerState(&desc, &renderer.font.sampler);
     }
 
     {
@@ -538,6 +604,15 @@ d3d11render(D3D11Renderer renderer, State* state) {
             isize                 cap;
         } triFilled = {(D3D11TriFilledVertex*)mappedTriFilledVertices.pData, 0, renderer.triFilled.vertexCap};
 
+        D3D11_MAPPED_SUBRESOURCE mappedFontVertices = {};
+        renderer.common->context->Map((ID3D11Resource*)renderer.font.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedFontVertices);
+
+        struct {
+            D3D11FontVertex* ptr;
+            isize            len;
+            isize            cap;
+        } font = {(D3D11FontVertex*)mappedFontVertices.pData, 0, renderer.font.vertexCap};
+
         const struct nk_command* cmd = 0;
         nk_foreach(cmd, &state->ui) {
             switch (cmd->type) {
@@ -583,10 +658,47 @@ d3d11render(D3D11Renderer renderer, State* state) {
                 case NK_COMMAND_POLYLINE: break;
 
                 case NK_COMMAND_TEXT: {
-                    // struct nk_command_text* text = (struct nk_command_text*)cmd;
+                    struct nk_command_text* text = (struct nk_command_text*)cmd;
 
-                    // Str     str = {text->string, text->length};
-                    // Color01 color = color255to01(nkcolorTo255(text->foreground));
+                    Str     str = {text->string, text->length};
+                    Color01 color = color255to01(nkcolorTo255(text->foreground));
+
+                    i32 curx = text->x;
+                    for (isize strInd = 0; strInd < str.len; strInd++) {
+                        char  ch = str.ptr[strInd];
+                        Glyph glyph = state->font.ascii[(i32)ch];
+
+                        i32 texx0 = glyph.x;
+                        i32 texx1 = glyph.x + glyph.w;
+                        i32 texy0 = glyph.y;
+                        i32 texy1 = glyph.y + glyph.h;
+
+                        V2f textopleft = {(f32)texx0, (f32)texy0};
+                        V2f textopright = {(f32)texx1, (f32)texy0};
+                        V2f texbottomleft = {(f32)texx0, (f32)texy1};
+                        V2f texbottomright = {(f32)texx1, (f32)texy1};
+
+                        i32 scrx0 = curx;
+                        i32 scrx1 = scrx0 + glyph.w;
+                        i32 scry0 = text->y;
+                        i32 scry1 = scry0 + glyph.h;
+
+                        V2f scrtopleft = {(f32)scrx0, (f32)scry0};
+                        V2f scrtopright = {(f32)scrx1, (f32)scry0};
+                        V2f scrbottomleft = {(f32)scrx0, (f32)scry1};
+                        V2f scrbottomright = {(f32)scrx1, (f32)scry1};
+
+                        arrpush(font, ((D3D11FontVertex) {scrtopleft, textopleft, color}));
+                        arrpush(font, ((D3D11FontVertex) {scrtopright, textopright, color}));
+                        arrpush(font, ((D3D11FontVertex) {scrbottomleft, texbottomleft, color}));
+
+                        arrpush(font, ((D3D11FontVertex) {scrtopright, textopright, color}));
+                        arrpush(font, ((D3D11FontVertex) {scrbottomright, texbottomright, color}));
+                        arrpush(font, ((D3D11FontVertex) {scrbottomleft, texbottomleft, color}));
+
+                        curx += glyph.advance;
+                    }
+
                 } break;
 
                 case NK_COMMAND_IMAGE: break;
@@ -595,6 +707,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         }
 
         renderer.common->context->Unmap((ID3D11Resource*)renderer.triFilled.vertices, 0);
+        renderer.common->context->Unmap((ID3D11Resource*)renderer.font.vertices, 0);
 
         {
             UINT          offsets[] = {0};
@@ -610,6 +723,24 @@ d3d11render(D3D11Renderer renderer, State* state) {
         renderer.common->context->PSSetShader(renderer.triFilled.vsps.ps, NULL, 0);
 
         renderer.common->context->Draw(triFilled.len, 0);
+
+        {
+            UINT          offsets[] = {0};
+            UINT          strides[] = {sizeof(D3D11FontVertex)};
+            ID3D11Buffer* buffers[] = {renderer.font.vertices};
+            renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
+        }
+
+        renderer.common->context->PSSetShaderResources(0, 1, &renderer.font.textureView);
+        renderer.common->context->PSSetSamplers(0, 1, &renderer.font.sampler);
+
+        renderer.common->context->VSSetShader(renderer.font.vsps.vs, NULL, 0);
+        renderer.common->context->IASetInputLayout(renderer.font.vsps.layout);
+        renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+        renderer.common->context->PSSetShader(renderer.font.vsps.ps, NULL, 0);
+
+        renderer.common->context->Draw(font.len, 0);
     }
 
     HRESULT presentResult = renderer.common->swapChain->Present(1, 0);
@@ -925,6 +1056,13 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         d3d11renderer.triFilled.vsps.vs->Release();
         d3d11renderer.triFilled.vsps.layout->Release();
         d3d11renderer.triFilled.vsps.ps->Release();
+
+        d3d11renderer.font.vertices->Release();
+        d3d11renderer.font.vsps.vs->Release();
+        d3d11renderer.font.vsps.layout->Release();
+        d3d11renderer.font.vsps.ps->Release();
+        d3d11renderer.font.textureView->Release();
+        d3d11renderer.font.sampler->Release();
 
         d3d11blitter.vbuffer->Release();
         d3d11blitter.vsps.vs->Release();
