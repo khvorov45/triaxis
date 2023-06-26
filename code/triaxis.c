@@ -2158,6 +2158,7 @@ runBench(Arena* arena) {
 
 // TODO(khvorov) Debug overlay with a log panel
 // TODO(khvorov) Coordinate grid
+// TODO(khvorov) Frametime line
 
 typedef struct State {
     SWRenderer  swRenderer;
