@@ -1016,6 +1016,14 @@ typedef struct Input {
 } Input;
 
 function void
+inputClearKeys(Input* input) {
+for (i32 keyIndex = 0; keyIndex < InputKey_Count; keyIndex++) {
+        KeyState* state = input->keys + keyIndex;
+        *state = (KeyState) {};
+    }
+}
+
+function void
 inputBeginFrame(Input* input) {
     for (i32 keyIndex = 0; keyIndex < InputKey_Count; keyIndex++) {
         KeyState* state = input->keys + keyIndex;
@@ -1633,37 +1641,44 @@ const u64 globalFontData[] = {
 // clang-format on
 
 typedef struct Glyph {
-    u8* ptr;
-    i32 width;
-    i32 height;
+    i32 x, y, w, h;
     i32 advance;
 } Glyph;
 
 typedef struct Font {
     Glyph ascii[128];
     i32   lineAdvance;
+    u8*   atlas;
+    i32   atlasW, atlasH;
 } Font;
 
 function void
 initFont(Font* font, Arena* arena) {
-    font->lineAdvance = 16;
-    for (u8 ch = 0; ch < 128; ch++) {
+    i32 chWidth = 8;
+    i32 chHeight = 16;
+    i32 chCount = 128;
+    font->atlasW = chCount * chWidth;
+    font->atlasH = chHeight;
+    font->lineAdvance = chHeight;
+    font->atlas = arenaAllocArray(arena, u8, font->atlasW * font->atlasH);
+    for (u8 ch = 0; ch < chCount; ch++) {
         Glyph* glyph = font->ascii + ch;
-        glyph->width = 8;
-        glyph->height = 16;
-        glyph->advance = 8;
-        glyph->ptr = arenaAllocArray(arena, u8, glyph->width * glyph->height);
+        glyph->x = (i32)ch * chWidth;
+        glyph->y = 0;
+        glyph->w = chWidth;
+        glyph->h = chHeight;
+        glyph->advance = chWidth;
 
-        u8* glyphBitmap = (u8*)globalFontData + ch * glyph->height;
-        for (isize row = 0; row < glyph->height; row++) {
+        u8* glyphBitmap = (u8*)globalFontData + ch * glyph->h;
+        for (isize row = 0; row < glyph->h; row++) {
             u8 glyphRowBitmap = glyphBitmap[row];
-            for (isize col = 0; col < glyph->width; col++) {
+            for (isize col = 0; col < glyph->w; col++) {
                 u8    mask = 1 << col;
                 u8    glyphRowMasked = glyphRowBitmap & mask;
-                isize glyphIndex = row * glyph->width + col;
-                glyph->ptr[glyphIndex] = 0;
+                isize atlasIndex = (glyph->y + row) * font->atlasW + (glyph->x + col);
+                font->atlas[atlasIndex] = 0;
                 if (glyphRowMasked) {
-                    glyph->ptr[glyphIndex] = 0xFF;
+                    font->atlas[atlasIndex] = 0xFF;
                 }
             }
         }
@@ -1671,16 +1686,18 @@ initFont(Font* font, Arena* arena) {
 }
 
 function void
-swDrawGlyph(Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) {
-    for (i32 row = 0; row < glyph.height; row++) {
+swDrawGlyph(Font* font, Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) {
+    for (i32 row = 0; row < glyph.h; row++) {
         i32 destRow = y + row;
         assert(destRow < dest.height);
-        for (i32 col = 0; col < glyph.width; col++) {
+        i32 srcRow = glyph.y + row;
+        for (i32 col = 0; col < glyph.w; col++) {
             i32 destCol = x + col;
             assert(destCol < dest.width);
+            i32 srcCol = glyph.x + col;
 
-            i32     index = row * glyph.width + col;
-            u8      alpha = glyph.ptr[index];
+            i32     atlasIndex = srcRow * font->atlasW + srcCol;
+            u8      alpha = font->atlas[atlasIndex];
             Color01 thisColor = color;
             thisColor.a *= ((f32)alpha) / 255.0f;
 
@@ -1709,7 +1726,7 @@ swDrawStr(Font* font, Str str, Texture dest, i32 left, i32 top, Color01 color) {
     for (isize ind = 0; ind < str.len; ind++) {
         char  ch = str.ptr[ind];
         Glyph glyph = font->ascii[(u8)ch];
-        swDrawGlyph(glyph, dest, curX, top, color);
+        swDrawGlyph(font, glyph, dest, curX, top, color);
         curX += glyph.advance;
     }
     return font->lineAdvance;
@@ -2177,7 +2194,8 @@ initState_uifontTextWidthCalc(nk_handle handle, float height, const char* text, 
     unused(height);
     unused(text);
     Font* font = (Font*)handle.ptr;
-    float result = len * font->ascii->width;
+    // NOTE(khvorov) Assume all characters are the same width
+    float result = len * font->ascii->w;
     return result;
 }
 
@@ -2348,7 +2366,7 @@ update(State* state, f32 deltaSec) {
 
     // NOTE(khvorov) Debug UI
     if (nk_begin(&state->ui, "test", nk_rect(0, 0, 500, 500), 0)) {
-        nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->width, 4);
+        nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->w, 4);
 
         nk_text(&state->ui, NKSTRARG("pos"), NK_TEXT_ALIGN_CENTERED);
         nk_text(&state->ui, NKSTRARG("x"), NK_TEXT_ALIGN_CENTERED);

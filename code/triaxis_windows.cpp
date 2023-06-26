@@ -528,7 +528,6 @@ d3d11render(D3D11Renderer renderer, State* state) {
         renderer.common->context->DrawIndexed(mesh.indices.len * 3, baseIndex, baseVertex);
     }
 
-    // TODO(khvorov) Debug overlay
     {
         D3D11_MAPPED_SUBRESOURCE mappedTriFilledVertices = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.triFilled.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTriFilledVertices);
@@ -582,7 +581,14 @@ d3d11render(D3D11Renderer renderer, State* state) {
                 case NK_COMMAND_POLYGON: break;
                 case NK_COMMAND_POLYGON_FILLED: break;
                 case NK_COMMAND_POLYLINE: break;
-                case NK_COMMAND_TEXT: break;
+
+                case NK_COMMAND_TEXT: {
+                    // struct nk_command_text* text = (struct nk_command_text*)cmd;
+
+                    // Str     str = {text->string, text->length};
+                    // Color01 color = color255to01(nkcolorTo255(text->foreground));
+                } break;
+
                 case NK_COMMAND_IMAGE: break;
                 case NK_COMMAND_CUSTOM: break;
             }
@@ -785,6 +791,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 switch (msg.message) {
                     case WM_QUIT: running = false; break;
 
+                    case WM_SYSKEYDOWN:
+                    case WM_SYSKEYUP:
                     case WM_KEYDOWN:
                     case WM_KEYUP: {
                         InputKey key = InputKey_Up;
@@ -805,10 +813,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                             case 'E': key = InputKey_RotateYX; break;
                             case VK_TAB: key = InputKey_ToggleDebugTriangles; break;
                             case 'T': key = InputKey_ToggleSW; break;
+
+                            case VK_F4: {
+                                keyFound = false;
+                                if (msg.message == WM_SYSKEYDOWN) {
+                                    running = false;
+                                }
+                            } break;
+
                             default: keyFound = false; break;
                         }
                         if (keyFound) {
-                            if (msg.message == WM_KEYDOWN) {
+                            if (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN) {
                                 inputKeyDown(&state->input, key);
                             } else {
                                 inputKeyUp(&state->input, key);
@@ -857,6 +873,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                         ClientToScreen(window, &bottomright);
                         RECT screen = {.left = topleft.x, .right = bottomright.x, .top = topleft.y, .bottom = bottomright.y};
                         ClipCursor(&screen);
+                    } else {
+                        inputClearKeys(&state->input);
                     }
 
                     ShowCursor(FALSE);
