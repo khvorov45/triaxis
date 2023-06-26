@@ -12,7 +12,7 @@ struct PSInput {
 
 sampler Sampler: register(s0);
 
-Texture2D<float> Texture: register(t0);
+Texture2D<float4> Texture: register(t0);
 
 PSInput
 vs(VSInput input) {
@@ -27,6 +27,6 @@ vs(VSInput input) {
 float4
 ps(PSInput input) : SV_TARGET {
     float4 tex = Texture.Sample(Sampler, input.uv);
-    tex.rgb *= input.color.rgb;
-    return tex;
+    float4 result = float4(input.color.rgb, input.color.a * tex.a);
+    return result;
 }

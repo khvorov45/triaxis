@@ -394,6 +394,7 @@ typedef struct D3D11Renderer {
         VSPS                      vsps;
         ID3D11ShaderResourceView* textureView;
         ID3D11SamplerState*       sampler;
+        ID3D11BlendState*         blend;
     } font;
 } D3D11Renderer;
 
@@ -489,8 +490,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .Height = (UINT)state->font.atlasH,
             .MipLevels = 1,
             .ArraySize = 1,
-            // TODO(khvorov) Alpha blend the font
-            .Format = DXGI_FORMAT_R8_UNORM,
+            .Format = DXGI_FORMAT_A8_UNORM,
             .SampleDesc = {.Count = 1, .Quality = 0},
             .Usage = D3D11_USAGE_IMMUTABLE,
             .BindFlags = D3D11_BIND_SHADER_RESOURCE,
@@ -502,6 +502,22 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         common->device->CreateTexture2D(&desc, &initial, &tex);
         common->device->CreateShaderResourceView((ID3D11Resource*)tex, 0, &renderer.font.textureView);
         tex->Release();
+    }
+
+    {
+        D3D11_BLEND_DESC desc = {
+            .RenderTarget[0] = {
+                .BlendEnable = TRUE,
+                .SrcBlend = D3D11_BLEND_SRC_ALPHA,
+                .DestBlend = D3D11_BLEND_INV_SRC_ALPHA,
+                .BlendOp = D3D11_BLEND_OP_ADD,
+                .SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA,
+                .DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA,
+                .BlendOpAlpha = D3D11_BLEND_OP_ADD,
+                .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
+            },
+        };
+        common->device->CreateBlendState(&desc, &renderer.font.blend);
     }
 
     {
@@ -739,6 +755,8 @@ d3d11render(D3D11Renderer renderer, State* state) {
         renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         renderer.common->context->PSSetShader(renderer.font.vsps.ps, NULL, 0);
+
+        renderer.common->context->OMSetBlendState(renderer.font.blend, NULL, ~0U);
 
         renderer.common->context->Draw(font.len, 0);
     }
@@ -1063,6 +1081,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         d3d11renderer.font.vsps.ps->Release();
         d3d11renderer.font.textureView->Release();
         d3d11renderer.font.sampler->Release();
+        d3d11renderer.font.blend->Release();
 
         d3d11blitter.vbuffer->Release();
         d3d11blitter.vsps.vs->Release();

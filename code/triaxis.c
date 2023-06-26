@@ -2366,7 +2366,20 @@ update(State* state, f32 deltaSec) {
     }
 
     // NOTE(khvorov) Debug UI
-    if (nk_begin(&state->ui, "test", nk_rect(0, 0, 500, 500), 0)) {
+    if (nk_begin(&state->ui, "debugui", nk_rect(0, 0, 500, 500), 0)) {
+        StrBuilder builder = {.ptr = (char*)arenaFreePtr(&state->scratch), .cap = arenaFreeSize(&state->scratch)};
+
+        nk_layout_row_static(&state->ui, state->font.lineAdvance, 100, 1);
+
+        builder.len = 0;
+        fmtStr(&builder, STR("mode: "));
+        if (state->useSW) {
+            fmtStr(&builder, STR("SW"));
+        } else {
+            fmtStr(&builder, STR("D3D11"));
+        }
+        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_LEFT);
+
         nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->w, 4);
 
         nk_text(&state->ui, NKSTRARG("pos"), NK_TEXT_ALIGN_CENTERED);
@@ -2374,8 +2387,7 @@ update(State* state, f32 deltaSec) {
         nk_text(&state->ui, NKSTRARG("y"), NK_TEXT_ALIGN_CENTERED);
         nk_text(&state->ui, NKSTRARG("z"), NK_TEXT_ALIGN_CENTERED);
 
-        StrBuilder builder = {.ptr = (char*)arenaFreePtr(&state->scratch), .cap = arenaFreeSize(&state->scratch)};
-
+        builder.len = 0;
         FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
         fmtF32(&builder, state->camera.pos.x, posFmt);
 
