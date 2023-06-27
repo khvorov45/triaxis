@@ -165,6 +165,8 @@ compileShader(Str hlsl, const char* name, const char* kind) {
 #endif
 #ifndef TRIAXIS_optimise
     flags |= D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+    flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #endif
 
     ID3DBlob* error = 0;
