@@ -640,7 +640,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         renderer.common->context->DrawIndexed(mesh.indices.len * 3, baseIndex, baseVertex);
     }
 
-    {
+    if (state->showDebugUI) {
         D3D11_MAPPED_SUBRESOURCE mappedTriFilledVertices = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.triFilled.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTriFilledVertices);
 
@@ -1002,6 +1002,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                             case 'E': key = InputKey_RotateYX; break;
                             case VK_TAB: key = InputKey_ToggleDebugTriangles; break;
                             case 'T': key = InputKey_ToggleSW; break;
+                            case VK_ESCAPE: key = InputKey_ToggleDebugUI; break;
 
                             case VK_F4: {
                                 keyFound = false;
@@ -1114,6 +1115,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         d3d11renderer.triFilled.vsps.vs->Release();
         d3d11renderer.triFilled.vsps.layout->Release();
         d3d11renderer.triFilled.vsps.ps->Release();
+        d3d11renderer.triFilled.constDims->Release();
 
         d3d11renderer.font.vertices->Release();
         d3d11renderer.font.vsps.vs->Release();
@@ -1122,6 +1124,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         d3d11renderer.font.textureView->Release();
         d3d11renderer.font.sampler->Release();
         d3d11renderer.font.blend->Release();
+        d3d11renderer.font.constDims->Release();
 
         d3d11blitter.vbuffer->Release();
         d3d11blitter.vsps.vs->Release();

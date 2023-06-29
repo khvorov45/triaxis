@@ -997,6 +997,7 @@ typedef enum InputKey {
     InputKey_RotateZY,
     InputKey_ToggleDebugTriangles,
     InputKey_ToggleSW,
+    InputKey_ToggleDebugUI,
     InputKey_Count,
 } InputKey;
 
@@ -2182,6 +2183,8 @@ typedef struct State {
     bool showDebugTriangles;
     bool useSW;
 
+    bool showDebugUI;
+
     struct nk_context   ui;
     struct nk_user_font uifont;
 
@@ -2363,6 +2366,9 @@ update(State* state, f32 deltaSec) {
         if (inputKeyWasPressed(&state->input, InputKey_ToggleSW)) {
             state->useSW = !state->useSW;
         }
+        if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugUI)) {
+            state->showDebugUI = !state->showDebugUI;
+        }
     }
 
     // NOTE(khvorov) Debug UI
@@ -2426,8 +2432,7 @@ swRender(State* state) {
         swRendererFillTriangles(&state->swRenderer);
     }
 
-    // NOTE(khvorov) Debug
-    {
+    if (state->showDebugUI) {
         Texture tex = state->swRenderer.texture;
 
         const struct nk_command* cmd = 0;
