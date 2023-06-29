@@ -860,12 +860,28 @@ msSinceLastUpdate(Timer* timer) {
 // SECTION Main
 //
 
+// NOTE(khvorov) Only to be accessed in windowProc
+static State* globalState = 0;
+
 LRESULT CALLBACK
 windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     LRESULT result = 0;
     switch (uMsg) {
         case WM_DESTROY: PostQuitMessage(0); break;
         case WM_ERASEBKGND: result = TRUE; break;
+        case WM_KILLFOCUS: {
+            inputClearKeys(&globalState->input);
+        } break;
+        case WM_SETFOCUS: {
+            RECT rect = {};
+            GetClientRect(hwnd, &rect);
+            POINT topleft = {rect.left, rect.top};
+            ClientToScreen(hwnd, &topleft);
+            POINT bottomright = {rect.right, rect.bottom};
+            ClientToScreen(hwnd, &bottomright);
+            RECT screen = {.left = topleft.x, .right = bottomright.x, .top = topleft.y, .bottom = bottomright.y};
+            ClipCursor(&screen);
+        } break;
         default: result = DefWindowProcW(hwnd, uMsg, wParam, lParam); break;
     }
     return result;
@@ -885,6 +901,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         state = initState(memBase, memSize);
     }
 
+    globalState = state;
     HWND window = 0;
     {
         TempMemory temp = beginTempMemory(&state->scratch);
@@ -948,6 +965,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 #endif
     ShowWindow(window, SW_SHOWNORMAL);
 
+    if (!state->showDebugUI) {
+        ShowCursor(FALSE);
+    }
+
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
     {
         TIMECAPS caps = {};
@@ -959,9 +980,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     D3D11Common   d3d11common = initD3D11Common(window, state->windowWidth, state->windowHeight);
     D3D11Blitter  d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight, &state->scratch);
     D3D11Renderer d3d11renderer = initD3D11Renderer(&d3d11common, state);
-
-    bool prevWindowIsForeground = false;
-    bool curWindowIsForeground = false;
 
     Timer timer = {.clock = createClock(), .update = getClockMarker()};
     for (bool running = true; running;) {
@@ -1048,37 +1066,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 state->input.mouse.y = point.y;
             }
 
-            {
-                prevWindowIsForeground = curWindowIsForeground;
-                curWindowIsForeground = GetForegroundWindow() == window;
-
-                if (prevWindowIsForeground != curWindowIsForeground) {
-                    // NOTE(khvorov) Clip cursor
-                    if (curWindowIsForeground) {
-                        RECT rect = {};
-                        GetClientRect(window, &rect);
-                        POINT topleft = {rect.left, rect.top};
-                        ClientToScreen(window, &topleft);
-                        POINT bottomright = {rect.right, rect.bottom};
-                        ClientToScreen(window, &bottomright);
-                        RECT screen = {.left = topleft.x, .right = bottomright.x, .top = topleft.y, .bottom = bottomright.y};
-                        ClipCursor(&screen);
-                    } else {
-                        inputClearKeys(&state->input);
-                    }
-
-                    ShowCursor(FALSE);
-                }
-            }
-
             TracyCZoneEnd(tracyCtx);
         }
 
+        bool prevShowDebugUI = state->showDebugUI;
         {
             TracyCZoneN(tracyCtx, "update", true);
             f32 ms = msSinceLastUpdate(&timer);
             update(state, ms / 1000.0f);
             TracyCZoneEnd(tracyCtx);
+        }
+        if (prevShowDebugUI != state->showDebugUI) {
+            ShowCursor(state->showDebugUI);
         }
 
         if (state->useSW) {

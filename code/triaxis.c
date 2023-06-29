@@ -2252,6 +2252,19 @@ initState(void* mem, isize bytes) {
 
 function void
 update(State* state, f32 deltaSec) {
+    // NOTE(khvorov) Misc
+    {
+        if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
+            state->showDebugTriangles = !state->showDebugTriangles;
+        }
+        if (inputKeyWasPressed(&state->input, InputKey_ToggleSW)) {
+            state->useSW = !state->useSW;
+        }
+        if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugUI)) {
+            state->showDebugUI = !state->showDebugUI;
+        }
+    }
+
     // NOTE(khvorov) Move camera
     {
         f32 moveInc = state->camera.moveWUPerSec;
@@ -2319,7 +2332,7 @@ update(State* state, f32 deltaSec) {
     }
 
     // NOTE(khvorov) Camera rotation (mouse-based)
-    {
+    if (!state->showDebugUI) {
         f32 xy = 0;
         f32 xz = -(f32)state->input.mouse.dx;
         f32 yz = (f32)state->input.mouse.dy;
@@ -2357,58 +2370,46 @@ update(State* state, f32 deltaSec) {
         }
     }
 
-    // NOTE(khvorov) Misc
-    {
-        if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
-            state->showDebugTriangles = !state->showDebugTriangles;
-        }
-
-        if (inputKeyWasPressed(&state->input, InputKey_ToggleSW)) {
-            state->useSW = !state->useSW;
-        }
-        if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugUI)) {
-            state->showDebugUI = !state->showDebugUI;
-        }
-    }
-
     // NOTE(khvorov) Debug UI
-    if (nk_begin(&state->ui, "debugui", nk_rect(0, 0, 500, 500), 0)) {
-        StrBuilder builder = {.ptr = (char*)arenaFreePtr(&state->scratch), .cap = arenaFreeSize(&state->scratch)};
+    if (state->showDebugUI) {
+        if (nk_begin(&state->ui, "debugui", nk_rect(0, 0, 500, 500), 0)) {
+            StrBuilder builder = {.ptr = (char*)arenaFreePtr(&state->scratch), .cap = arenaFreeSize(&state->scratch)};
 
-        nk_layout_row_static(&state->ui, state->font.lineAdvance, 100, 1);
+            nk_layout_row_static(&state->ui, state->font.lineAdvance, 100, 1);
 
-        builder.len = 0;
-        fmtStr(&builder, STR("mode: "));
-        if (state->useSW) {
-            fmtStr(&builder, STR("SW"));
-        } else {
-            fmtStr(&builder, STR("D3D11"));
+            builder.len = 0;
+            fmtStr(&builder, STR("mode: "));
+            if (state->useSW) {
+                fmtStr(&builder, STR("SW"));
+            } else {
+                fmtStr(&builder, STR("D3D11"));
+            }
+            nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_LEFT);
+
+            nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->w, 4);
+
+            nk_text(&state->ui, NKSTRARG("pos"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, NKSTRARG("x"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, NKSTRARG("y"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, NKSTRARG("z"), NK_TEXT_ALIGN_CENTERED);
+
+            builder.len = 0;
+            FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
+            fmtF32(&builder, state->camera.pos.x, posFmt);
+
+            nk_text(&state->ui, NKSTRARG("cmr"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
+
+            builder.len = 0;
+            fmtF32(&builder, state->camera.pos.y, posFmt);
+            nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
+
+            builder.len = 0;
+            fmtF32(&builder, state->camera.pos.z, posFmt);
+            nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
         }
-        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_LEFT);
-
-        nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->w, 4);
-
-        nk_text(&state->ui, NKSTRARG("pos"), NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, NKSTRARG("x"), NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, NKSTRARG("y"), NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, NKSTRARG("z"), NK_TEXT_ALIGN_CENTERED);
-
-        builder.len = 0;
-        FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
-        fmtF32(&builder, state->camera.pos.x, posFmt);
-
-        nk_text(&state->ui, NKSTRARG("cmr"), NK_TEXT_ALIGN_CENTERED);
-        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
-
-        builder.len = 0;
-        fmtF32(&builder, state->camera.pos.y, posFmt);
-        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
-
-        builder.len = 0;
-        fmtF32(&builder, state->camera.pos.z, posFmt);
-        nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
+        nk_end(&state->ui);
     }
-    nk_end(&state->ui);
 }
 
 function Color255
