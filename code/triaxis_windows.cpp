@@ -359,6 +359,11 @@ typedef struct D3D11ConstMesh {
     u8      pad1[4];
 } D3D11ConstMesh;
 
+typedef struct D3D11FontConstDims {
+    V2f screen;
+    V2f tex;
+} D3D11FontConstDims;
+
 typedef struct D3D11TriFilledVertex {
     V2f     pos;
     Color01 color;
@@ -397,6 +402,7 @@ typedef struct D3D11Renderer {
         ID3D11ShaderResourceView* textureView;
         ID3D11SamplerState*       sampler;
         ID3D11BlendState*         blend;
+        ID3D11Buffer*             constDims;
     } font;
 } D3D11Renderer;
 
@@ -551,6 +557,12 @@ initD3D11Renderer(D3D11Common* common, State* state) {
 
         desc.ByteWidth = sizeof(D3D11ConstMesh);
         common->device->CreateBuffer(&desc, 0, &renderer.mesh.constMesh);
+
+        // TODO(khvorov) Resizing
+        desc.ByteWidth = sizeof(D3D11FontConstDims);
+        D3D11FontConstDims     initDims = {.screen = {(f32)state->windowWidth, (f32)state->windowHeight}, .tex = {(f32)state->font.atlasW, (f32)state->font.atlasH}};
+        D3D11_SUBRESOURCE_DATA init = {.pSysMem = &initDims};
+        common->device->CreateBuffer(&desc, &init, &renderer.font.constDims);
     }
 
     endTempMemory(temp);
@@ -747,6 +759,11 @@ d3d11render(D3D11Renderer renderer, State* state) {
             UINT          strides[] = {sizeof(D3D11FontVertex)};
             ID3D11Buffer* buffers[] = {renderer.font.vertices};
             renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
+        }
+
+        {
+            ID3D11Buffer* buffers[] = {renderer.font.constDims};
+            renderer.common->context->VSSetConstantBuffers(0, arrayCount(buffers), buffers);
         }
 
         renderer.common->context->PSSetShaderResources(0, 1, &renderer.font.textureView);

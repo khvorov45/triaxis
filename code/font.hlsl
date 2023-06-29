@@ -14,12 +14,16 @@ sampler Sampler: register(s0);
 
 Texture2D<float4> Texture: register(t0);
 
+cbuffer ConstDims: register(b0) {
+    float2 ConstDims_screen;
+    float2 ConstDims_tex;
+};
+
 PSInput
 vs(VSInput input) {
     PSInput output;
-    // TODO(khvorov) Remove hardcoded dims
-    output.pos = float4(input.pos.x / 1600 * 2 - 1, -(input.pos.y / 800 * 2 - 1), 0, 1);
-    output.uv = float2(input.uv.x / (8 * 128), input.uv.y / 16);
+    output.pos = float4(input.pos.x / ConstDims_screen.x * 2 - 1, -(input.pos.y / ConstDims_screen.y * 2 - 1), 0, 1);
+    output.uv = float2(input.uv.x / ConstDims_tex.x, input.uv.y / ConstDims_tex.y);
     output.color = input.color;
     return output;
 }
