@@ -364,6 +364,11 @@ typedef struct D3D11FontConstDims {
     V2f tex;
 } D3D11FontConstDims;
 
+typedef struct D3D11TriFilledConstDims {
+    V2f screen;
+    V2f pad;
+} D3D11TriFilledConstDims;
+
 typedef struct D3D11TriFilledVertex {
     V2f     pos;
     Color01 color;
@@ -393,6 +398,7 @@ typedef struct D3D11Renderer {
         isize         vertexCap;
         ID3D11Buffer* vertices;
         VSPS          vsps;
+        ID3D11Buffer* constDims;
     } triFilled;
 
     struct {
@@ -559,10 +565,20 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         common->device->CreateBuffer(&desc, 0, &renderer.mesh.constMesh);
 
         // TODO(khvorov) Resizing
-        desc.ByteWidth = sizeof(D3D11FontConstDims);
-        D3D11FontConstDims     initDims = {.screen = {(f32)state->windowWidth, (f32)state->windowHeight}, .tex = {(f32)state->font.atlasW, (f32)state->font.atlasH}};
-        D3D11_SUBRESOURCE_DATA init = {.pSysMem = &initDims};
-        common->device->CreateBuffer(&desc, &init, &renderer.font.constDims);
+        {
+            desc.ByteWidth = sizeof(D3D11FontConstDims);
+            D3D11FontConstDims     initDims = {.screen = {(f32)state->windowWidth, (f32)state->windowHeight}, .tex = {(f32)state->font.atlasW, (f32)state->font.atlasH}};
+            D3D11_SUBRESOURCE_DATA init = {.pSysMem = &initDims};
+            common->device->CreateBuffer(&desc, &init, &renderer.font.constDims);
+        }
+
+        // TODO(khvorov) Resizing
+        {
+            desc.ByteWidth = sizeof(D3D11TriFilledConstDims);
+            D3D11TriFilledConstDims initDims = {.screen = {(f32)state->windowWidth, (f32)state->windowHeight}};
+            D3D11_SUBRESOURCE_DATA  init = {.pSysMem = &initDims};
+            common->device->CreateBuffer(&desc, &init, &renderer.triFilled.constDims);
+        }
     }
 
     endTempMemory(temp);
@@ -744,6 +760,11 @@ d3d11render(D3D11Renderer renderer, State* state) {
             UINT          strides[] = {sizeof(D3D11TriFilledVertex)};
             ID3D11Buffer* buffers[] = {renderer.triFilled.vertices};
             renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
+        }
+
+        {
+            ID3D11Buffer* buffers[] = {renderer.triFilled.constDims};
+            renderer.common->context->VSSetConstantBuffers(0, arrayCount(buffers), buffers);
         }
 
         renderer.common->context->VSSetShader(renderer.triFilled.vsps.vs, NULL, 0);

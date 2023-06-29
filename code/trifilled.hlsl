@@ -8,11 +8,14 @@ struct PSInput {
     float4 color: COLOR;
 };
 
+cbuffer ConstDims: register(b0) {
+    float2 ConstDims_screen;
+};
+
 PSInput
 vs(VSInput input) {
     PSInput output;
-    // TODO(khvorov) Pass viewport width/height probably
-    output.pos = float4(input.pos.x / 1600 * 2 - 1, -(input.pos.y / 800 * 2 - 1), 1, 1);
+    output.pos = float4(input.pos.x / ConstDims_screen.x * 2 - 1, -(input.pos.y / ConstDims_screen.y * 2 - 1), 1, 1);
     output.color = input.color;
     return output;
 }
