@@ -1259,6 +1259,9 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     f32 cross2scaled = cross2 / tr.area;
                     f32 cross3scaled = cross3 / tr.area;
 
+                    // TODO(khvorov) Depth check
+
+                    // TODO(khvorov) Perspective-correctness
                     Color01 color01 = color01add(color01add(color01scale(c1, cross2scaled), color01scale(c2, cross3scaled)), color01scale(c3, cross1scaled));
 
                     i32 index = ycoord * renderer->image.width + xcoord;
@@ -1363,6 +1366,8 @@ swRendererPushMesh(SWRenderer* renderer, Mesh mesh, Camera camera) {
             V3f     rot = rotor3fRotateV3f(cameraRotationRev, trans);
             vtxCamera = rot;
         }
+
+        // TODO(khvorov) Near clip plane
 
         V3f vtxScreen = {};
         {
@@ -2241,11 +2246,36 @@ initState(void* mem, isize bytes) {
     state->windowWidth = 1600;
     state->windowHeight = 800;
 
-    state->camera = createCamera((V3f) {.x = 0, .y = 0, .z = 0}, (f32)state->windowWidth, (f32)state->windowHeight);
+    state->camera = createCamera((V3f) {.x = 0, .y = 1, .z = 0}, (f32)state->windowWidth, (f32)state->windowHeight);
     state->input = (Input) {};
 
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0)));
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0)));
+
+    // NOTE(khvorov) Debug grid
+    {
+        MeshBuilder builder = beginMesh(&state->meshStorage);
+
+        V3f backLeft = {.x = -100, .z = 100};
+        V3f backRight = {.x = 100, .z = 100};
+        V3f frontRight = {.x = 100, .z = -100};
+        V3f frontLeft = {.x = -100, .z = -100};
+
+        i32 backLeftIndex = arrpush(state->meshStorage.vertices, backLeft);
+        i32 backRightIndex = arrpush(state->meshStorage.vertices, backRight);
+        i32 frontRightIndex = arrpush(state->meshStorage.vertices, frontRight);
+        i32 frontLeftIndex = arrpush(state->meshStorage.vertices, frontLeft);
+
+        Color01 color = {.r = 0.1, .g = 0.15, .b = 0.2, .a = 1};
+        arrpush(state->meshStorage.colors, color);
+        arrpush(state->meshStorage.colors, color);
+        arrpush(state->meshStorage.colors, color);
+        arrpush(state->meshStorage.colors, color);
+
+        meshStorageAddQuad(&state->meshStorage, backLeftIndex, backRightIndex, frontRightIndex, frontLeftIndex);
+        Mesh ground = endMesh(builder, (V3f) {}, createRotor3f());
+        arrpush(state->meshes, ground);
+    }
 
     return state;
 }
@@ -2360,10 +2390,10 @@ update(State* state, f32 deltaSec) {
         state->camera.currentOrientation = rotor3fLerpN(state->camera.currentOrientation, state->camera.targetOrientation, smoothUpdateCoef);
     }
 
-    // NOTE(khvorov) Entity update?
-    {
+    // TODO(khvorov) Entity update?
+    if (false) {
         Rotor3f cubeRotation = createRotor3fAnglePlane(0.2 * deltaSec, 1, 1, 1);
-        for (isize ind = 0; ind < state->meshes.len; ind++) {
+        for (isize ind = 0; ind < 2; ind++) {
             Mesh* mesh = state->meshes.ptr + ind;
             mesh->orientation = rotor3fMulRotor3f(mesh->orientation, cubeRotation);
             cubeRotation = rotor3fReverse(cubeRotation);

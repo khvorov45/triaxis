@@ -581,6 +581,8 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         }
     }
 
+    // TODO(khvorov) Depth buffer
+
     endTempMemory(temp);
     return renderer;
 }
