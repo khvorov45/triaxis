@@ -1213,9 +1213,9 @@ swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
     V2f halfImageDim = {(f32)renderer->image.width * 0.5f, (f32)renderer->image.height * 0.5f};
 
     Triangle result = {
-        .v1 = v2fhadamard(v2fadd(v2fscale(v1.xy, 1 / v1.z), (V2f) {1, 1}), halfImageDim),
-        .v2 = v2fhadamard(v2fadd(v2fscale(v2.xy, 1 / v2.z), (V2f) {1, 1}), halfImageDim),
-        .v3 = v2fhadamard(v2fadd(v2fscale(v3.xy, 1 / v3.z), (V2f) {1, 1}), halfImageDim),
+        .v1 = v2fhadamard((V2f) {v1.x + 1, -v1.y + 1}, halfImageDim),
+        .v2 = v2fhadamard((V2f) {v2.x + 1, -v2.y + 1}, halfImageDim),
+        .v3 = v2fhadamard((V2f) {v3.x + 1, -v3.y + 1}, halfImageDim),
 
         .c1 = arrget(renderer->trisScreen.colors, trig.i1),
         .c2 = arrget(renderer->trisScreen.colors, trig.i2),
@@ -2461,6 +2461,22 @@ nkcolorTo255(struct nk_color c) {
     return result;
 }
 
+function V3f
+swRender_toClip(State* state, V3f v1) {
+    V3f v1Clip = {
+        .x = v1.x / v1.z / state->camera.tanHalfFov.x,
+        .y = v1.y / v1.z / state->camera.tanHalfFov.y,
+        .z = (v1.z - state->camera.nearClipZ) / (state->camera.farClipZ - state->camera.nearClipZ),
+    };
+    return v1Clip;
+}
+
+typedef struct ClipPoly {
+    V3f     vertices[6];
+    Color01 colors[6];
+    isize   count;
+} ClipPoly;
+
 function void
 swRender(State* state) {
     meshStorageClearBuffers(&state->swRenderer.trisCamera);
@@ -2473,14 +2489,66 @@ swRender(State* state) {
             swRendererPushMesh(&state->swRenderer, mesh, state->camera);
         }
 
-        // TODO(khvorov) Clip and cull
-        {
-        }
+        for (isize triIndex = 0; triIndex < state->swRenderer.trisCamera.indices.len; triIndex++) {
+            TriangleIndices tri = state->swRenderer.trisCamera.indices.ptr[triIndex];
 
-        swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
-        swRendererClearImage(&state->swRenderer);
-        swRendererFillTriangles(&state->swRenderer);
+            V3f v1Camera = arrget(state->swRenderer.trisCamera.vertices, tri.i1);
+            V3f v2Camera = arrget(state->swRenderer.trisCamera.vertices, tri.i2);
+            V3f v3Camera = arrget(state->swRenderer.trisCamera.vertices, tri.i3);
+
+            Color01 c1 = arrget(state->swRenderer.trisCamera.colors, tri.i1);
+            Color01 c2 = arrget(state->swRenderer.trisCamera.colors, tri.i2);
+            Color01 c3 = arrget(state->swRenderer.trisCamera.colors, tri.i3);
+
+            V3f v1Clip = swRender_toClip(state, v1Camera);
+            V3f v2Clip = swRender_toClip(state, v2Camera);
+            V3f v3Clip = swRender_toClip(state, v3Camera);
+
+            ClipPoly poly = {
+                .vertices[0] = v1Clip,
+                .vertices[1] = v2Clip,
+                .vertices[2] = v3Clip,
+
+                .colors[0] = c1,
+                .colors[1] = c2,
+                .colors[2] = c3,
+
+                .count = 3,
+            };
+
+            // TODO(khvorov) Clip
+            // Plane planes[] = {
+            //     {(V3f) {.z = state->camera.nearClipZ}, (V3f) {.z = 1}},
+            // };
+
+            i32 firstVertexIndex = (i32)state->swRenderer.trisScreen.vertices.len;
+
+            for (i32 polyVertexIndex = 0; polyVertexIndex < poly.count; polyVertexIndex++) {
+                V3f     polyV = poly.vertices[polyVertexIndex];
+                Color01 polyC = poly.colors[polyVertexIndex];
+                arrpush(state->swRenderer.trisScreen.vertices, polyV);
+                arrpush(state->swRenderer.trisScreen.colors, polyC);
+            }
+
+            for (i32 clippedTriIndex = 0; clippedTriIndex < poly.count - 2; clippedTriIndex++) {
+                i32 i1 = 0;
+                i32 i2 = clippedTriIndex + 1;
+                i32 i3 = clippedTriIndex + 2;
+
+                TriangleIndices triPoly = {
+                    i1 + firstVertexIndex,
+                    i2 + firstVertexIndex,
+                    i3 + firstVertexIndex,
+                };
+
+                meshStorageAddTriangle(&state->swRenderer.trisScreen, triPoly);
+            }
+        }
     }
+
+    swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
+    swRendererClearImage(&state->swRenderer);
+    swRendererFillTriangles(&state->swRenderer);
 
     if (state->showDebugUI) {
         Texture tex = state->swRenderer.texture;
