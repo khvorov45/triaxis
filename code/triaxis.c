@@ -2463,6 +2463,7 @@ nkcolorTo255(struct nk_color c) {
 
 function V3f
 swRender_toClip(State* state, V3f v1) {
+    // TODO(khvorov) Do this in pushMesh?
     V3f v1Clip = {
         .x = v1.x / v1.z / state->camera.tanHalfFov.x,
         .y = v1.y / v1.z / state->camera.tanHalfFov.y,
