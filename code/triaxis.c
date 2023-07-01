@@ -2505,6 +2505,8 @@ swRender(State* state) {
             V3f v2Clip = swRender_toClip(state, v2Camera);
             V3f v3Clip = swRender_toClip(state, v3Camera);
 
+            // TODO(khvorov) Cull here?
+
             ClipPoly poly = {
                 .vertices[0] = v1Clip,
                 .vertices[1] = v2Clip,
