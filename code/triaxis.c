@@ -1225,7 +1225,7 @@ swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
     i32 verticiesBehind = (v1og.z < nearClipPlaneZ) + (v2og.z < nearClipPlaneZ) + (v3og.z < nearClipPlaneZ);
 
     // TODO(khvorov) Clip vertex attributes
-    // TODO(khvorov) Hangle seams
+    // TODO(khvorov) Handle seams
 
     TriangleNearClipped result = {};
     switch (verticiesBehind) {
@@ -1678,7 +1678,9 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
     isize imageWidth = 16;
     isize imageHeight = 8;
     for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
-        renderer->triangles.vertices.ptr[ind].xy = v2fhadamard(renderer->triangles.vertices.ptr[ind].xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
+        V2f* xy = &renderer->triangles.vertices.ptr[ind].xy;
+        *xy = v2fhadamard(*xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
+        *xy = v2fadd(v2fscale(*xy, 2), (V2f){-1, -1});
     }
 
     for (i32 ind = 0; ind < renderer->triangles.vertices.len; ind += 3) {
@@ -1697,7 +1699,7 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
         isize imageScaleX = finalImageWidth / imageWidth;
         isize imageScaleY = finalImageHeight / imageHeight;
 
-        V2f offset = v2fhadamard(v2fscale((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 0.5), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
+        V2f offset = v2fhadamard(v2fscale((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 1), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
         for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
             renderer->triangles.vertices.ptr[ind].xy = v2fadd(renderer->triangles.vertices.ptr[ind].xy, offset);
         }
