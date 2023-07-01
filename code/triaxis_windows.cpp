@@ -548,6 +548,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         D3D11_RASTERIZER_DESC desc = {
             .FillMode = D3D11_FILL_SOLID,
             .CullMode = D3D11_CULL_BACK,
+            .DepthClipEnable = true,
         };
         common->device->CreateRasterizerState(&desc, &renderer.rasterizerState);
     }

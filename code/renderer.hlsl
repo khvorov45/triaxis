@@ -60,10 +60,11 @@ vs(VSInput input) {
         vtxCamera = rot;
     }
 
-    float3 vtxScreen = float3(vtxCamera.x / ConstCamera_fovx, vtxCamera.y / ConstCamera_fovy, vtxCamera.z);
+    // TODO(khvorov) Near/far clipping
+    float3 vtxClip = float3(vtxCamera.x / ConstCamera_fovx, vtxCamera.y / ConstCamera_fovy, vtxCamera.z);
 
     PSInput output;
-    output.pos = float4(vtxScreen, vtxCamera.z);
+    output.pos = float4(vtxClip, vtxCamera.z);
     output.color = input.color.rgb;
     return output;
 }
