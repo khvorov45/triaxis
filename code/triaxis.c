@@ -1225,6 +1225,7 @@ swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
     i32 verticiesBehind = (v1og.z < nearClipPlaneZ) + (v2og.z < nearClipPlaneZ) + (v3og.z < nearClipPlaneZ);
 
     // TODO(khvorov) Clip vertex attributes
+    // TODO(khvorov) Hangle seams
 
     TriangleNearClipped result = {};
     switch (verticiesBehind) {
