@@ -527,6 +527,25 @@ v3fnormalise(V3f v1) {
     return result;
 }
 
+function V2f
+v2flerp(V2f from, V2f to, f32 by) {
+    V2f result = {
+        .x = lerpf(from.x, to.x, by),
+        .y = lerpf(from.y, to.y, by),
+    };
+    return result;
+}
+
+function V3f
+v3flerp(V3f from, V3f to, f32 by) {
+    V3f result = {
+        .x = lerpf(from.x, to.x, by),
+        .y = lerpf(from.y, to.y, by),
+        .z = lerpf(from.z, to.z, by),
+    };
+    return result;
+}
+
 typedef struct Rotor3f {
     f32 dt;
     f32 xy;
@@ -1174,113 +1193,209 @@ swRendererClearImage(SWRenderer* renderer) {
 }
 
 typedef struct Triangle {
-    V2f  v1, v2, v3;
-    f32  area;
-    bool isBehind;
+    V2f v1, v2, v3;
+    f32 area;
 } Triangle;
 
+typedef struct TriangleNearClipped {
+    Triangle tris[2];
+    i32      count;
+} TriangleNearClipped;
+
 function Triangle
+swRendererPullTriangle_computeResultTri(V3f v1, V3f v2, V3f v3, V2f halfImageDim) {
+    Triangle result = {
+        .v1 = v2fhadamard(v2fadd(v2fscale(v1.xy, 1 / v1.z), (V2f) {1, 1}), halfImageDim),
+        .v2 = v2fhadamard(v2fadd(v2fscale(v2.xy, 1 / v2.z), (V2f) {1, 1}), halfImageDim),
+        .v3 = v2fhadamard(v2fadd(v2fscale(v3.xy, 1 / v3.z), (V2f) {1, 1}), halfImageDim),
+    };
+    result.area = edgeWedge(result.v1, result.v2, result.v3);
+    return result;
+}
+
+function TriangleNearClipped
 swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
     V3f v1og = arrget(renderer->triangles.vertices, trig.i1);
     V3f v2og = arrget(renderer->triangles.vertices, trig.i2);
     V3f v3og = arrget(renderer->triangles.vertices, trig.i3);
 
     V2f halfImageDim = {(f32)renderer->image.width * 0.5f, (f32)renderer->image.height * 0.5f};
+    f32 nearClipPlaneZ = 0.001;
 
-    V2f v1 = v2fhadamard(v2fadd(v2fscale(v1og.xy, 1 / v1og.z), (V2f) {1, 1}), halfImageDim);
-    V2f v2 = v2fhadamard(v2fadd(v2fscale(v2og.xy, 1 / v2og.z), (V2f) {1, 1}), halfImageDim);
-    V2f v3 = v2fhadamard(v2fadd(v2fscale(v3og.xy, 1 / v3og.z), (V2f) {1, 1}), halfImageDim);
+    i32 verticiesBehind = (v1og.z < nearClipPlaneZ) + (v2og.z < nearClipPlaneZ) + (v3og.z < nearClipPlaneZ);
 
-    f32 area = edgeWedge(v1, v2, v3);
+    // TODO(khvorov) Clip vertex attributes
 
-    Triangle result = {v1, v2, v3, area, v1og.z < 0 || v2og.z < 0 || v3og.z < 0};
+    TriangleNearClipped result = {};
+    switch (verticiesBehind) {
+        case 0: {
+            result.tris[0] = swRendererPullTriangle_computeResultTri(v1og, v2og, v3og, halfImageDim);
+            result.count = 1;
+        } break;
+
+        case 1: {
+            V3f vBehind = {};
+            V3f vNotBehind1 = {};
+            V3f vNotBehind2 = {};
+
+            if (v1og.z < nearClipPlaneZ) {
+                vBehind = v1og;
+                vNotBehind1 = v2og;
+                vNotBehind2 = v3og;
+            } else if (v2og.z < nearClipPlaneZ) {
+                vBehind = v2og;
+                vNotBehind1 = v3og;
+                vNotBehind2 = v1og;
+            } else {
+                assert(v3og.z < nearClipPlaneZ);
+                vBehind = v3og;
+                vNotBehind1 = v1og;
+                vNotBehind2 = v2og;
+            }
+
+            V3f vOnPlane1 = {
+                .xy = v2flerp(vNotBehind1.xy, vBehind.xy, (vNotBehind1.z - nearClipPlaneZ) / (vNotBehind1.z - vBehind.z)),
+                .z_ = nearClipPlaneZ,
+            };
+
+            V3f vOnPlane2 = {
+                .xy = v2flerp(vNotBehind2.xy, vBehind.xy, (vNotBehind2.z - nearClipPlaneZ) / (vNotBehind2.z - vBehind.z)),
+                .z_ = nearClipPlaneZ,
+            };
+
+            result.tris[0] = swRendererPullTriangle_computeResultTri(vOnPlane1, vNotBehind1, vOnPlane2, halfImageDim);
+            result.tris[1] = swRendererPullTriangle_computeResultTri(vNotBehind1, vNotBehind2, vOnPlane2, halfImageDim);
+            result.count = 2;
+        } break;
+
+        case 2: {
+            V3f vNotBehind = {};
+            V3f vBehind1 = {};
+            V3f vBehind2 = {};
+
+            if (v1og.z >= nearClipPlaneZ) {
+                vNotBehind = v1og;
+                vBehind1 = v2og;
+                vBehind2 = v3og;
+            } else if (v2og.z >= nearClipPlaneZ) {
+                vNotBehind = v2og;
+                vBehind1 = v3og;
+                vBehind2 = v1og;
+            } else {
+                assert(v3og.z >= nearClipPlaneZ);
+                vNotBehind = v3og;
+                vBehind1 = v1og;
+                vBehind2 = v2og;
+            }
+
+            V3f vOnPlane1 = {
+                .xy = v2flerp(vBehind1.xy, vNotBehind.xy, (vBehind1.z - nearClipPlaneZ) / (vBehind1.z - vNotBehind.z)),
+                .z_ = nearClipPlaneZ,
+            };
+
+            V3f vOnPlane2 = {
+                .xy = v2flerp(vBehind2.xy, vNotBehind.xy, (vBehind2.z - nearClipPlaneZ) / (vBehind2.z - vNotBehind.z)),
+                .z_ = nearClipPlaneZ,
+            };
+
+            result.tris[0] = swRendererPullTriangle_computeResultTri(vNotBehind, vOnPlane1, vOnPlane2, halfImageDim);
+            result.count = 1;
+        } break;
+
+        case 3: break;
+    }
+
     return result;
 }
 
 function void
 swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
-    Triangle tr = swRendererPullTriangle(renderer, trig);
+    TriangleNearClipped trClipped = swRendererPullTriangle(renderer, trig);
 
-    V2f v1 = tr.v1;
-    V2f v2 = tr.v2;
-    V2f v3 = tr.v3;
+    for (i32 trClippedInd = 0; trClippedInd < trClipped.count; trClippedInd++) {
+        Triangle tr = trClipped.tris[trClippedInd];
 
-    if (tr.area > 0 && !tr.isBehind) {
-        Color01 c1 = arrget(renderer->triangles.colors, trig.i1);
-        Color01 c2 = arrget(renderer->triangles.colors, trig.i2);
-        Color01 c3 = arrget(renderer->triangles.colors, trig.i3);
+        V2f v1 = tr.v1;
+        V2f v2 = tr.v2;
+        V2f v3 = tr.v3;
 
-        f32 xmin = min(v1.x, min(v2.x, v3.x));
-        f32 ymin = min(v1.y, min(v2.y, v3.y));
-        f32 xmax = max(v1.x, max(v2.x, v3.x));
-        f32 ymax = max(v1.y, max(v2.y, v3.y));
+        if (tr.area > 0) {
+            Color01 c1 = arrget(renderer->triangles.colors, trig.i1);
+            Color01 c2 = arrget(renderer->triangles.colors, trig.i2);
+            Color01 c3 = arrget(renderer->triangles.colors, trig.i3);
 
-        bool allowZero1 = isTopLeft(v1, v2);
-        bool allowZero2 = isTopLeft(v2, v3);
-        bool allowZero3 = isTopLeft(v3, v1);
+            f32 xmin = min(v1.x, min(v2.x, v3.x));
+            f32 ymin = min(v1.y, min(v2.y, v3.y));
+            f32 xmax = max(v1.x, max(v2.x, v3.x));
+            f32 ymax = max(v1.y, max(v2.y, v3.y));
 
-        f32 dcross1x = v1.y - v2.y;
-        f32 dcross2x = v2.y - v3.y;
-        f32 dcross3x = v3.y - v1.y;
+            bool allowZero1 = isTopLeft(v1, v2);
+            bool allowZero2 = isTopLeft(v2, v3);
+            bool allowZero3 = isTopLeft(v3, v1);
 
-        f32 dcross1y = v2.x - v1.x;
-        f32 dcross2y = v3.x - v2.x;
-        f32 dcross3y = v1.x - v3.x;
+            f32 dcross1x = v1.y - v2.y;
+            f32 dcross2x = v2.y - v3.y;
+            f32 dcross3x = v3.y - v1.y;
 
-        i32 ystart = max((i32)ymin, 0);
-        i32 xstart = max((i32)xmin, 0);
-        i32 yend = min((i32)ymax, renderer->image.height - 1);
-        i32 xend = min((i32)xmax, renderer->image.width - 1);
+            f32 dcross1y = v2.x - v1.x;
+            f32 dcross2y = v3.x - v2.x;
+            f32 dcross3y = v1.x - v3.x;
 
-        // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
-        V2f topleft = {(f32)(xstart), (f32)(ystart)};
-        f32 cross1topleft = edgeWedge(v1, v2, topleft);
-        f32 cross2topleft = edgeWedge(v2, v3, topleft);
-        f32 cross3topleft = edgeWedge(v3, v1, topleft);
+            i32 ystart = max((i32)ymin, 0);
+            i32 xstart = max((i32)xmin, 0);
+            i32 yend = min((i32)ymax, renderer->image.height - 1);
+            i32 xend = min((i32)xmax, renderer->image.width - 1);
 
-        for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
-            f32 yinc = (f32)(ycoord - ystart);
-            f32 cross1row = cross1topleft + yinc * dcross1y;
-            f32 cross2row = cross2topleft + yinc * dcross2y;
-            f32 cross3row = cross3topleft + yinc * dcross3y;
+            // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
+            V2f topleft = {(f32)(xstart), (f32)(ystart)};
+            f32 cross1topleft = edgeWedge(v1, v2, topleft);
+            f32 cross2topleft = edgeWedge(v2, v3, topleft);
+            f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
-            for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
-                f32 xinc = (f32)(xcoord - xstart);
-                f32 cross1 = cross1row + xinc * dcross1x;
-                f32 cross2 = cross2row + xinc * dcross2x;
-                f32 cross3 = cross3row + xinc * dcross3x;
+            for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
+                f32 yinc = (f32)(ycoord - ystart);
+                f32 cross1row = cross1topleft + yinc * dcross1y;
+                f32 cross2row = cross2topleft + yinc * dcross2y;
+                f32 cross3row = cross3topleft + yinc * dcross3y;
 
-                bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
-                bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
-                bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
+                for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
+                    f32 xinc = (f32)(xcoord - xstart);
+                    f32 cross1 = cross1row + xinc * dcross1x;
+                    f32 cross2 = cross2row + xinc * dcross2x;
+                    f32 cross3 = cross3row + xinc * dcross3x;
 
-                if (pass1 && pass2 && pass3) {
-                    f32 cross1scaled = cross1 / tr.area;
-                    f32 cross2scaled = cross2 / tr.area;
-                    f32 cross3scaled = cross3 / tr.area;
+                    bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
+                    bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
+                    bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
 
-                    // TODO(khvorov) Depth check
+                    if (pass1 && pass2 && pass3) {
+                        f32 cross1scaled = cross1 / tr.area;
+                        f32 cross2scaled = cross2 / tr.area;
+                        f32 cross3scaled = cross3 / tr.area;
 
-                    // TODO(khvorov) Perspective-correctness
-                    Color01 color01 = color01add(color01add(color01scale(c1, cross2scaled), color01scale(c2, cross3scaled)), color01scale(c3, cross1scaled));
+                        // TODO(khvorov) Depth check
 
-                    i32 index = ycoord * renderer->image.width + xcoord;
-                    assert(index < renderer->image.width * renderer->image.height);
+                        // TODO(khvorov) Perspective-correctness
+                        Color01 color01 = color01add(color01add(color01scale(c1, cross2scaled), color01scale(c2, cross3scaled)), color01scale(c3, cross1scaled));
 
-                    u32      existingColoru32 = renderer->image.ptr[index];
-                    Color255 existingColor255 = coloru32to255(existingColoru32);
-                    Color01  existingColor01 = color255to01(existingColor255);
+                        i32 index = ycoord * renderer->image.width + xcoord;
+                        assert(index < renderer->image.width * renderer->image.height);
 
-                    Color01 blended01 = {
-                        .r = lerpf(existingColor01.r, color01.r, color01.a),
-                        .g = lerpf(existingColor01.g, color01.g, color01.a),
-                        .b = lerpf(existingColor01.b, color01.b, color01.a),
-                        .a = 1,
-                    };
+                        u32      existingColoru32 = renderer->image.ptr[index];
+                        Color255 existingColor255 = coloru32to255(existingColoru32);
+                        Color01  existingColor01 = color255to01(existingColor255);
 
-                    Color255 blended255 = color01to255(blended01);
-                    u32      blendedu32 = color255tou32(blended255);
-                    renderer->image.ptr[index] = blendedu32;
+                        Color01 blended01 = {
+                            .r = lerpf(existingColor01.r, color01.r, color01.a),
+                            .g = lerpf(existingColor01.g, color01.g, color01.a),
+                            .b = lerpf(existingColor01.b, color01.b, color01.a),
+                            .a = 1,
+                        };
+
+                        Color255 blended255 = color01to255(blended01);
+                        u32      blendedu32 = color255tou32(blended255);
+                        renderer->image.ptr[index] = blendedu32;
+                    }
                 }
             }
         }
@@ -1289,21 +1404,25 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
 function void
 swRendererOutlineTriangle(SWRenderer* renderer, TriangleIndices trig) {
-    Triangle tr = swRendererPullTriangle(renderer, trig);
+    TriangleNearClipped trClipped = swRendererPullTriangle(renderer, trig);
 
-    V2f v1 = tr.v1;
-    V2f v2 = tr.v2;
-    V2f v3 = tr.v3;
+    for (i32 trClippedInd = 0; trClippedInd < trClipped.count; trClippedInd++) {
+        Triangle tr = trClipped.tris[trClippedInd];
 
-    if (tr.area > 0 && !tr.isBehind) {
-        swDrawContrastLine(renderer->texture, v1, v2);
-        swDrawContrastLine(renderer->texture, v2, v3);
-        swDrawContrastLine(renderer->texture, v3, v1);
+        V2f v1 = tr.v1;
+        V2f v2 = tr.v2;
+        V2f v3 = tr.v3;
 
-        V2f vertexRectDim = {10, 10};
-        swDrawContrastRect(renderer->texture, rect2fCenterDim(v1, vertexRectDim));
-        swDrawContrastRect(renderer->texture, rect2fCenterDim(v2, vertexRectDim));
-        swDrawContrastRect(renderer->texture, rect2fCenterDim(v3, vertexRectDim));
+        if (tr.area > 0) {
+            swDrawContrastLine(renderer->texture, v1, v2);
+            swDrawContrastLine(renderer->texture, v2, v3);
+            swDrawContrastLine(renderer->texture, v3, v1);
+
+            V2f vertexRectDim = {10, 10};
+            swDrawContrastRect(renderer->texture, rect2fCenterDim(v1, vertexRectDim));
+            swDrawContrastRect(renderer->texture, rect2fCenterDim(v2, vertexRectDim));
+            swDrawContrastRect(renderer->texture, rect2fCenterDim(v3, vertexRectDim));
+        }
     }
 }
 
@@ -2264,6 +2383,7 @@ initState(void* mem, isize bytes) {
         arrpush(state->meshes, ground);
     }
 
+    state->useSW = true;
     return state;
 }
 
