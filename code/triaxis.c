@@ -972,6 +972,8 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
 typedef struct Camera {
     V3f     pos;
     V2f     tanHalfFov;
+    f32     nearClipZ;
+    f32     farClipZ;
     Rotor3f currentOrientation;
     Rotor3f targetOrientation;
     f32     moveWUPerSec;
@@ -987,6 +989,8 @@ createCamera(V3f pos, f32 width, f32 height) {
     Camera camera = {
         .pos = pos,
         .tanHalfFov = {fovx, fovy},
+        .nearClipZ = 0.001f,
+        .farClipZ = 100.0f,
         .currentOrientation = createRotor3f(),
         .targetOrientation = createRotor3f(),
         .moveWUPerSec = 5,
@@ -1163,7 +1167,8 @@ typedef struct SWRenderer {
         Texture texture;
     };
 
-    MeshStorage triangles;
+    MeshStorage trisCamera;
+    MeshStorage trisScreen;
 } SWRenderer;
 
 function SWRenderer
@@ -1171,10 +1176,11 @@ createSWRenderer(Arena* arena, isize bytes) {
     SWRenderer renderer = {};
 
     isize forImage = bytes / 4 * 3;
-    isize forTriangles = bytes - forImage;
+    isize forTriangles = (bytes - forImage) / 2;
 
     arenaAllocCap(arena, u32, forImage, renderer.image);
-    renderer.triangles = createMeshStorage(arena, forTriangles);
+    renderer.trisCamera = createMeshStorage(arena, forTriangles);
+    renderer.trisScreen = createMeshStorage(arena, forTriangles);
 
     return renderer;
 }
@@ -1193,210 +1199,117 @@ swRendererClearImage(SWRenderer* renderer) {
 }
 
 typedef struct Triangle {
-    V2f v1, v2, v3;
-    f32 area;
+    V2f     v1, v2, v3;
+    Color01 c1, c2, c3;
+    f32     area;
 } Triangle;
 
-typedef struct TriangleNearClipped {
-    Triangle tris[2];
-    i32      count;
-} TriangleNearClipped;
-
 function Triangle
-swRendererPullTriangle_computeResultTri(V3f v1, V3f v2, V3f v3, V2f halfImageDim) {
+swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
+    V3f v1 = arrget(renderer->trisScreen.vertices, trig.i1);
+    V3f v2 = arrget(renderer->trisScreen.vertices, trig.i2);
+    V3f v3 = arrget(renderer->trisScreen.vertices, trig.i3);
+
+    V2f halfImageDim = {(f32)renderer->image.width * 0.5f, (f32)renderer->image.height * 0.5f};
+
     Triangle result = {
         .v1 = v2fhadamard(v2fadd(v2fscale(v1.xy, 1 / v1.z), (V2f) {1, 1}), halfImageDim),
         .v2 = v2fhadamard(v2fadd(v2fscale(v2.xy, 1 / v2.z), (V2f) {1, 1}), halfImageDim),
         .v3 = v2fhadamard(v2fadd(v2fscale(v3.xy, 1 / v3.z), (V2f) {1, 1}), halfImageDim),
+
+        .c1 = arrget(renderer->trisScreen.colors, trig.i1),
+        .c2 = arrget(renderer->trisScreen.colors, trig.i2),
+        .c3 = arrget(renderer->trisScreen.colors, trig.i3),
     };
+
     result.area = edgeWedge(result.v1, result.v2, result.v3);
-    return result;
-}
-
-function TriangleNearClipped
-swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
-    V3f v1og = arrget(renderer->triangles.vertices, trig.i1);
-    V3f v2og = arrget(renderer->triangles.vertices, trig.i2);
-    V3f v3og = arrget(renderer->triangles.vertices, trig.i3);
-
-    V2f halfImageDim = {(f32)renderer->image.width * 0.5f, (f32)renderer->image.height * 0.5f};
-    f32 nearClipPlaneZ = 0.001;
-
-    i32 verticiesBehind = (v1og.z < nearClipPlaneZ) + (v2og.z < nearClipPlaneZ) + (v3og.z < nearClipPlaneZ);
-
-    // TODO(khvorov) Clip vertex attributes
-    // TODO(khvorov) Handle seams
-
-    TriangleNearClipped result = {};
-    switch (verticiesBehind) {
-        case 0: {
-            result.tris[0] = swRendererPullTriangle_computeResultTri(v1og, v2og, v3og, halfImageDim);
-            result.count = 1;
-        } break;
-
-        case 1: {
-            V3f vBehind = {};
-            V3f vNotBehind1 = {};
-            V3f vNotBehind2 = {};
-
-            if (v1og.z < nearClipPlaneZ) {
-                vBehind = v1og;
-                vNotBehind1 = v2og;
-                vNotBehind2 = v3og;
-            } else if (v2og.z < nearClipPlaneZ) {
-                vBehind = v2og;
-                vNotBehind1 = v3og;
-                vNotBehind2 = v1og;
-            } else {
-                assert(v3og.z < nearClipPlaneZ);
-                vBehind = v3og;
-                vNotBehind1 = v1og;
-                vNotBehind2 = v2og;
-            }
-
-            V3f vOnPlane1 = {
-                .xy = v2flerp(vNotBehind1.xy, vBehind.xy, (vNotBehind1.z - nearClipPlaneZ) / (vNotBehind1.z - vBehind.z)),
-                .z_ = nearClipPlaneZ,
-            };
-
-            V3f vOnPlane2 = {
-                .xy = v2flerp(vNotBehind2.xy, vBehind.xy, (vNotBehind2.z - nearClipPlaneZ) / (vNotBehind2.z - vBehind.z)),
-                .z_ = nearClipPlaneZ,
-            };
-
-            result.tris[0] = swRendererPullTriangle_computeResultTri(vOnPlane1, vNotBehind1, vOnPlane2, halfImageDim);
-            result.tris[1] = swRendererPullTriangle_computeResultTri(vNotBehind1, vNotBehind2, vOnPlane2, halfImageDim);
-            result.count = 2;
-        } break;
-
-        case 2: {
-            V3f vNotBehind = {};
-            V3f vBehind1 = {};
-            V3f vBehind2 = {};
-
-            if (v1og.z >= nearClipPlaneZ) {
-                vNotBehind = v1og;
-                vBehind1 = v2og;
-                vBehind2 = v3og;
-            } else if (v2og.z >= nearClipPlaneZ) {
-                vNotBehind = v2og;
-                vBehind1 = v3og;
-                vBehind2 = v1og;
-            } else {
-                assert(v3og.z >= nearClipPlaneZ);
-                vNotBehind = v3og;
-                vBehind1 = v1og;
-                vBehind2 = v2og;
-            }
-
-            V3f vOnPlane1 = {
-                .xy = v2flerp(vBehind1.xy, vNotBehind.xy, (vBehind1.z - nearClipPlaneZ) / (vBehind1.z - vNotBehind.z)),
-                .z_ = nearClipPlaneZ,
-            };
-
-            V3f vOnPlane2 = {
-                .xy = v2flerp(vBehind2.xy, vNotBehind.xy, (vBehind2.z - nearClipPlaneZ) / (vBehind2.z - vNotBehind.z)),
-                .z_ = nearClipPlaneZ,
-            };
-
-            result.tris[0] = swRendererPullTriangle_computeResultTri(vNotBehind, vOnPlane1, vOnPlane2, halfImageDim);
-            result.count = 1;
-        } break;
-
-        case 3: break;
-    }
-
     return result;
 }
 
 function void
 swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
-    TriangleNearClipped trClipped = swRendererPullTriangle(renderer, trig);
+    Triangle tr = swRendererPullTriangle(renderer, trig);
 
-    for (i32 trClippedInd = 0; trClippedInd < trClipped.count; trClippedInd++) {
-        Triangle tr = trClipped.tris[trClippedInd];
+    V2f v1 = tr.v1;
+    V2f v2 = tr.v2;
+    V2f v3 = tr.v3;
 
-        V2f v1 = tr.v1;
-        V2f v2 = tr.v2;
-        V2f v3 = tr.v3;
+    if (tr.area > 0) {
+        Color01 c1 = tr.c1;
+        Color01 c2 = tr.c2;
+        Color01 c3 = tr.c3;
 
-        if (tr.area > 0) {
-            Color01 c1 = arrget(renderer->triangles.colors, trig.i1);
-            Color01 c2 = arrget(renderer->triangles.colors, trig.i2);
-            Color01 c3 = arrget(renderer->triangles.colors, trig.i3);
+        f32 xmin = min(v1.x, min(v2.x, v3.x));
+        f32 ymin = min(v1.y, min(v2.y, v3.y));
+        f32 xmax = max(v1.x, max(v2.x, v3.x));
+        f32 ymax = max(v1.y, max(v2.y, v3.y));
 
-            f32 xmin = min(v1.x, min(v2.x, v3.x));
-            f32 ymin = min(v1.y, min(v2.y, v3.y));
-            f32 xmax = max(v1.x, max(v2.x, v3.x));
-            f32 ymax = max(v1.y, max(v2.y, v3.y));
+        bool allowZero1 = isTopLeft(v1, v2);
+        bool allowZero2 = isTopLeft(v2, v3);
+        bool allowZero3 = isTopLeft(v3, v1);
 
-            bool allowZero1 = isTopLeft(v1, v2);
-            bool allowZero2 = isTopLeft(v2, v3);
-            bool allowZero3 = isTopLeft(v3, v1);
+        f32 dcross1x = v1.y - v2.y;
+        f32 dcross2x = v2.y - v3.y;
+        f32 dcross3x = v3.y - v1.y;
 
-            f32 dcross1x = v1.y - v2.y;
-            f32 dcross2x = v2.y - v3.y;
-            f32 dcross3x = v3.y - v1.y;
+        f32 dcross1y = v2.x - v1.x;
+        f32 dcross2y = v3.x - v2.x;
+        f32 dcross3y = v1.x - v3.x;
 
-            f32 dcross1y = v2.x - v1.x;
-            f32 dcross2y = v3.x - v2.x;
-            f32 dcross3y = v1.x - v3.x;
+        i32 ystart = max((i32)ymin, 0);
+        i32 xstart = max((i32)xmin, 0);
+        i32 yend = min((i32)ymax, renderer->image.height - 1);
+        i32 xend = min((i32)xmax, renderer->image.width - 1);
 
-            i32 ystart = max((i32)ymin, 0);
-            i32 xstart = max((i32)xmin, 0);
-            i32 yend = min((i32)ymax, renderer->image.height - 1);
-            i32 xend = min((i32)xmax, renderer->image.width - 1);
+        // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
+        V2f topleft = {(f32)(xstart), (f32)(ystart)};
+        f32 cross1topleft = edgeWedge(v1, v2, topleft);
+        f32 cross2topleft = edgeWedge(v2, v3, topleft);
+        f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
-            // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
-            V2f topleft = {(f32)(xstart), (f32)(ystart)};
-            f32 cross1topleft = edgeWedge(v1, v2, topleft);
-            f32 cross2topleft = edgeWedge(v2, v3, topleft);
-            f32 cross3topleft = edgeWedge(v3, v1, topleft);
+        for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
+            f32 yinc = (f32)(ycoord - ystart);
+            f32 cross1row = cross1topleft + yinc * dcross1y;
+            f32 cross2row = cross2topleft + yinc * dcross2y;
+            f32 cross3row = cross3topleft + yinc * dcross3y;
 
-            for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
-                f32 yinc = (f32)(ycoord - ystart);
-                f32 cross1row = cross1topleft + yinc * dcross1y;
-                f32 cross2row = cross2topleft + yinc * dcross2y;
-                f32 cross3row = cross3topleft + yinc * dcross3y;
+            for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
+                f32 xinc = (f32)(xcoord - xstart);
+                f32 cross1 = cross1row + xinc * dcross1x;
+                f32 cross2 = cross2row + xinc * dcross2x;
+                f32 cross3 = cross3row + xinc * dcross3x;
 
-                for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
-                    f32 xinc = (f32)(xcoord - xstart);
-                    f32 cross1 = cross1row + xinc * dcross1x;
-                    f32 cross2 = cross2row + xinc * dcross2x;
-                    f32 cross3 = cross3row + xinc * dcross3x;
+                bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
+                bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
+                bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
 
-                    bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
-                    bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
-                    bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
+                if (pass1 && pass2 && pass3) {
+                    f32 cross1scaled = cross1 / tr.area;
+                    f32 cross2scaled = cross2 / tr.area;
+                    f32 cross3scaled = cross3 / tr.area;
 
-                    if (pass1 && pass2 && pass3) {
-                        f32 cross1scaled = cross1 / tr.area;
-                        f32 cross2scaled = cross2 / tr.area;
-                        f32 cross3scaled = cross3 / tr.area;
+                    // TODO(khvorov) Depth check
 
-                        // TODO(khvorov) Depth check
+                    // TODO(khvorov) Perspective-correctness
+                    Color01 color01 = color01add(color01add(color01scale(c1, cross2scaled), color01scale(c2, cross3scaled)), color01scale(c3, cross1scaled));
 
-                        // TODO(khvorov) Perspective-correctness
-                        Color01 color01 = color01add(color01add(color01scale(c1, cross2scaled), color01scale(c2, cross3scaled)), color01scale(c3, cross1scaled));
+                    i32 index = ycoord * renderer->image.width + xcoord;
+                    assert(index < renderer->image.width * renderer->image.height);
 
-                        i32 index = ycoord * renderer->image.width + xcoord;
-                        assert(index < renderer->image.width * renderer->image.height);
+                    u32      existingColoru32 = renderer->image.ptr[index];
+                    Color255 existingColor255 = coloru32to255(existingColoru32);
+                    Color01  existingColor01 = color255to01(existingColor255);
 
-                        u32      existingColoru32 = renderer->image.ptr[index];
-                        Color255 existingColor255 = coloru32to255(existingColoru32);
-                        Color01  existingColor01 = color255to01(existingColor255);
+                    Color01 blended01 = {
+                        .r = lerpf(existingColor01.r, color01.r, color01.a),
+                        .g = lerpf(existingColor01.g, color01.g, color01.a),
+                        .b = lerpf(existingColor01.b, color01.b, color01.a),
+                        .a = 1,
+                    };
 
-                        Color01 blended01 = {
-                            .r = lerpf(existingColor01.r, color01.r, color01.a),
-                            .g = lerpf(existingColor01.g, color01.g, color01.a),
-                            .b = lerpf(existingColor01.b, color01.b, color01.a),
-                            .a = 1,
-                        };
-
-                        Color255 blended255 = color01to255(blended01);
-                        u32      blendedu32 = color255tou32(blended255);
-                        renderer->image.ptr[index] = blendedu32;
-                    }
+                    Color255 blended255 = color01to255(blended01);
+                    u32      blendedu32 = color255tou32(blended255);
+                    renderer->image.ptr[index] = blendedu32;
                 }
             }
         }
@@ -1405,40 +1318,36 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
 function void
 swRendererOutlineTriangle(SWRenderer* renderer, TriangleIndices trig) {
-    TriangleNearClipped trClipped = swRendererPullTriangle(renderer, trig);
+    Triangle tr = swRendererPullTriangle(renderer, trig);
 
-    for (i32 trClippedInd = 0; trClippedInd < trClipped.count; trClippedInd++) {
-        Triangle tr = trClipped.tris[trClippedInd];
+    V2f v1 = tr.v1;
+    V2f v2 = tr.v2;
+    V2f v3 = tr.v3;
 
-        V2f v1 = tr.v1;
-        V2f v2 = tr.v2;
-        V2f v3 = tr.v3;
+    if (tr.area > 0) {
+        swDrawContrastLine(renderer->texture, v1, v2);
+        swDrawContrastLine(renderer->texture, v2, v3);
+        swDrawContrastLine(renderer->texture, v3, v1);
 
-        if (tr.area > 0) {
-            swDrawContrastLine(renderer->texture, v1, v2);
-            swDrawContrastLine(renderer->texture, v2, v3);
-            swDrawContrastLine(renderer->texture, v3, v1);
-
-            V2f vertexRectDim = {10, 10};
-            swDrawContrastRect(renderer->texture, rect2fCenterDim(v1, vertexRectDim));
-            swDrawContrastRect(renderer->texture, rect2fCenterDim(v2, vertexRectDim));
-            swDrawContrastRect(renderer->texture, rect2fCenterDim(v3, vertexRectDim));
-        }
+        V2f vertexRectDim = {10, 10};
+        swDrawContrastRect(renderer->texture, rect2fCenterDim(v1, vertexRectDim));
+        swDrawContrastRect(renderer->texture, rect2fCenterDim(v2, vertexRectDim));
+        swDrawContrastRect(renderer->texture, rect2fCenterDim(v3, vertexRectDim));
     }
 }
 
 function void
 swRendererFillTriangles(SWRenderer* renderer) {
-    for (i32 ind = 0; ind < renderer->triangles.indices.len; ind++) {
-        TriangleIndices trig = renderer->triangles.indices.ptr[ind];
+    for (i32 ind = 0; ind < renderer->trisScreen.indices.len; ind++) {
+        TriangleIndices trig = renderer->trisScreen.indices.ptr[ind];
         swRendererFillTriangle(renderer, trig);
     }
 }
 
 function void
 swRendererOutlineTriangles(SWRenderer* renderer) {
-    for (i32 ind = 0; ind < renderer->triangles.indices.len; ind++) {
-        TriangleIndices trig = renderer->triangles.indices.ptr[ind];
+    for (i32 ind = 0; ind < renderer->trisScreen.indices.len; ind++) {
+        TriangleIndices trig = renderer->trisScreen.indices.ptr[ind];
         swRendererOutlineTriangle(renderer, trig);
     }
 }
@@ -1451,14 +1360,14 @@ typedef struct SWRendererMeshBuilder {
 
 function SWRendererMeshBuilder
 swRendererBeginMesh(SWRenderer* renderer) {
-    SWRendererMeshBuilder builder = {renderer, (i32)renderer->triangles.vertices.len, (i32)renderer->triangles.indices.len};
+    SWRendererMeshBuilder builder = {renderer, (i32)renderer->trisCamera.vertices.len, (i32)renderer->trisCamera.indices.len};
     return builder;
 }
 
 function void
 swRendererEndMesh(SWRendererMeshBuilder builder) {
-    for (i32 indexIndex = builder.firstIndexIndex; indexIndex < builder.renderer->triangles.indices.len; indexIndex++) {
-        TriangleIndices* trig = builder.renderer->triangles.indices.ptr + indexIndex;
+    for (i32 indexIndex = builder.firstIndexIndex; indexIndex < builder.renderer->trisCamera.indices.len; indexIndex++) {
+        TriangleIndices* trig = builder.renderer->trisCamera.indices.ptr + indexIndex;
         trig->i1 += builder.firstVertexIndex;
         trig->i2 += builder.firstVertexIndex;
         trig->i3 += builder.firstVertexIndex;
@@ -1487,19 +1396,13 @@ swRendererPushMesh(SWRenderer* renderer, Mesh mesh, Camera camera) {
             vtxCamera = rot;
         }
 
-        V3f vtxScreen = {
-            .x = vtxCamera.x / camera.tanHalfFov.x,
-            .y = vtxCamera.y / -camera.tanHalfFov.y,
-            .z = vtxCamera.z,
-        };
-
-        arrpush(renderer->triangles.vertices, vtxScreen);
-        arrpush(renderer->triangles.colors, arrget(mesh.colors, ind));
+        arrpush(renderer->trisCamera.vertices, vtxCamera);
+        arrpush(renderer->trisCamera.colors, arrget(mesh.colors, ind));
     }
 
     for (i32 ind = 0; ind < mesh.indices.len; ind++) {
         TriangleIndices trig = mesh.indices.ptr[ind];
-        meshStorageAddTriangle(&renderer->triangles, trig);
+        meshStorageAddTriangle(&renderer->trisCamera, trig);
     }
 
     swRendererEndMesh(cubeInRendererBuilder);
@@ -1567,125 +1470,125 @@ function void
 swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize finalImageHeight, Arena* scratch) {
     // NOTE(khvorov) Debug triangles from
     // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.5, .y = 1.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 1.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 5.5, .y = 1.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 1.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 4, .y = 0, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.75, .y = -0.25, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 5.75, .y = 0.75, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.75, .y = 0.75, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 5.75, .y = -0.25, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 5.75, .y = 0.75, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 4.75, .y = 0.75, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7, .y = 0, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7, .y = 1, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6, .y = 1, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 7, .y = 0, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 7, .y = 1, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 6, .y = 1, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9.25, .y = 0.25, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 9.25, .y = 0.25, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 4.75, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 7.25, .y = 2, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 11.25, .y = 2, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 9, .y = 4.75, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14.5, .y = -0.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 14.5, .y = -0.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 14, .y = 4, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 13, .y = 1, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 14, .y = 2, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 14, .y = 4, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 0.5, .y = 5.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 0.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 4.5, .y = 5.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 6.5, .y = 3.5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 9, .y = 5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 7.5, .y = 6.5, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 7, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 10, .y = 7, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 9, .y = 9, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 9, .y = 7, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 10, .y = 7, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 9, .y = 9, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11, .y = 4, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 12, .y = 5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 11, .y = 6, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 11, .y = 4, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 12, .y = 5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 11, .y = 6, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 13, .y = 5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.r = 1, .a = 0.5}));
 
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 15, .y = 7, .z = 1}));
-    arrpush(renderer->triangles.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
-    arrpush(renderer->triangles.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 15, .y = 5, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 15, .y = 7, .z = 1}));
+    arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 13, .y = 7, .z = 1}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
+    arrpush(renderer->trisScreen.colors, ((Color01) {.g = 1, .a = 0.5}));
 
-    assert(renderer->triangles.colors.len == renderer->triangles.vertices.len);
-    assert(renderer->triangles.vertices.len % 3 == 0);
+    assert(renderer->trisScreen.colors.len == renderer->trisScreen.vertices.len);
+    assert(renderer->trisScreen.vertices.len % 3 == 0);
 
     isize imageWidth = 16;
     isize imageHeight = 8;
-    for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
-        V2f* xy = &renderer->triangles.vertices.ptr[ind].xy;
+    for (isize ind = 0; ind < renderer->trisScreen.vertices.len; ind++) {
+        V2f* xy = &renderer->trisScreen.vertices.ptr[ind].xy;
         *xy = v2fhadamard(*xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
-        *xy = v2fadd(v2fscale(*xy, 2), (V2f){-1, -1});
+        *xy = v2fadd(v2fscale(*xy, 2), (V2f) {-1, -1});
     }
 
-    for (i32 ind = 0; ind < renderer->triangles.vertices.len; ind += 3) {
+    for (i32 ind = 0; ind < renderer->trisScreen.vertices.len; ind += 3) {
         TriangleIndices trig = {ind, ind + 1, ind + 2};
-        meshStorageAddTriangle(&renderer->triangles, trig);
+        meshStorageAddTriangle(&renderer->trisScreen, trig);
     }
 
     swRendererSetImageSize(renderer, imageWidth, imageHeight);
@@ -1700,14 +1603,14 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
         isize imageScaleY = finalImageHeight / imageHeight;
 
         V2f offset = v2fhadamard(v2fscale((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 1), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
-        for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
-            renderer->triangles.vertices.ptr[ind].xy = v2fadd(renderer->triangles.vertices.ptr[ind].xy, offset);
+        for (isize ind = 0; ind < renderer->trisScreen.vertices.len; ind++) {
+            renderer->trisScreen.vertices.ptr[ind].xy = v2fadd(renderer->trisScreen.vertices.ptr[ind].xy, offset);
         }
 
         swRendererOutlineTriangles(renderer);
 
-        for (isize ind = 0; ind < renderer->triangles.vertices.len; ind++) {
-            renderer->triangles.vertices.ptr[ind].xy = v2fsub(renderer->triangles.vertices.ptr[ind].xy, offset);
+        for (isize ind = 0; ind < renderer->trisScreen.vertices.len; ind++) {
+            renderer->trisScreen.vertices.ptr[ind].xy = v2fsub(renderer->trisScreen.vertices.ptr[ind].xy, offset);
         }
     }
 }
@@ -2560,7 +2463,8 @@ nkcolorTo255(struct nk_color c) {
 
 function void
 swRender(State* state) {
-    meshStorageClearBuffers(&state->swRenderer.triangles);
+    meshStorageClearBuffers(&state->swRenderer.trisCamera);
+    meshStorageClearBuffers(&state->swRenderer.trisScreen);
     if (state->showDebugTriangles) {
         swRendererDrawDebugTriangles(&state->swRenderer, state->windowWidth, state->windowHeight, &state->scratch);
     } else {
@@ -2568,6 +2472,11 @@ swRender(State* state) {
             Mesh mesh = state->meshes.ptr[meshIndex];
             swRendererPushMesh(&state->swRenderer, mesh, state->camera);
         }
+
+        // TODO(khvorov) Clip and cull
+        {
+        }
+
         swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
         swRendererClearImage(&state->swRenderer);
         swRendererFillTriangles(&state->swRenderer);
