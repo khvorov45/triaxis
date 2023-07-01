@@ -1185,11 +1185,11 @@ swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
     V3f v2og = arrget(renderer->triangles.vertices, trig.i2);
     V3f v3og = arrget(renderer->triangles.vertices, trig.i3);
 
-    V2f imageDim = {(f32)renderer->image.width, (f32)renderer->image.height};
+    V2f halfImageDim = {(f32)renderer->image.width * 0.5f, (f32)renderer->image.height * 0.5f};
 
-    V2f v1 = v2fhadamard(v1og.xy, imageDim);
-    V2f v2 = v2fhadamard(v2og.xy, imageDim);
-    V2f v3 = v2fhadamard(v3og.xy, imageDim);
+    V2f v1 = v2fhadamard(v2fadd(v2fscale(v1og.xy, 1 / v1og.z), (V2f) {1, 1}), halfImageDim);
+    V2f v2 = v2fhadamard(v2fadd(v2fscale(v2og.xy, 1 / v2og.z), (V2f) {1, 1}), halfImageDim);
+    V2f v3 = v2fhadamard(v2fadd(v2fscale(v3og.xy, 1 / v3og.z), (V2f) {1, 1}), halfImageDim);
 
     f32 area = edgeWedge(v1, v2, v3);
 
@@ -1367,24 +1367,11 @@ swRendererPushMesh(SWRenderer* renderer, Mesh mesh, Camera camera) {
             vtxCamera = rot;
         }
 
-        // TODO(khvorov) Near clip plane
-
-        V3f vtxScreen = {};
-        {
-            V2f plane = {vtxCamera.x / vtxCamera.z, vtxCamera.y / vtxCamera.z};
-
-            f32 planeRight = camera.tanHalfFov.x;
-            f32 planeLeft = -planeRight;
-            f32 planeTop = camera.tanHalfFov.y;
-            f32 planeBottom = -planeTop;
-
-            V2f screen = {
-                (plane.x - planeLeft) / (planeRight - planeLeft),
-                (plane.y - planeTop) / (planeBottom - planeTop),
-            };
-
-            vtxScreen = (V3f) {.xy = screen, .z_ = vtxCamera.z};
-        }
+        V3f vtxScreen = {
+            .x = vtxCamera.x / camera.tanHalfFov.x,
+            .y = vtxCamera.y / -camera.tanHalfFov.y,
+            .z = vtxCamera.z,
+        };
 
         arrpush(renderer->triangles.vertices, vtxScreen);
         arrpush(renderer->triangles.colors, arrget(mesh.colors, ind));
