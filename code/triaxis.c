@@ -1601,6 +1601,7 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
         V2f* xy = &renderer->trisScreen.vertices.ptr[ind].xy;
         *xy = v2fhadamard(*xy, (V2f) {1.0f / (f32)imageWidth, 1.0f / (f32)imageHeight});
         *xy = v2fadd(v2fscale(*xy, 2), (V2f) {-1, -1});
+        xy->y *= -1;
     }
 
     for (i32 ind = 0; ind < renderer->trisScreen.vertices.len; ind += 3) {
@@ -1619,7 +1620,7 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
         isize imageScaleX = finalImageWidth / imageWidth;
         isize imageScaleY = finalImageHeight / imageHeight;
 
-        V2f offset = v2fhadamard(v2fscale((V2f) {(f32)imageScaleX, (f32)imageScaleY}, 1), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
+        V2f offset = v2fhadamard(v2fhadamard((V2f) {(f32)imageScaleX, (f32)imageScaleY}, (V2f) {1, -1}), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
         for (isize ind = 0; ind < renderer->trisScreen.vertices.len; ind++) {
             renderer->trisScreen.vertices.ptr[ind].xy = v2fadd(renderer->trisScreen.vertices.ptr[ind].xy, offset);
         }
@@ -2629,12 +2630,12 @@ swRender(State* state) {
                 meshStorageAddTriangle(&state->swRenderer.trisScreen, triPoly);
             }
         }
-    }
 
-    swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
-    swRendererClearImage(&state->swRenderer);
-    swRendererFillTriangles(&state->swRenderer);
-    // swRendererOutlineTriangles(&state->swRenderer);
+        swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
+        swRendererClearImage(&state->swRenderer);
+        swRendererFillTriangles(&state->swRenderer);
+        // swRendererOutlineTriangles(&state->swRenderer);
+    }
 
     if (state->showDebugUI) {
         Texture tex = state->swRenderer.texture;
