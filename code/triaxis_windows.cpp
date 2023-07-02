@@ -1022,6 +1022,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                             case 'Q': key = InputKey_RotateXY; break;
                             case 'E': key = InputKey_RotateYX; break;
                             case VK_TAB: key = InputKey_ToggleDebugTriangles; break;
+                            case 'O': key = InputKey_ToggleOutlines; break;
                             case 'T': key = InputKey_ToggleSW; break;
                             case VK_ESCAPE: key = InputKey_ToggleDebugUI; break;
 

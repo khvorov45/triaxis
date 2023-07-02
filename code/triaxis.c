@@ -1036,6 +1036,7 @@ typedef enum InputKey {
     InputKey_RotateYZ,
     InputKey_RotateZY,
     InputKey_ToggleDebugTriangles,
+    InputKey_ToggleOutlines,
     InputKey_ToggleSW,
     InputKey_ToggleDebugUI,
     InputKey_Count,
@@ -1183,6 +1184,9 @@ typedef struct SWRenderer {
 
     MeshStorage trisCamera;
     MeshStorage trisScreen;
+
+    bool showDebugTriangles;
+    bool showOutlines;
 } SWRenderer;
 
 function SWRenderer
@@ -2215,7 +2219,6 @@ typedef struct State {
         isize cap;
     } meshes;
 
-    bool showDebugTriangles;
     bool useSW;
 
     bool showDebugUI;
@@ -2316,7 +2319,10 @@ update(State* state, f32 deltaSec) {
     // NOTE(khvorov) Misc
     {
         if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
-            state->showDebugTriangles = !state->showDebugTriangles;
+            state->swRenderer.showDebugTriangles = !state->swRenderer.showDebugTriangles;
+        }
+        if (inputKeyWasPressed(&state->input, InputKey_ToggleOutlines)) {
+            state->swRenderer.showOutlines = !state->swRenderer.showOutlines;
         }
         if (inputKeyWasPressed(&state->input, InputKey_ToggleSW)) {
             state->useSW = !state->useSW;
@@ -2495,7 +2501,7 @@ function void
 swRender(State* state) {
     meshStorageClearBuffers(&state->swRenderer.trisCamera);
     meshStorageClearBuffers(&state->swRenderer.trisScreen);
-    if (state->showDebugTriangles) {
+    if (state->swRenderer.showDebugTriangles) {
         swRendererDrawDebugTriangles(&state->swRenderer, state->windowWidth, state->windowHeight, &state->scratch);
     } else {
         for (isize meshIndex = 0; meshIndex < state->meshes.len; meshIndex++) {
@@ -2634,7 +2640,9 @@ swRender(State* state) {
         swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
         swRendererClearImage(&state->swRenderer);
         swRendererFillTriangles(&state->swRenderer);
-        // swRendererOutlineTriangles(&state->swRenderer);
+        if (state->swRenderer.showOutlines) {
+            swRendererOutlineTriangles(&state->swRenderer);
+        }
     }
 
     if (state->showDebugUI) {
