@@ -2315,7 +2315,7 @@ update(State* state, f32 deltaSec) {
 
     // NOTE(khvorov) Move camera
     {
-        f32 moveInc = state->camera.moveWUPerSec * 0.1;
+        f32 moveInc = state->camera.moveWUPerSec;
         if (state->input.keys[InputKey_MoveFaster].down) {
             moveInc = state->camera.moveWUPerSecAccelerated;
         }
@@ -2466,9 +2466,10 @@ nkcolorTo255(struct nk_color c) {
     return result;
 }
 
+#define MAX_TRI_BOX_INTERSECTION_VERTICES 9
 typedef struct ClipPoly {
-    V3f     vertices[6];
-    Color01 colors[6];
+    V3f     vertices[MAX_TRI_BOX_INTERSECTION_VERTICES];
+    Color01 colors[MAX_TRI_BOX_INTERSECTION_VERTICES];
     isize   count;
 } ClipPoly;
 
@@ -2525,7 +2526,7 @@ swRender(State* state) {
                 {(V3f) {.x = state->camera.tanHalfFov.y, .z = 1}, rotor3fRotateV3f(planesYZrot, normalForward)},
                 {(V3f) {.x = -state->camera.tanHalfFov.y, .z = 1}, rotor3fRotateV3f(rotor3fReverse(planesYZrot), normalForward)},
             };
- 
+
             for (isize planeIndex = 0; planeIndex < arrayCount(planes); planeIndex++) {
                 ClipPlane plane = planes[planeIndex];
                 ClipPoly  newPoly = {};
@@ -2558,6 +2559,8 @@ swRender(State* state) {
                         // TODO(khvorov) Attribute lerp
 
                         if (line1Normal > 0) {
+                            assert(newPoly.count + 2 <= MAX_TRI_BOX_INTERSECTION_VERTICES);
+
                             newPoly.vertices[newPoly.count] = polyV1;
                             newPoly.vertices[newPoly.count + 1] = vLerped;
 
@@ -2566,12 +2569,14 @@ swRender(State* state) {
 
                             newPoly.count += 2;
                         } else {
+                            assert(newPoly.count + 1 <= MAX_TRI_BOX_INTERSECTION_VERTICES);
                             assert(line2Normal > 0);
                             newPoly.vertices[newPoly.count] = vLerped;
                             newPoly.colors[newPoly.count] = polyC1;
                             newPoly.count += 1;
                         }
                     } else if (line1Normal >= 0) {
+                        assert(newPoly.count + 1 <= MAX_TRI_BOX_INTERSECTION_VERTICES);
                         assert(line2Normal >= 0);
                         newPoly.vertices[newPoly.count] = polyV1;
                         newPoly.colors[newPoly.count] = polyC1;
