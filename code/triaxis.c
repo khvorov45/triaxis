@@ -372,6 +372,7 @@ safeRatio1f(f32 v1, f32 v2) {
 
 function f32
 sinef(f32 valTurns) {
+    // TODO(khvorov) Make more precise
     f32 val01 = valTurns - (f32)(i32)valTurns;
     if (val01 < 0) {
         val01 += 1.0f;
@@ -971,6 +972,7 @@ createCubeMesh(MeshStorage* storage, f32 dim, V3f pos, Rotor3f orientation) {
 
 typedef struct Camera {
     V3f     pos;
+    V2f     halfFovTurns;
     V2f     tanHalfFov;
     f32     nearClipZ;
     f32     farClipZ;
@@ -984,11 +986,14 @@ typedef struct Camera {
 function Camera
 createCamera(V3f pos, f32 width, f32 height) {
     f32    fovxTurns = 0.25;
-    f32    fovx = tangentf(fovxTurns / 2);
-    f32    fovy = height / width * fovx;
+    f32    halfFovXTurns = fovxTurns / 2;
+    f32    halfFovYTurns = height / width * halfFovXTurns;
+    f32    tanhalffovx = tangentf(halfFovXTurns);
+    f32    tanhalffovy = height / width * tanhalffovx;
     Camera camera = {
         .pos = pos,
-        .tanHalfFov = {fovx, fovy},
+        .halfFovTurns = {halfFovXTurns, halfFovYTurns},
+        .tanHalfFov = {tanhalffovx, tanhalffovy},
         .nearClipZ = 0.001f,
         .farClipZ = 100.0f,
         .currentOrientation = createRotor3f(),
@@ -1089,16 +1094,7 @@ typedef struct Texture {
 } Texture;
 
 function void
-swContrast(Texture texture, isize row, isize col) {
-    assert(row >= 0 && col >= 0 && row < texture.height && col < texture.width);
-    isize index = row * texture.width + col;
-    u32   oldVal = texture.ptr[index];
-    u32   inverted = coloru32GetContrast(oldVal);
-    texture.ptr[index] = inverted;
-}
-
-function void
-swDrawContrastLine(Texture texture, V2f v1, V2f v2) {
+swDrawLine(Texture texture, V2f v1, V2f v2, Color01 color) {
     i32 x0 = (i32)(v1.x + 0.5);
     i32 y0 = (i32)(v1.y + 0.5);
     i32 x1 = (i32)(v2.x + 0.5);
@@ -1110,9 +1106,12 @@ swDrawContrastLine(Texture texture, V2f v1, V2f v2) {
     i32 sy = y0 < y1 ? 1 : -1;
     i32 error = dx + dy;
 
+    u32 color32 = color255tou32(color01to255(color));
+
     for (;;) {
         if (y0 >= 0 && x0 >= 0 && y0 < texture.height && x0 < texture.width) {
-            swContrast(texture, y0, x0);
+            isize index = y0 * texture.width + x0;
+            texture.ptr[index] = color32;
         }
         if (x0 == x1 && y0 == y1) {
             break;
@@ -1138,16 +1137,19 @@ swDrawContrastLine(Texture texture, V2f v1, V2f v2) {
 }
 
 function void
-swDrawContrastRect(Texture texture, Rect2f rect) {
+swDrawRect(Texture texture, Rect2f rect, Color01 color) {
     Rect2f rectClipped = rect2fClip(rect, (Rect2f) {{-0.5, -0.5}, {(f32)texture.width, (f32)texture.height}});
     i32    x0 = (i32)(rectClipped.topleft.x + 0.5);
     i32    x1 = (i32)(rectClipped.topleft.x + rectClipped.dim.x + 0.5);
     i32    y0 = (i32)(rectClipped.topleft.y + 0.5);
     i32    y1 = (i32)(rectClipped.topleft.y + rectClipped.dim.y + 0.5);
 
+    u32 color32 = color255tou32(color01to255(color));
+
     for (i32 ycoord = y0; ycoord < y1; ycoord++) {
         for (i32 xcoord = x0; xcoord < x1; xcoord++) {
-            swContrast(texture, ycoord, xcoord);
+            isize index = ycoord * texture.width + xcoord;
+            texture.ptr[index] = color32;
         }
     }
 }
@@ -1324,15 +1326,17 @@ swRendererOutlineTriangle(SWRenderer* renderer, TriangleIndices trig) {
     V2f v2 = tr.v2;
     V2f v3 = tr.v3;
 
+    Color01 color = {.r = 0.1, .g = 0.4, .b = 0.8, .a = 1};
+
     if (tr.area > 0) {
-        swDrawContrastLine(renderer->texture, v1, v2);
-        swDrawContrastLine(renderer->texture, v2, v3);
-        swDrawContrastLine(renderer->texture, v3, v1);
+        swDrawLine(renderer->texture, v1, v2, color);
+        swDrawLine(renderer->texture, v2, v3, color);
+        swDrawLine(renderer->texture, v3, v1, color);
 
         V2f vertexRectDim = {10, 10};
-        swDrawContrastRect(renderer->texture, rect2fCenterDim(v1, vertexRectDim));
-        swDrawContrastRect(renderer->texture, rect2fCenterDim(v2, vertexRectDim));
-        swDrawContrastRect(renderer->texture, rect2fCenterDim(v3, vertexRectDim));
+        swDrawRect(renderer->texture, rect2fCenterDim(v1, vertexRectDim), color);
+        swDrawRect(renderer->texture, rect2fCenterDim(v2, vertexRectDim), color);
+        swDrawRect(renderer->texture, rect2fCenterDim(v3, vertexRectDim), color);
     }
 }
 
@@ -1444,21 +1448,22 @@ swRendererScaleOntoAPixelGrid(SWRenderer* renderer, isize width, isize height, A
     }
 
     // NOTE(khvorov) Grid line
+    u32 color32 = 0xFFFFFFFF;
     for (isize oldRow = 0; oldRow < oldHeight; oldRow++) {
         isize topleftY = oldRow * scaleY;
         for (isize oldCol = 0; oldCol < oldWidth; oldCol++) {
             isize topleftX = oldCol * scaleX;
             for (isize toplineX = topleftX; toplineX < topleftX + scaleX; toplineX++) {
-                swContrast(renderer->texture, topleftY, toplineX);
+                renderer->image.ptr[topleftY * renderer->image.width + toplineX] = color32;
             }
             for (isize leftlineY = topleftY + 1; leftlineY < topleftY + scaleY; leftlineY++) {
-                swContrast(renderer->texture, leftlineY, topleftX);
+                renderer->image.ptr[leftlineY * renderer->image.width + topleftX] = color32;
             }
 
             {
                 isize centerY = topleftY + scaleY / 2;
                 isize centerX = topleftX + scaleX / 2;
-                swContrast(renderer->texture, centerY, centerX);
+                renderer->image.ptr[centerY * renderer->image.width + centerX] = color32;
             }
         }
     }
@@ -2310,7 +2315,7 @@ update(State* state, f32 deltaSec) {
 
     // NOTE(khvorov) Move camera
     {
-        f32 moveInc = state->camera.moveWUPerSec;
+        f32 moveInc = state->camera.moveWUPerSec * 0.1;
         if (state->input.keys[InputKey_MoveFaster].down) {
             moveInc = state->camera.moveWUPerSecAccelerated;
         }
@@ -2461,22 +2466,16 @@ nkcolorTo255(struct nk_color c) {
     return result;
 }
 
-function V3f
-swRender_toClip(State* state, V3f v1) {
-    // TODO(khvorov) Do this in pushMesh?
-    V3f v1Clip = {
-        .x = v1.x / v1.z / state->camera.tanHalfFov.x,
-        .y = v1.y / v1.z / state->camera.tanHalfFov.y,
-        .z = (v1.z - state->camera.nearClipZ) / (state->camera.farClipZ - state->camera.nearClipZ),
-    };
-    return v1Clip;
-}
-
 typedef struct ClipPoly {
     V3f     vertices[6];
     Color01 colors[6];
     isize   count;
 } ClipPoly;
+
+typedef struct ClipPlane {
+    V3f point;
+    V3f normal;
+} ClipPlane;
 
 function void
 swRender(State* state) {
@@ -2490,6 +2489,7 @@ swRender(State* state) {
             swRendererPushMesh(&state->swRenderer, mesh, state->camera);
         }
 
+        // NOTE(khvorov) Clip camera space tris
         for (isize triIndex = 0; triIndex < state->swRenderer.trisCamera.indices.len; triIndex++) {
             TriangleIndices tri = state->swRenderer.trisCamera.indices.ptr[triIndex];
 
@@ -2501,16 +2501,10 @@ swRender(State* state) {
             Color01 c2 = arrget(state->swRenderer.trisCamera.colors, tri.i2);
             Color01 c3 = arrget(state->swRenderer.trisCamera.colors, tri.i3);
 
-            V3f v1Clip = swRender_toClip(state, v1Camera);
-            V3f v2Clip = swRender_toClip(state, v2Camera);
-            V3f v3Clip = swRender_toClip(state, v3Camera);
-
-            // TODO(khvorov) Cull here?
-
             ClipPoly poly = {
-                .vertices[0] = v1Clip,
-                .vertices[1] = v2Clip,
-                .vertices[2] = v3Clip,
+                .vertices[0] = v1Camera,
+                .vertices[1] = v2Camera,
+                .vertices[2] = v3Camera,
 
                 .colors[0] = c1,
                 .colors[1] = c2,
@@ -2519,17 +2513,88 @@ swRender(State* state) {
                 .count = 3,
             };
 
-            // TODO(khvorov) Clip
-            // Plane planes[] = {
-            //     {(V3f) {.z = state->camera.nearClipZ}, (V3f) {.z = 1}},
-            // };
+            V3f     normalForward = {.z = 1};
+            Rotor3f planesXZrot = createRotor3fAnglePlane(0.25 - state->camera.halfFovTurns.x, 0, 1, 0);
+            Rotor3f planesYZrot = createRotor3fAnglePlane(0.25 - state->camera.halfFovTurns.y, 0, 0, 1);
+
+            ClipPlane planes[] = {
+                {(V3f) {.z = state->camera.nearClipZ}, normalForward},
+                {(V3f) {.z = state->camera.farClipZ}, v3freverse(normalForward)},
+                {(V3f) {.x = -state->camera.tanHalfFov.x, .z = 1}, rotor3fRotateV3f(rotor3fReverse(planesXZrot), normalForward)},
+                {(V3f) {.x = state->camera.tanHalfFov.x, .z = 1}, rotor3fRotateV3f(planesXZrot, normalForward)},
+                {(V3f) {.x = state->camera.tanHalfFov.y, .z = 1}, rotor3fRotateV3f(planesYZrot, normalForward)},
+                {(V3f) {.x = -state->camera.tanHalfFov.y, .z = 1}, rotor3fRotateV3f(rotor3fReverse(planesYZrot), normalForward)},
+            };
+ 
+            for (isize planeIndex = 0; planeIndex < arrayCount(planes); planeIndex++) {
+                ClipPlane plane = planes[planeIndex];
+                ClipPoly  newPoly = {};
+
+                for (isize vPairIndex = 0; vPairIndex < poly.count; vPairIndex++) {
+                    isize index1 = vPairIndex;
+                    isize index2 = (vPairIndex + 1) % poly.count;
+
+                    V3f polyV1 = poly.vertices[index1];
+                    V3f polyV2 = poly.vertices[index2];
+
+                    Color01 polyC1 = poly.colors[index1];
+                    Color01 polyC2 = poly.colors[index2];
+
+                    V3f pointLine1 = v3fsub(polyV1, plane.point);
+                    V3f pointLine2 = v3fsub(polyV2, plane.point);
+
+                    f32 line1Normal = v3fdot(pointLine1, plane.normal);
+                    f32 line2Normal = v3fdot(pointLine2, plane.normal);
+
+                    if (line1Normal * line2Normal < 0) {
+                        f32 line1NormalAbs = absval(line1Normal);
+                        f32 line2NormalAbs = absval(line2Normal);
+
+                        f32 normalTotal = line1NormalAbs + line2NormalAbs;
+                        f32 from1 = line1NormalAbs / normalTotal;
+
+                        V3f vLerped = v3flerp(polyV1, polyV2, from1);
+
+                        // TODO(khvorov) Attribute lerp
+
+                        if (line1Normal > 0) {
+                            newPoly.vertices[newPoly.count] = polyV1;
+                            newPoly.vertices[newPoly.count + 1] = vLerped;
+
+                            newPoly.colors[newPoly.count] = polyC1;
+                            newPoly.colors[newPoly.count + 1] = polyC2;
+
+                            newPoly.count += 2;
+                        } else {
+                            assert(line2Normal > 0);
+                            newPoly.vertices[newPoly.count] = vLerped;
+                            newPoly.colors[newPoly.count] = polyC1;
+                            newPoly.count += 1;
+                        }
+                    } else if (line1Normal >= 0) {
+                        assert(line2Normal >= 0);
+                        newPoly.vertices[newPoly.count] = polyV1;
+                        newPoly.colors[newPoly.count] = polyC1;
+                        newPoly.count += 1;
+                    }
+                }
+
+                poly = newPoly;
+            }
 
             i32 firstVertexIndex = (i32)state->swRenderer.trisScreen.vertices.len;
 
             for (i32 polyVertexIndex = 0; polyVertexIndex < poly.count; polyVertexIndex++) {
                 V3f     polyV = poly.vertices[polyVertexIndex];
                 Color01 polyC = poly.colors[polyVertexIndex];
-                arrpush(state->swRenderer.trisScreen.vertices, polyV);
+
+                V3f screenV = {
+                    .x = polyV.x / polyV.z / state->camera.tanHalfFov.x,
+                    .y = polyV.y / polyV.z / state->camera.tanHalfFov.y,
+                    .z = (polyV.z - state->camera.nearClipZ) / (state->camera.farClipZ - state->camera.nearClipZ),
+                };
+
+                arrpush(state->swRenderer.trisScreen.vertices, screenV);
                 arrpush(state->swRenderer.trisScreen.colors, polyC);
             }
 
@@ -2552,6 +2617,7 @@ swRender(State* state) {
     swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
     swRendererClearImage(&state->swRenderer);
     swRendererFillTriangles(&state->swRenderer);
+    swRendererOutlineTriangles(&state->swRenderer);
 
     if (state->showDebugUI) {
         Texture tex = state->swRenderer.texture;
