@@ -370,6 +370,9 @@ safeRatio1f(f32 v1, f32 v2) {
     return result;
 }
 
+// TODO(khvorov) Remove
+#include <math.h>
+
 function f32
 sinef(f32 valTurns) {
     // TODO(khvorov) Make more precise
@@ -383,18 +386,27 @@ sinef(f32 valTurns) {
     } else {
         result = 16.0f * (val01 - 0.5) * (val01 - 1);
     }
+    result = sinf(valTurns * 2 * PI);
     return result;
 }
 
 function f32
 cosinef(f32 valTurns) {
     f32 result = sinef(valTurns + 0.25);
+    result = cosf(valTurns * 2 * PI);
     return result;
 }
 
 function f32
 tangentf(f32 valTurns) {
     f32 result = safeRatio1f(sinef(valTurns), cosinef(valTurns));
+    result = tanf(valTurns * 2 * PI);
+    return result;
+}
+
+function f32
+arctanf(f32 valTurns) {
+    f32 result = atanf(valTurns) / (2 * PI);
     return result;
 }
 
@@ -987,9 +999,9 @@ function Camera
 createCamera(V3f pos, f32 width, f32 height) {
     f32    fovxTurns = 0.25;
     f32    halfFovXTurns = fovxTurns / 2;
-    f32    halfFovYTurns = height / width * halfFovXTurns;
     f32    tanhalffovx = tangentf(halfFovXTurns);
     f32    tanhalffovy = height / width * tanhalffovx;
+    f32    halfFovYTurns = arctanf(tanhalffovy);
     Camera camera = {
         .pos = pos,
         .halfFovTurns = {halfFovXTurns, halfFovYTurns},
@@ -2291,7 +2303,7 @@ initState(void* mem, isize bytes) {
 
         meshStorageAddQuad(&state->meshStorage, backLeftIndex, backRightIndex, frontRightIndex, frontLeftIndex);
         Mesh ground = endMesh(builder, (V3f) {}, createRotor3f());
-        arrpush(state->meshes, ground);
+        // arrpush(state->meshes, ground);
     }
 
     state->useSW = true;
@@ -2521,10 +2533,10 @@ swRender(State* state) {
             ClipPlane planes[] = {
                 {(V3f) {.z = state->camera.nearClipZ}, normalForward},
                 {(V3f) {.z = state->camera.farClipZ}, v3freverse(normalForward)},
-                {(V3f) {.x = -state->camera.tanHalfFov.x, .z = 1}, rotor3fRotateV3f(rotor3fReverse(planesXZrot), normalForward)},
-                {(V3f) {.x = state->camera.tanHalfFov.x, .z = 1}, rotor3fRotateV3f(planesXZrot, normalForward)},
-                {(V3f) {.x = state->camera.tanHalfFov.y, .z = 1}, rotor3fRotateV3f(planesYZrot, normalForward)},
-                {(V3f) {.x = -state->camera.tanHalfFov.y, .z = 1}, rotor3fRotateV3f(rotor3fReverse(planesYZrot), normalForward)},
+                {(V3f) {}, rotor3fRotateV3f(rotor3fReverse(planesXZrot), normalForward)},
+                {(V3f) {}, rotor3fRotateV3f(planesXZrot, normalForward)},
+                {(V3f) {}, rotor3fRotateV3f(planesYZrot, normalForward)},
+                {(V3f) {}, rotor3fRotateV3f(rotor3fReverse(planesYZrot), normalForward)},
             };
 
             for (isize planeIndex = 0; planeIndex < arrayCount(planes); planeIndex++) {
@@ -2622,7 +2634,7 @@ swRender(State* state) {
     swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
     swRendererClearImage(&state->swRenderer);
     swRendererFillTriangles(&state->swRenderer);
-    swRendererOutlineTriangles(&state->swRenderer);
+    // swRendererOutlineTriangles(&state->swRenderer);
 
     if (state->showDebugUI) {
         Texture tex = state->swRenderer.texture;
