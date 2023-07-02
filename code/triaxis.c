@@ -2405,7 +2405,7 @@ update(State* state, f32 deltaSec) {
         f32 yz = (f32)state->input.mouse.dy;
         if (xy != 0 || xz != 0 || yz != 0) {
             V2f mouseSens = {0.25, 0.25};  // TODO(khvorov) Config
-            V2f mouseMove = v2fhadamard(mouseSens, {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
+            V2f mouseMove = v2fhadamard(mouseSens, (V2f) {(f32)state->input.mouse.dx, (f32)state->input.mouse.dy});
             f32 mouseMoveCoef = v2flen(mouseMove);
             f32 rotInc = mouseMoveCoef * deltaSec;
 

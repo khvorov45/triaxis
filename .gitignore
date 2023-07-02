@@ -9,3 +9,5 @@ win32_d3d11.c
 *.10x
 *.cap
 *.out
+compile_flags.txt
+.cache
