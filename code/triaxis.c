@@ -2534,9 +2534,15 @@ swRender(State* state) {
                 .count = 3,
             };
 
+            // NOTE(khvorov) Fov expansion for clipping is necessary to avoid clipping too early due to trig inaccuracies
+            f32 fovExpansionCoeff = 1.01f;
+            V2f halfFovExpanded = v2fscale(state->camera.halfFovTurns, fovExpansionCoeff);
+            assert(halfFovExpanded.x < 0.25);
+            assert(halfFovExpanded.y < 0.25);
+
             V3f     normalForward = {.z = 1};
-            Rotor3f planesXZrot = createRotor3fAnglePlane(0.25 - state->camera.halfFovTurns.x, 0, 1, 0);
-            Rotor3f planesYZrot = createRotor3fAnglePlane(0.25 - state->camera.halfFovTurns.y, 0, 0, 1);
+            Rotor3f planesXZrot = createRotor3fAnglePlane(0.25 - halfFovExpanded.x, 0, 1, 0);
+            Rotor3f planesYZrot = createRotor3fAnglePlane(0.25 - halfFovExpanded.y, 0, 0, 1);
 
             ClipPlane planes[] = {
                 {(V3f) {.z = state->camera.nearClipZ}, normalForward},

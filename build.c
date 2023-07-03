@@ -159,8 +159,8 @@ main() {
     Opt debug = {.debuginfo = true, .asserts = true, .tests = true, .bench = true};
     compile(arena, debug);
 
-    Opt profile = {.debuginfo = true, .optimise = true, .profile = true, .bench = true};
-    compile(arena, profile);
+    // Opt profile = {.debuginfo = true, .optimise = true, .profile = true, .bench = true};
+    // compile(arena, profile);
 
     prb_writeToStdout(prb_fmt(arena, "total: %.2fms\n", prb_getMsFrom(scriptStart)));
     return 0;
