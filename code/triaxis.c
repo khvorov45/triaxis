@@ -370,39 +370,40 @@ safeRatio1f(f32 v1, f32 v2) {
     return result;
 }
 
-// TODO(khvorov) Remove
-#include <math.h>
-
+// https://en.wikipedia.org/wiki/Bhaskara_I%27s_sine_approximation_formula
 function f32
 sinef(f32 valTurns) {
-    // TODO(khvorov) Make more precise
     f32 val01 = valTurns - (f32)(i32)valTurns;
     if (val01 < 0) {
         val01 += 1.0f;
     }
     f32 result = 0;
+    f32 x = val01;
+    f32 f = 5.0f / 64.0f;
     if (val01 < 0.5f) {
-        result = -16.0f * val01 * (val01 - 0.5);
+        f32 r = x * (0.5f - x);
+        result = r / (f - 0.25f * r);
     } else {
-        result = 16.0f * (val01 - 0.5) * (val01 - 1);
+        f32 r = (x - 0.5f) * (1.0f - x);
+        result = -(r / (f - 0.25f * r));
     }
-    result = sinf(valTurns * 2 * PI);
     return result;
 }
 
 function f32
 cosinef(f32 valTurns) {
     f32 result = sinef(valTurns + 0.25);
-    result = cosf(valTurns * 2 * PI);
     return result;
 }
 
 function f32
 tangentf(f32 valTurns) {
     f32 result = safeRatio1f(sinef(valTurns), cosinef(valTurns));
-    result = tanf(valTurns * 2 * PI);
     return result;
 }
+
+// TODO(khvorov) Remove
+#include <math.h>
 
 function f32
 arctanf(f32 valTurns) {
@@ -2032,7 +2033,7 @@ runTests(Arena* arena) {
             f32 got = sinef(turn);
             f32 expected = expectedSin[turnInd];
 
-            assert(feqEplislon(got, expected, 0.1));
+            assert(feqEplislon(got, expected, 0.01));
         }
     }
 
@@ -2042,16 +2043,16 @@ runTests(Arena* arena) {
 
         {
             V3f result = rotor3fRotateV3f(createRotor3fAnglePlane(0.25, 1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0});
-            assert(feqEplislon(result.y, 1, 0.2));
+            assert(feqEplislon(result.y, 1, 0.01));
         }
-        assert(feqEplislon(rotor3fRotateV3f(createRotor3fAnglePlane(0.25, -1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0}).y, -1, 0.2));
+        assert(feqEplislon(rotor3fRotateV3f(createRotor3fAnglePlane(0.25, -1, 0, 0), (V3f) {.x = 1, .y = 0, .z = 0}).y, -1, 0.01));
 
         {
             Rotor3f r1 = createRotor3fAnglePlane(0.1, 1, 0, 0);
             Rotor3f r2 = createRotor3fAnglePlane(0.15, 1, 0, 0);
             Rotor3f rmul = rotor3fMulRotor3f(r1, r2);
             V3f     vrot = rotor3fRotateV3f(rmul, (V3f) {.x = 1, .y = 0, .z = 0});
-            assert(feqEplislon(vrot.y, 1, 0.2));
+            assert(feqEplislon(vrot.y, 1, 0.01));
         }
     }
 
