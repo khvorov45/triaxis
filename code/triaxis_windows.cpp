@@ -17,7 +17,10 @@
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
+
+// TODO(khvorov) Precompile in release?
 #include <d3dcompiler.h>
+#pragma comment(lib, "d3dcompiler")
 
 #undef max
 #undef min
@@ -31,7 +34,6 @@
 
 #pragma comment(lib, "d3d11")
 #pragma comment(lib, "dxguid")
-#pragma comment(lib, "d3dcompiler")
 
 static Str
 readEntireFile(Arena* arena, LPCWSTR path) {
