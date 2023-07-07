@@ -402,12 +402,22 @@ tangentf(f32 valTurns) {
     return result;
 }
 
-// TODO(khvorov) Remove
-#include <math.h>
-
+// Start with
+// f(x) = a x / b + sqrt(c + x^2)
+// Find a, b and c by solving
+// f(1) = pi / 4
+// lim(x->infinity)(f(x)) = pi / 2
+// f'(0) = 1
+// Then divide by 2pi to get turns from radians
+// https://math.stackexchange.com/a/2394071
 function f32
 arctanf(f32 valTurns) {
-    f32 result = atanf(valTurns) / (2 * PI);
+    f32 x = valTurns;
+    f32 a = 0.25f;
+    f32 rootc = (1.0f / (4.0f - PI) + PI * 0.25f - 1.0f);
+    f32 b = PI * 0.5f - rootc;
+    f32 c = squaref(rootc);
+    f32 result = a * x / (b + squareRootf(c + squaref(x)));
     return result;
 }
 
@@ -2032,6 +2042,19 @@ runTests(Arena* arena) {
 
             f32 got = sinef(turn);
             f32 expected = expectedSin[turnInd];
+
+            assert(feqEplislon(got, expected, 0.01));
+        }
+    }
+    
+    {
+        f32 tanVals[] = {-1, -0.2, -0.5, -0.7, 0, 0.1, 0.5, 0.9, 1};
+        f32 expectedTurns[] = {-0.125, -0.0314164790945006, -0.0737918088252166, -0.0972000561071074, 0, 0.0158627587152768, 0.0737918088252166, 0.116631145821713, 0.125};
+        for (i32 turnInd = 0; turnInd < arrayCount(tanVals); turnInd++) {
+            f32 turn = tanVals[turnInd];
+
+            f32 got = arctanf(turn);
+            f32 expected = expectedTurns[turnInd];
 
             assert(feqEplislon(got, expected, 0.01));
         }
