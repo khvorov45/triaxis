@@ -326,7 +326,7 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
         blitter.common->context->Map((ID3D11Resource*)blitter.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
         TracyCZoneN(tracyCtx, "present copymem", true);
-        copymem(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
+        memcpy(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
         TracyCZoneEnd(tracyCtx);
         blitter.common->context->Unmap((ID3D11Resource*)blitter.texture, 0);
     }

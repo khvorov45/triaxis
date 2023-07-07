@@ -81,7 +81,7 @@ memeq(const void* ptr1, const void* ptr2, isize len) {
 }
 
 function void
-setmem(void* ptr, int val, isize len) {
+memset(void* ptr, int val, isize len) {
     isize    wholeCount = len / sizeof(__m512i);
     __m512i* ptr512 = (__m512i*)ptr;
     __m512i  val512 = _mm512_set1_epi8(val);
@@ -97,11 +97,11 @@ setmem(void* ptr, int val, isize len) {
 
 function void
 zeromem(void* ptr, isize len) {
-    setmem(ptr, 0, len);
+    memset(ptr, 0, len);
 }
 
 function void
-copymem(void* dest, const void* src, isize len) {
+memcpy(void* dest, const void* src, isize len) {
     assert(((u8*)src < (u8*)dest && (u8*)src + len <= (u8*)dest) || ((u8*)dest < (u8*)src && (u8*)dest + len <= (u8*)src));
 
     isize wholeTransferCount = len / sizeof(__m512i);
@@ -229,7 +229,7 @@ typedef struct StrBuilder {
 function void
 fmtStr(StrBuilder* builder, Str str) {
     assert(builder->len + str.len <= builder->cap);
-    copymem(builder->ptr + builder->len, str.ptr, str.len);
+    memcpy(builder->ptr + builder->len, str.ptr, str.len);
     builder->len += str.len;
 }
 
@@ -815,8 +815,8 @@ isTopLeft(V2f v1, V2f v2) {
 #define NK_INCLUDE_FIXED_TYPES 1
 #define NK_INCLUDE_STANDARD_BOOL 1
 #define NK_ASSERT(cond) assert(cond)
-#define NK_MEMSET(ptr, val, size) setmem(ptr, val, size)
-#define NK_MEMCPY(dest, src, size) copymem(dest, src, size)
+#define NK_MEMSET(ptr, val, size) memset(ptr, val, size)
+#define NK_MEMCPY(dest, src, size) memcpy(dest, src, size)
 #define NK_INV_SQRT(n) (1 / squareRootf(n))
 #define NK_IMPLEMENTATION 1
 #include "nuklear.h"
@@ -1950,7 +1950,7 @@ runTests(Arena* arena) {
 
             zeromem(thisDest, thisBufBytes);
             assert(!memeq(thisSrc, thisDest, thisBufBytes));
-            copymem(thisDest, thisSrc, thisBufBytes);
+            memcpy(thisDest, thisSrc, thisBufBytes);
             assert(memeq(thisSrc, thisDest, thisBufBytes));
 
             assert(guardBefore[0] == guardBeforeValue);
@@ -1965,7 +1965,7 @@ runTests(Arena* arena) {
 
             zeromem(thisDest, thisBufBytes);
             assert(!memeq(thisSrc, thisDest, thisBufBytes));
-            copymem(thisDest, thisSrc, thisBufBytes);
+            memcpy(thisDest, thisSrc, thisBufBytes);
             assert(memeq(thisSrc, thisDest, thisBufBytes));
 
             assert(guardBefore[0] == guardBeforeValue);
@@ -1980,7 +1980,7 @@ runTests(Arena* arena) {
 
             zeromem(thisDest, thisBufBytes);
             assert(!memeq(thisSrc, thisDest, thisBufBytes));
-            copymem(thisDest, thisSrc, thisBufBytes);
+            memcpy(thisDest, thisSrc, thisBufBytes);
             assert(memeq(thisSrc, thisDest, thisBufBytes));
 
             assert(guardBefore[0] == guardBeforeValue);
@@ -2192,7 +2192,7 @@ runBench(Arena* arena) {
             u8* arr2 = (u8*)arenaAlloc(arena, toCopy, 64);
 
             TracyCZoneN(tracyCtx, "bench copymem", true);
-            copymem(arr1, arr2, toCopy);
+            memcpy(arr1, arr2, toCopy);
             TracyCZoneEnd(tracyCtx);
 
             endTempMemory(temp);
