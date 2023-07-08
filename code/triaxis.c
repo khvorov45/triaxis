@@ -2623,9 +2623,8 @@ swRender(State* state) {
                         f32 normalTotal = line1NormalAbs + line2NormalAbs;
                         f32 from1 = line1NormalAbs / normalTotal;
 
-                        V3f vLerped = v3flerp(polyV1, polyV2, from1);
-
-                        // TODO(khvorov) Attribute lerp
+                        V3f     vLerped = v3flerp(polyV1, polyV2, from1);
+                        Color01 cLerped = color01Lerp(polyC1, polyC2, from1);
 
                         if (line1Normal > 0) {
                             assert(newPoly.count + 2 <= MAX_TRI_BOX_INTERSECTION_VERTICES);
@@ -2634,14 +2633,14 @@ swRender(State* state) {
                             newPoly.vertices[newPoly.count + 1] = vLerped;
 
                             newPoly.colors[newPoly.count] = polyC1;
-                            newPoly.colors[newPoly.count + 1] = polyC2;
+                            newPoly.colors[newPoly.count + 1] = cLerped;
 
                             newPoly.count += 2;
                         } else {
                             assert(newPoly.count + 1 <= MAX_TRI_BOX_INTERSECTION_VERTICES);
                             assert(line2Normal > 0);
                             newPoly.vertices[newPoly.count] = vLerped;
-                            newPoly.colors[newPoly.count] = polyC1;
+                            newPoly.colors[newPoly.count] = cLerped;
                             newPoly.count += 1;
                         }
                     } else if (line1Normal >= 0) {
