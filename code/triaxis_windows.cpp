@@ -352,7 +352,8 @@ typedef struct D3D11ConstCamera {
     V3f     pos;
     f32     tanHalfFovX;
     f32     tanHalfFovY;
-    u8      pad[12];
+    f32     farClipZ;
+    u8      pad[8];
 } D3D11ConstCamera;
 
 typedef struct D3D11ConstMesh {
@@ -620,6 +621,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         constCamera->pos = state->camera.pos;
         constCamera->tanHalfFovX = state->camera.tanHalfFov.x;
         constCamera->tanHalfFovY = state->camera.tanHalfFov.y;
+        constCamera->farClipZ = state->camera.farClipZ;
         renderer.common->context->Unmap((ID3D11Resource*)renderer.mesh.constCamera, 0);
     }
 
