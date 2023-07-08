@@ -15,7 +15,7 @@ cbuffer ConstDims: register(b0) {
 PSInput
 vs(VSInput input) {
     PSInput output;
-    output.pos = float4(input.pos.x / ConstDims_screen.x * 2 - 1, -(input.pos.y / ConstDims_screen.y * 2 - 1), 1, 1);
+    output.pos = float4(input.pos.x / ConstDims_screen.x * 2 - 1, -(input.pos.y / ConstDims_screen.y * 2 - 1), 0, 1);
     output.color = input.color;
     return output;
 }

@@ -386,7 +386,9 @@ typedef struct D3D11FontVertex {
 typedef struct D3D11Renderer {
     D3D11Common* common;
 
-    ID3D11RasterizerState* rasterizerState;
+    ID3D11RasterizerState*   rasterizerState;
+    ID3D11DepthStencilState* depthSpencilState;
+    ID3D11DepthStencilView*  depthStencilView;
 
     struct {
         ID3D11Buffer* vbuffer;
@@ -585,7 +587,48 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         }
     }
 
-    // TODO(khvorov) Depth buffer
+    {
+        D3D11_DEPTH_STENCIL_DESC desc = {
+            .DepthEnable = TRUE,
+            .DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL,
+            .DepthFunc = D3D11_COMPARISON_LESS,
+            .StencilEnable = FALSE,
+            .StencilReadMask = 0xFF,
+            .StencilWriteMask = 0xFF,
+            .FrontFace = {
+                .StencilFailOp = D3D11_STENCIL_OP_KEEP,
+                .StencilDepthFailOp = D3D11_STENCIL_OP_KEEP,
+                .StencilPassOp = D3D11_STENCIL_OP_KEEP,
+                .StencilFunc = D3D11_COMPARISON_ALWAYS,
+            },
+            .BackFace = {
+                .StencilFailOp = D3D11_STENCIL_OP_KEEP,
+                .StencilDepthFailOp = D3D11_STENCIL_OP_KEEP,
+                .StencilPassOp = D3D11_STENCIL_OP_KEEP,
+                .StencilFunc = D3D11_COMPARISON_ALWAYS,
+            },
+        };
+        common->device->CreateDepthStencilState(&desc, &renderer.depthSpencilState);
+    }
+
+    {
+        // TODO(khvorov) Resizing
+        D3D11_TEXTURE2D_DESC desc = {
+            .Width = (UINT)state->windowWidth,
+            .Height = (UINT)state->windowHeight,
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = DXGI_FORMAT_D32_FLOAT,
+            .SampleDesc = {1, 0},
+            .Usage = D3D11_USAGE_DEFAULT,
+            .BindFlags = D3D11_BIND_DEPTH_STENCIL,
+        };
+
+        ID3D11Texture2D* depth = 0;
+        common->device->CreateTexture2D(&desc, NULL, &depth);
+        common->device->CreateDepthStencilView((ID3D11Resource*)depth, NULL, &renderer.depthStencilView);
+        depth->Release();
+    }
 
     endTempMemory(temp);
     return renderer;
@@ -607,6 +650,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
 
     renderer.common->context->PSSetShader(renderer.mesh.vsps.ps, NULL, 0);
     renderer.common->context->RSSetState(renderer.rasterizerState);
+    renderer.common->context->OMSetDepthStencilState(renderer.depthSpencilState, 0);
 
     {
         ID3D11Buffer* buffers[] = {renderer.mesh.constCamera, renderer.mesh.constMesh};
@@ -630,7 +674,9 @@ d3d11render(D3D11Renderer renderer, State* state) {
         renderer.common->context->ClearRenderTargetView(renderer.common->rtView, color);
     }
 
-    renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, 0);
+    renderer.common->context->ClearDepthStencilView(renderer.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+    renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, renderer.depthStencilView);
 
     for (isize meshIndex = 0; meshIndex < state->meshes.len; meshIndex++) {
         Mesh mesh = state->meshes.ptr[meshIndex];
@@ -648,6 +694,8 @@ d3d11render(D3D11Renderer renderer, State* state) {
     }
 
     if (state->showDebugUI) {
+        renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, 0);
+
         D3D11_MAPPED_SUBRESOURCE mappedTriFilledVertices = {};
         renderer.common->context->Map((ID3D11Resource*)renderer.triFilled.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTriFilledVertices);
 
@@ -1114,9 +1162,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         d3d11renderer.mesh.vsps.vs->Release();
         d3d11renderer.mesh.vsps.layout->Release();
         d3d11renderer.mesh.vsps.ps->Release();
-        d3d11renderer.rasterizerState->Release();
         d3d11renderer.mesh.constCamera->Release();
         d3d11renderer.mesh.constMesh->Release();
+
+        d3d11renderer.rasterizerState->Release();
+        d3d11renderer.depthSpencilState->Release();
+        d3d11renderer.depthStencilView->Release();
 
         d3d11renderer.triFilled.vertices->Release();
         d3d11renderer.triFilled.vsps.vs->Release();

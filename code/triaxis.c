@@ -2419,7 +2419,7 @@ initState(void* mem, isize bytes) {
         // arrpush(state->meshes, ground);
     }
 
-    state->useSW = true;
+    state->useSW = false;
     return state;
 }
 
