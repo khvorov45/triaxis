@@ -3,6 +3,7 @@ cbuffer ConstCamera : register(b0) {
     float3 ConstCamera_pos;
     float ConstCamera_tanHalfFovx;
     float ConstCamera_tanHalfFovy;
+    float ConstCamera_nearClipZ;
     float ConstCamera_farClipZ;
 };
 
@@ -61,11 +62,11 @@ vs(VSInput input) {
         vtxCamera = rot;
     }
 
-    // NOTE(khvorov) D3D seems to clip stuff behind the camera just fine without having to specify a near clip plane
+    float zrange = ConstCamera_farClipZ - ConstCamera_nearClipZ;
     float3 vtxClip = float3(
         vtxCamera.x / ConstCamera_tanHalfFovx, 
         vtxCamera.y / ConstCamera_tanHalfFovy, 
-        vtxCamera.z / ConstCamera_farClipZ * vtxCamera.z
+        (ConstCamera_farClipZ / zrange) * (vtxCamera.z - ConstCamera_nearClipZ) 
     );
 
     PSInput output;

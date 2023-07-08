@@ -2416,7 +2416,7 @@ initState(void* mem, isize bytes) {
 
         meshStorageAddQuad(&state->meshStorage, backLeftIndex, backRightIndex, frontRightIndex, frontLeftIndex);
         Mesh ground = endMesh(builder, (V3f) {}, createRotor3f());
-        // arrpush(state->meshes, ground);
+        arrpush(state->meshes, ground);
     }
 
     state->useSW = false;
