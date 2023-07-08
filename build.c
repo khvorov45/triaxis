@@ -149,6 +149,14 @@ main() {
             u64 mask = pow2 - 1;
             prb_addStrSegment(&builder, "    0x%016llx,\n", mask);
         }
+        prb_addStrSegment(&builder, "};\n\n");
+
+        prb_addStrSegment(&builder, "const static __mmask16 globalTailDWordMasks512[16] = {\n");
+        for (isize ind = 0; ind < 16; ind++) {
+            u64 pow2 = 1ULL << (u64)ind;
+            u64 mask = pow2 - 1;
+            prb_addStrSegment(&builder, "    0x%04llx,\n", mask);
+        }
         prb_addStrSegment(&builder, "};\n");
 
         Str gen = prb_endStr(&builder);

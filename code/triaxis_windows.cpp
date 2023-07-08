@@ -1095,7 +1095,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 TracyCZoneEnd(tracyCtx);
             }
 
-            d3d11blit(d3d11blitter, (Texture) {state->swRenderer.image.ptr, state->swRenderer.image.width, state->swRenderer.image.height});
+            d3d11blit(d3d11blitter, state->swRenderer.texture);
         } else {
             d3d11render(d3d11renderer, state);
         }

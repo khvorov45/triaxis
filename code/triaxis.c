@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdalign.h>
 #include <immintrin.h>
+#include <float.h>
 
 #include "TracyC.h"
 
@@ -82,6 +83,7 @@ memeq(const void* ptr1, const void* ptr2, isize len) {
 
 function void
 memset(void* ptr, int val, isize len) {
+    assert(val >= 0 && val <= 0xFF);
     isize    wholeCount = len / sizeof(__m512i);
     __m512i* ptr512 = (__m512i*)ptr;
     __m512i  val512 = _mm512_set1_epi8(val);
@@ -93,6 +95,21 @@ memset(void* ptr, int val, isize len) {
     isize     remaining = len - wholeCount * sizeof(__m512i);
     __mmask64 tailMask = globalTailByteMasks512[remaining];
     _mm512_mask_storeu_epi8(ptr512 + wholeCount, tailMask, val512);
+}
+
+function void
+fltset(f32* ptr, f32 val, isize len) {
+    isize   wholeCount = len * sizeof(f32) / sizeof(__m512);
+    __m512* ptr512 = (__m512*)ptr;
+    __m512  val512 = _mm512_set1_ps(val);
+
+    for (isize ind = 0; ind < wholeCount; ind++) {
+        _mm512_storeu_ps(ptr512 + ind, val512);
+    }
+
+    isize     remaining = len - wholeCount * sizeof(__m512) / sizeof(f32);
+    __mmask16 tailMask = globalTailDWordMasks512[remaining];
+    _mm512_mask_storeu_ps(ptr512 + wholeCount, tailMask, val512);
 }
 
 function void
@@ -1185,10 +1202,11 @@ swDrawRect(Texture texture, Rect2f rect, Color01 color) {
 typedef struct SWRenderer {
     union {
         struct {
-            u32*  ptr;
-            isize width;
-            isize height;
-            isize cap;
+            u32*   pixels;
+            isize  width;
+            isize  height;
+            float* depth;
+            isize  cap;
         } image;
         Texture texture;
     };
@@ -1207,7 +1225,10 @@ createSWRenderer(Arena* arena, isize bytes) {
     isize forImage = bytes / 4 * 3;
     isize forTriangles = (bytes - forImage) / 2;
 
-    arenaAllocCap(arena, u32, forImage, renderer.image);
+    renderer.image.cap = forImage / (sizeof(u32) + sizeof(float));
+    renderer.image.pixels = arenaAllocArray(arena, u32, renderer.image.cap);
+    renderer.image.depth = arenaAllocArray(arena, float, renderer.image.cap);
+
     renderer.trisCamera = createMeshStorage(arena, forTriangles);
     renderer.trisScreen = createMeshStorage(arena, forTriangles);
 
@@ -1224,7 +1245,8 @@ swRendererSetImageSize(SWRenderer* renderer, isize width, isize height) {
 
 function void
 swRendererClearImage(SWRenderer* renderer) {
-    zeromem(renderer->image.ptr, renderer->image.width * renderer->image.height * sizeof(u32));
+    zeromem(renderer->image.pixels, renderer->image.width * renderer->image.height * sizeof(u32));
+    fltset(renderer->image.depth, FLT_MAX, renderer->image.width * renderer->image.height);
 }
 
 typedef struct Triangle {
@@ -1333,32 +1355,35 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
                     f32 zinterp = 1.0f / zinterpinv;
 
-                    // TODO(khvorov) Depth check
-
-                    Color01 color01z = color01add(
-                        color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
-                        color01scale(c3z, cross1scaled)
-                    );
-
-                    Color01 color01 = color01scale(color01z, zinterp);
-
                     i32 index = ycoord * renderer->image.width + xcoord;
-                    assert(index < renderer->image.width * renderer->image.height);
+                    f32 existingZ = renderer->image.depth[index];
+                    if (existingZ > zinterp) {
+                        renderer->image.depth[index] = zinterp;
 
-                    u32      existingColoru32 = renderer->image.ptr[index];
-                    Color255 existingColor255 = coloru32to255(existingColoru32);
-                    Color01  existingColor01 = color255to01(existingColor255);
+                        Color01 color01z = color01add(
+                            color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
+                            color01scale(c3z, cross1scaled)
+                        );
 
-                    Color01 blended01 = {
-                        .r = lerpf(existingColor01.r, color01.r, color01.a),
-                        .g = lerpf(existingColor01.g, color01.g, color01.a),
-                        .b = lerpf(existingColor01.b, color01.b, color01.a),
-                        .a = 1,
-                    };
+                        Color01 color01 = color01scale(color01z, zinterp);
 
-                    Color255 blended255 = color01to255(blended01);
-                    u32      blendedu32 = color255tou32(blended255);
-                    renderer->image.ptr[index] = blendedu32;
+                        assert(index < renderer->image.width * renderer->image.height);
+
+                        u32      existingColoru32 = renderer->image.pixels[index];
+                        Color255 existingColor255 = coloru32to255(existingColoru32);
+                        Color01  existingColor01 = color255to01(existingColor255);
+
+                        Color01 blended01 = {
+                            .r = lerpf(existingColor01.r, color01.r, color01.a),
+                            .g = lerpf(existingColor01.g, color01.g, color01.a),
+                            .b = lerpf(existingColor01.b, color01.b, color01.a),
+                            .a = 1,
+                        };
+
+                        Color255 blended255 = color01to255(blended01);
+                        u32      blendedu32 = color255tou32(blended255);
+                        renderer->image.pixels[index] = blendedu32;
+                    }
                 }
             }
         }
@@ -1466,7 +1491,7 @@ swRendererScaleOntoAPixelGrid(SWRenderer* renderer, isize width, isize height, A
     u32* currentImageCopy = arenaAllocArray(scratch, u32, renderer->image.width * renderer->image.height);
 
     for (isize ind = 0; ind < renderer->image.width * renderer->image.height; ind++) {
-        currentImageCopy[ind] = renderer->image.ptr[ind];
+        currentImageCopy[ind] = renderer->image.pixels[ind];
     }
 
     isize scaleX = width / renderer->image.width;
@@ -1488,7 +1513,7 @@ swRendererScaleOntoAPixelGrid(SWRenderer* renderer, isize width, isize height, A
                     isize oldIndex = oldRow * oldWidth + oldColumn;
                     u32   oldVal = currentImageCopy[oldIndex];
                     isize newIndex = newRow * width + newColumn;
-                    renderer->image.ptr[newIndex] = oldVal;
+                    renderer->image.pixels[newIndex] = oldVal;
                 }
             }
         }
@@ -1501,16 +1526,16 @@ swRendererScaleOntoAPixelGrid(SWRenderer* renderer, isize width, isize height, A
         for (isize oldCol = 0; oldCol < oldWidth; oldCol++) {
             isize topleftX = oldCol * scaleX;
             for (isize toplineX = topleftX; toplineX < topleftX + scaleX; toplineX++) {
-                renderer->image.ptr[topleftY * renderer->image.width + toplineX] = color32;
+                renderer->image.pixels[topleftY * renderer->image.width + toplineX] = color32;
             }
             for (isize leftlineY = topleftY + 1; leftlineY < topleftY + scaleY; leftlineY++) {
-                renderer->image.ptr[leftlineY * renderer->image.width + topleftX] = color32;
+                renderer->image.pixels[leftlineY * renderer->image.width + topleftX] = color32;
             }
 
             {
                 isize centerY = topleftY + scaleY / 2;
                 isize centerX = topleftX + scaleX / 2;
-                renderer->image.ptr[centerY * renderer->image.width + centerX] = color32;
+                renderer->image.pixels[centerY * renderer->image.width + centerX] = color32;
             }
         }
     }
@@ -2007,6 +2032,46 @@ runTests(Arena* arena) {
             assert(guardBetween[0] == guardBetweenValue);
             assert(guardAfter[0] == guardAfterValue);
         }
+    }
+
+    {
+        f32 before = 1234.5678;
+        f32 after = 5678.1234;
+        f32 floats[] = {
+            before,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            after,
+        };
+
+        f32 val = 111.222;
+        fltset(floats + 1, val, arrayCount(floats) - 2);
+        assert(floats[0] == before);
+        for (isize ind = 1; ind < arrayCount(floats) - 1; ind++) {
+            assert(floats[ind] == val);
+        }
+        assert(floats[arrayCount(floats) - 1] == after);
     }
 
     {
