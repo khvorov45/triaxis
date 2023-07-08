@@ -2729,7 +2729,7 @@ swRender(State* state) {
                 V3f screenV = {
                     .x = polyV.x / polyV.z / state->camera.tanHalfFov.x,
                     .y = polyV.y / polyV.z / state->camera.tanHalfFov.y,
-                    .z = (polyV.z - state->camera.nearClipZ) / (state->camera.farClipZ - state->camera.nearClipZ),
+                    .z = polyV.z,
                 };
 
                 arrpush(state->swRenderer.trisScreen.vertices, screenV);
