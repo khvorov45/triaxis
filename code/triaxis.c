@@ -1229,6 +1229,7 @@ swRendererClearImage(SWRenderer* renderer) {
 
 typedef struct Triangle {
     V2f     v1, v2, v3;
+    f32     v1z, v2z, v3z;
     Color01 c1, c2, c3;
     f32     area;
 } Triangle;
@@ -1245,6 +1246,10 @@ swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
         .v1 = v2fhadamard((V2f) {v1.x + 1, -v1.y + 1}, halfImageDim),
         .v2 = v2fhadamard((V2f) {v2.x + 1, -v2.y + 1}, halfImageDim),
         .v3 = v2fhadamard((V2f) {v3.x + 1, -v3.y + 1}, halfImageDim),
+
+        .v1z = v1.z,
+        .v2z = v2.z,
+        .v3z = v3.z,
 
         .c1 = arrget(renderer->trisScreen.colors, trig.i1),
         .c2 = arrget(renderer->trisScreen.colors, trig.i2),
@@ -1267,6 +1272,14 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         Color01 c1 = tr.c1;
         Color01 c2 = tr.c2;
         Color01 c3 = tr.c3;
+
+        f32 z1inv = 1.0f / tr.v1z;
+        f32 z2inv = 1.0f / tr.v2z;
+        f32 z3inv = 1.0f / tr.v3z;
+
+        Color01 c1z = color01scale(c1, z1inv);
+        Color01 c2z = color01scale(c2, z2inv);
+        Color01 c3z = color01scale(c3, z3inv);
 
         f32 xmin = min(v1.x, min(v2.x, v3.x));
         f32 ymin = min(v1.y, min(v2.y, v3.y));
@@ -1317,10 +1330,17 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     f32 cross2scaled = cross2 / tr.area;
                     f32 cross3scaled = cross3 / tr.area;
 
+                    f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
+                    f32 zinterp = 1.0f / zinterpinv;
+
                     // TODO(khvorov) Depth check
 
-                    // TODO(khvorov) Perspective-correctness
-                    Color01 color01 = color01add(color01add(color01scale(c1, cross2scaled), color01scale(c2, cross3scaled)), color01scale(c3, cross1scaled));
+                    Color01 color01z = color01add(
+                        color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
+                        color01scale(c3z, cross1scaled)
+                    );
+
+                    Color01 color01 = color01scale(color01z, zinterp);
 
                     i32 index = ycoord * renderer->image.width + xcoord;
                     assert(index < renderer->image.width * renderer->image.height);
@@ -2046,7 +2066,7 @@ runTests(Arena* arena) {
             assert(feqEplislon(got, expected, 0.01));
         }
     }
-    
+
     {
         f32 tanVals[] = {-1, -0.2, -0.5, -0.7, 0, 0.1, 0.5, 0.9, 1};
         f32 expectedTurns[] = {-0.125, -0.0314164790945006, -0.0737918088252166, -0.0972000561071074, 0, 0.0158627587152768, 0.0737918088252166, 0.116631145821713, 0.125};
