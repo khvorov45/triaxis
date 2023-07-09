@@ -8,7 +8,10 @@
 #include <immintrin.h>
 #include <float.h>
 
-#include "TracyC.h"
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wmissing-field-initializers"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#include "spall.h"
 
 // clang-format off
 #define BYTE (1)
@@ -28,6 +31,12 @@
 #define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = (val), (arr).len++) : (__debugbreak(), 0))
 #define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
 
+#define STR(x) ((Str) {.ptr = x, .len = sizeof(x) - 1})
+#define STRARG(x) x, sizeof(x) - 1
+
+#define TIMED_SECTION_START(name) spall_buffer_begin(&globalSpallProfile, &globalSpallBuffer, STRARG(name), __rdtsc())
+#define TIMED_SECTION_END() spall_buffer_end(&globalSpallProfile, &globalSpallBuffer, __rdtsc())
+
 #ifdef TRIAXIS_asserts
 #define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
 #else
@@ -44,8 +53,12 @@ typedef int32_t  i32;
 typedef int64_t  i64;
 typedef intptr_t isize;
 typedef float    f32;
+typedef double   f64;
 
 #include "generated.c"
+
+SpallProfile globalSpallProfile;
+SpallBuffer  globalSpallBuffer;
 
 //
 // SECTION Memory
@@ -212,8 +225,6 @@ endTempMemory(TempMemory temp) {
 // SECTION Strings
 //
 
-#define STR(x) ((Str) {.ptr = x, .len = sizeof(x) - 1})
-#define NKSTRARG(x) x, sizeof(x) - 1
 typedef struct Str {
     const char* ptr;
     isize       len;
@@ -2276,9 +2287,9 @@ runBench(Arena* arena) {
             u8* arr1 = (u8*)arenaAlloc(arena, toCopy, 64);
             u8* arr2 = (u8*)arenaAlloc(arena, toCopy, 64);
 
-            TracyCZoneN(tracyCtx, "bench copymem", true);
+            // TracyCZoneN(tracyCtx, "bench copymem", true);
             memcpy_(arr1, arr2, toCopy);
-            TracyCZoneEnd(tracyCtx);
+            // TracyCZoneEnd(tracyCtx);
 
             endTempMemory(temp);
         }
@@ -2290,9 +2301,9 @@ runBench(Arena* arena) {
         for (isize ind = 0; ind < samples; ind++) {
             TempMemory temp = beginTempMemory(arena);
 
-            TracyCZoneN(tracyCtx, "bench zeromem", true);
+            // TracyCZoneN(tracyCtx, "bench zeromem", true);
             zeromem(arenaFreePtr(arena), toZero);
-            TracyCZoneEnd(tracyCtx);
+            // TracyCZoneEnd(tracyCtx);
 
             endTempMemory(temp);
         }
@@ -2351,7 +2362,7 @@ initState_uifontTextWidthCalc(nk_handle handle, float height, const char* text, 
 }
 
 function State*
-initState(void* mem, isize bytes) {
+initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
     assert(mem);
     assert(bytes > 0);
 
@@ -2369,6 +2380,17 @@ initState(void* mem, isize bytes) {
     state->scratch = createArenaFromArena(&arena, 10 * MEGABYTE);
     state->perm = createArenaFromArena(&arena, 10 * MEGABYTE);
     state->debug.arena = createArenaFromArena(&arena, 10 * MEGABYTE);
+
+#ifdef TRIAXIS_profile
+    {
+        Arena spallArena = createArenaFromArena(&arena, 100 * MEGABYTE);
+        globalSpallProfile = spall_init_file("profile.spall", 1.0 / rdtscFreqPerMicrosecond);
+        globalSpallBuffer = (SpallBuffer) {.data = spallArena.base, .length = spallArena.size};
+        spall_buffer_init(&globalSpallProfile, &globalSpallBuffer);
+    }
+#else
+    unused(rdtscFreqPerMicrosecond);
+#endif
 
     {
         state->uifont.userdata.ptr = &state->font;
@@ -2564,16 +2586,16 @@ update(State* state, f32 deltaSec) {
 
             nk_layout_row_static(&state->ui, state->font.lineAdvance, 5 * state->font.ascii->w, 4);
 
-            nk_text(&state->ui, NKSTRARG("pos"), NK_TEXT_ALIGN_CENTERED);
-            nk_text(&state->ui, NKSTRARG("x"), NK_TEXT_ALIGN_CENTERED);
-            nk_text(&state->ui, NKSTRARG("y"), NK_TEXT_ALIGN_CENTERED);
-            nk_text(&state->ui, NKSTRARG("z"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, STRARG("pos"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, STRARG("x"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, STRARG("y"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, STRARG("z"), NK_TEXT_ALIGN_CENTERED);
 
             builder.len = 0;
             FmtF32 posFmt = {.charsLeft = 3, .charsRight = 1};
             fmtF32(&builder, state->camera.pos.x, posFmt);
 
-            nk_text(&state->ui, NKSTRARG("cmr"), NK_TEXT_ALIGN_CENTERED);
+            nk_text(&state->ui, STRARG("cmr"), NK_TEXT_ALIGN_CENTERED);
             nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
 
             builder.len = 0;

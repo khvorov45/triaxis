@@ -27,13 +27,6 @@ Str globalBuildDir = {};
 Str globalTracyDir = {};
 
 function void
-execCmd(Arena* arena, Str cmd) {
-    prb_writelnToStdout(arena, cmd);
-    prb_Process proc = prb_createProcess(cmd, (prb_ProcessSpec) {});
-    assert(prb_launchProcesses(arena, &proc, 1, prb_Background_No));
-}
-
-function void
 compile(Arena* arena, Opt opt) {
     prb_Arena      argsDefinesBuilderArena = prb_createArenaFromArena(arena, 1 * prb_MEGABYTE);
     prb_GrowingStr argsDefinesBuilder = prb_beginStr(&argsDefinesBuilderArena);
@@ -58,28 +51,17 @@ compile(Arena* arena, Opt opt) {
     Str outputSuffix = prb_endStr(&nameBuilder);
     Str argsDefines = prb_endStr(&argsDefinesBuilder);
 
-    Str tracyIncludeFlag = prb_fmt(arena, "-I%.*s/public/tracy", LIT(globalTracyDir));
-    Str tracyClientObj = prb_pathJoin(arena, globalBuildDir, STR("TracyClient.obj"));
-    if (!prb_isFile(arena, tracyClientObj)) {
-        Str src = prb_pathJoin(arena, globalTracyDir, STR("public/TracyClient.cpp"));
-        Str cmd = prb_fmt(arena, "clang %.*s -march=native -O3 -g -DTRACY_ENABLE -Wno-format -c %.*s -o %.*s", LIT(tracyIncludeFlag), LIT(src), LIT(tracyClientObj));
-        execCmd(arena, cmd);
-    }
-
     {
         Str flags = {};
         {
             prb_GrowingStr builder = prb_beginStr(arena);
-            prb_addStrSegment(&builder, "%.*s%.*s", LIT(tracyIncludeFlag), LIT(argsDefines));
+            prb_addStrSegment(&builder, "%.*s", LIT(argsDefines));
             if (opt.debuginfo) {
                 prb_addStrSegment(&builder, " -g");
             }
             if (opt.optimise) {
                 // NOTE(khvorov) -fno-builtin is to prevent generating calls to memset and such
                 prb_addStrSegment(&builder, " -O3 -fno-builtin");
-            }
-            if (opt.profile) {
-                prb_addStrSegment(&builder, " -DTRACY_ENABLE");
             }
             flags = prb_endStr(&builder);
         }
@@ -91,9 +73,6 @@ compile(Arena* arena, Opt opt) {
             {
                 prb_GrowingStr builder = prb_beginStr(arena);
                 prb_addStrSegment(&builder, "%.*s", LIT(mainPath));
-                if (opt.profile) {
-                    prb_addStrSegment(&builder, " %.*s", LIT(tracyClientObj));
-                }
                 src = prb_endStr(&builder);
             }
 
@@ -136,7 +115,7 @@ main() {
     globalTracyDir = prb_pathJoin(arena, globalRootDir, STR("tracy"));
 
     prb_createDirIfNotExists(arena, globalBuildDir);
-    // prb_clearDir(arena, globalBuildDir);
+    prb_clearDir(arena, globalBuildDir);
 
     // NOTE(khvorov) Codegen
     {

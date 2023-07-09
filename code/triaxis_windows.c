@@ -333,9 +333,9 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
         ID3D11DeviceContext_Map(blitter.common->context, (ID3D11Resource*)blitter.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
-        TracyCZoneN(tracyCtx, "present copymem", true);
-        memcpy(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
-        TracyCZoneEnd(tracyCtx);
+        // TracyCZoneN(tracyCtx, "present copymem", true);
+        memcpy_(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
+        // TracyCZoneEnd(tracyCtx);
         ID3D11DeviceContext_Unmap(blitter.common->context, (ID3D11Resource*)blitter.texture, 0);
     }
 
@@ -954,12 +954,28 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     unused(lpCmdLine);
     unused(nCmdShow);
 
+    Timer timer = {.clock = createClock(), .update = getClockMarker()};
+
+    f64 rdtscFreqPerMicrosecond = 1.0f;
+#ifdef TRIAXIS_profile
+    {
+        u64 begin = __rdtsc();
+        Sleep(100);
+        f64 waited = msSinceLastUpdate(&timer);
+        u64 end = __rdtsc();
+        u64 ticksu = end - begin;
+        f64 ticksf = (f64)ticksu;
+        f64 microseconds = waited * 1000.0f;
+        rdtscFreqPerMicrosecond = ticksf / microseconds;
+    }
+#endif
+
     State* state = 0;
     {
         isize memSize = 1 * 1024 * 1024 * 1024;
         void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         assert(memBase);
-        state = initState(memBase, memSize);
+        state = initState(memBase, memSize, rdtscFreqPerMicrosecond);
     }
 
     globalState = state;
@@ -1042,17 +1058,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     D3D11Blitter  d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight, &state->scratch);
     D3D11Renderer d3d11renderer = initD3D11Renderer(&d3d11common, state);
 
-    Timer timer = {.clock = createClock(), .update = getClockMarker()};
     for (bool running = true; running;) {
-        TracyCFrameMark;
-        TracyCZoneN(tracyFrameCtx, "frame", true);
+        TIMED_SECTION_START("frame");
 
         assert(state->scratch.tempCount == 0);
         assert(state->scratch.used == 0);
 
         // NOTE(khvorov) Input
         {
-            TracyCZoneN(tracyCtx, "input", true);
+            // TracyCZoneN(tracyCtx, "input", true);
 
             inputBeginFrame(&state->input);
             for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1128,15 +1142,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 state->input.mouse.y = point.y;
             }
 
-            TracyCZoneEnd(tracyCtx);
+            // TracyCZoneEnd(tracyCtx);
         }
 
         bool prevShowDebugUI = state->showDebugUI;
         {
-            TracyCZoneN(tracyCtx, "update", true);
+            // TracyCZoneN(tracyCtx, "update", true);
             f32 ms = msSinceLastUpdate(&timer);
             update(state, ms / 1000.0f);
-            TracyCZoneEnd(tracyCtx);
+            // TracyCZoneEnd(tracyCtx);
         }
         if (prevShowDebugUI != state->showDebugUI) {
             ShowCursor(state->showDebugUI);
@@ -1144,9 +1158,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         if (state->useSW) {
             {
-                TracyCZoneN(tracyCtx, "render", true);
+                // TracyCZoneN(tracyCtx, "render", true);
                 swRender(state);
-                TracyCZoneEnd(tracyCtx);
+                // TracyCZoneEnd(tracyCtx);
             }
 
             d3d11blit(d3d11blitter, state->swRenderer.texture);
@@ -1155,7 +1169,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         }
 
         nk_clear(&state->ui);
-        TracyCZoneEnd(tracyFrameCtx);
+
+        TIMED_SECTION_END();
     }
 
     // TODO(khvorov) Does this prevent bluescreens?
@@ -1202,6 +1217,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         ID3D11Device_Release(d3d11common.device);
         ID3D11DeviceContext_Release(d3d11common.context);
     }
+
+    spall_buffer_quit(&globalSpallProfile, &globalSpallBuffer);
+    spall_quit(&globalSpallProfile);
 
     return 0;
 }

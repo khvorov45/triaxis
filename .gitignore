@@ -11,3 +11,4 @@ win32_d3d11.c
 *.out
 compile_flags.txt
 .cache
+*.spall
