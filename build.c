@@ -62,7 +62,7 @@ compile(Arena* arena, Opt opt) {
     Str tracyClientObj = prb_pathJoin(arena, globalBuildDir, STR("TracyClient.obj"));
     if (!prb_isFile(arena, tracyClientObj)) {
         Str src = prb_pathJoin(arena, globalTracyDir, STR("public/TracyClient.cpp"));
-        Str cmd = prb_fmt(arena, "clang %.*s -march=native -O3 -DTRACY_ENABLE -Wno-format -c %.*s -o %.*s", LIT(tracyIncludeFlag), LIT(src), LIT(tracyClientObj));
+        Str cmd = prb_fmt(arena, "clang %.*s -march=native -O3 -g -DTRACY_ENABLE -Wno-format -c %.*s -o %.*s", LIT(tracyIncludeFlag), LIT(src), LIT(tracyClientObj));
         execCmd(arena, cmd);
     }
 
@@ -167,8 +167,8 @@ main() {
     Opt debug = {.debuginfo = true, .asserts = true, .tests = true, .bench = true};
     compile(arena, debug);
 
-    // Opt profile = {.debuginfo = true, .optimise = true, .profile = true, .bench = true};
-    // compile(arena, profile);
+    Opt profile = {.debuginfo = true, .optimise = true, .profile = true, .bench = true};
+    compile(arena, profile);
 
     prb_writeToStdout(prb_fmt(arena, "total: %.2fms\n", prb_getMsFrom(scriptStart)));
     return 0;

@@ -18,22 +18,14 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
+#pragma comment(lib, "d3d11")
+#pragma comment(lib, "dxguid")
+
 // TODO(khvorov) Precompile in release?
 #include <d3dcompiler.h>
 #pragma comment(lib, "d3dcompiler")
 
-#undef max
-#undef min
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wsometimes-uninitialized"
-#pragma clang diagnostic ignored "-Wunused-private-field"
-#include "TracyD3D11.hpp"
-#pragma clang diagnostic pop
-
 #define asserthr(x) assert(SUCCEEDED(x))
-
-#pragma comment(lib, "d3d11")
-#pragma comment(lib, "dxguid")
 
 static Str
 readEntireFile(Arena* arena, LPCWSTR path) {
@@ -58,7 +50,6 @@ typedef struct D3D11Common {
     ID3D11Device*           device;
     ID3D11RenderTargetView* rtView;
     IDXGISwapChain1*        swapChain;
-    TracyD3D11Ctx           tracyD3D11Context;
 } D3D11Common;
 
 static D3D11Common
@@ -147,14 +138,11 @@ initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
         context->RSSetViewports(1, &viewport);
     }
 
-    TracyD3D11Ctx tracyD3D11Context = TracyD3D11Context(device, context);
-
     D3D11Common common = {
         .context = context,
         .device = device,
         .rtView = rtView,
         .swapChain = swapChain,
-        .tracyD3D11Context = tracyD3D11Context,
     };
     return common;
 }
@@ -334,13 +322,11 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
     }
 
     {
-        TracyD3D11Zone(blitter.common->tracyD3D11Context, "draw quad");
         blitter.common->context->OMSetRenderTargets(1, &blitter.common->rtView, 0);
         blitter.common->context->Draw(4, 0);
     }
 
     HRESULT presentResult = blitter.common->swapChain->Present(1, 0);
-    TracyD3D11Collect(blitter.common->tracyD3D11Context);
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
         Sleep(10);
@@ -1153,8 +1139,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         nk_clear(&state->ui);
         TracyCZoneEnd(tracyFrameCtx);
     }
-
-    TracyD3D11Destroy(d3d11common.tracyD3D11Context);
 
     // TODO(khvorov) Does this prevent bluescreens?
     {
