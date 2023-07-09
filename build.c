@@ -84,7 +84,7 @@ compile(Arena* arena, Opt opt) {
             flags = prb_endStr(&builder);
         }
 
-        Str mainPath = prb_pathJoin(arena, globalCodeDir, STR("triaxis_windows.cpp"));
+        Str mainPath = prb_pathJoin(arena, globalCodeDir, STR("triaxis_windows.c"));
 
         {
             Str src = {};

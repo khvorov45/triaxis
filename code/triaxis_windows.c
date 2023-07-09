@@ -15,8 +15,10 @@
 // SECTION D3D11
 //
 
+#define COBJMACROS
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <dxgidebug.h>
 
 #pragma comment(lib, "d3d11")
 #pragma comment(lib, "dxguid")
@@ -79,23 +81,39 @@ initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
 #ifdef TRIAXIS_asserts
     {
         ID3D11InfoQueue* info = 0;
-        device->QueryInterface(IID_ID3D11InfoQueue, (void**)&info);
-        info->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
-        info->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
-        info->Release();
+        ID3D11Device_QueryInterface(device, &IID_ID3D11InfoQueue, (void**)&info);
+        ID3D11InfoQueue_SetBreakOnSeverity(info, D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+        ID3D11InfoQueue_SetBreakOnSeverity(info, D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
+        ID3D11InfoQueue_Release(info);
+    }
+
+    {
+        HMODULE dxgiDebug = LoadLibraryA("dxgidebug.dll");
+        if (dxgiDebug) {
+            HRESULT(WINAPI * dxgiGetDebugInterface)
+            (REFIID riid, void** ppDebug);
+
+            *(FARPROC*)&dxgiGetDebugInterface = GetProcAddress(dxgiDebug, "DXGIGetDebugInterface");
+
+            IDXGIInfoQueue* info = 0;
+            asserthr(dxgiGetDebugInterface(&IID_IDXGIInfoQueue, (void**)&info));
+            IDXGIInfoQueue_SetBreakOnSeverity(info, DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+            IDXGIInfoQueue_SetBreakOnSeverity(info, DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, TRUE);
+            IDXGIInfoQueue_Release(info);
+        }
     }
 #endif
 
     IDXGISwapChain1* swapChain = 0;
     {
         IDXGIDevice* dxgiDevice = 0;
-        asserthr(device->QueryInterface(IID_IDXGIDevice, (void**)&dxgiDevice));
+        asserthr(ID3D11Device_QueryInterface(device, &IID_IDXGIDevice, (void**)&dxgiDevice));
 
         IDXGIAdapter* dxgiAdapter = 0;
-        asserthr(dxgiDevice->GetAdapter(&dxgiAdapter));
+        asserthr(IDXGIDevice_GetAdapter(dxgiDevice, &dxgiAdapter));
 
         IDXGIFactory2* factory = 0;
-        asserthr(dxgiAdapter->GetParent(IID_IDXGIFactory2, (void**)&factory));
+        asserthr(IDXGIAdapter_GetParent(dxgiAdapter, &IID_IDXGIFactory2, (void**)&factory));
 
         DXGI_SWAP_CHAIN_DESC1 desc = {
             .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -106,24 +124,24 @@ initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
             .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
         };
 
-        asserthr(factory->CreateSwapChainForHwnd(device, window, &desc, NULL, NULL, &swapChain));
+        asserthr(IDXGIFactory2_CreateSwapChainForHwnd(factory, (IUnknown*)device, window, &desc, NULL, NULL, &swapChain));
 
-        factory->MakeWindowAssociation(window, DXGI_MWA_NO_ALT_ENTER);
+        IDXGIFactory2_MakeWindowAssociation(factory, window, DXGI_MWA_NO_ALT_ENTER);
 
-        factory->Release();
-        dxgiAdapter->Release();
-        dxgiDevice->Release();
+        IDXGIFactory2_Release(factory);
+        IDXGIAdapter_Release(dxgiAdapter);
+        IDXGIDevice_Release(dxgiDevice);
     }
 
     ID3D11RenderTargetView* rtView = 0;
     {
-        asserthr(swapChain->ResizeBuffers(0, viewportWidth, viewportHeight, DXGI_FORMAT_UNKNOWN, 0));
+        asserthr(IDXGISwapChain1_ResizeBuffers(swapChain, 0, viewportWidth, viewportHeight, DXGI_FORMAT_UNKNOWN, 0));
 
         ID3D11Texture2D* backbuffer = 0;
-        swapChain->GetBuffer(0, IID_ID3D11Texture2D, (void**)&backbuffer);
-        device->CreateRenderTargetView((ID3D11Resource*)backbuffer, NULL, &rtView);
+        IDXGISwapChain1_GetBuffer(swapChain, 0, &IID_ID3D11Texture2D, (void**)&backbuffer);
+        ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource*)backbuffer, NULL, &rtView);
         assert(rtView);
-        backbuffer->Release();
+        ID3D11Texture2D_Release(backbuffer);
     }
 
     {
@@ -135,7 +153,7 @@ initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
             .MinDepth = 0,
             .MaxDepth = 1,
         };
-        context->RSSetViewports(1, &viewport);
+        ID3D11DeviceContext_RSSetViewports(context, 1, &viewport);
     }
 
     D3D11Common common = {
@@ -164,7 +182,7 @@ compileShader(Str hlsl, const char* name, const char* kind) {
 
     HRESULT result = D3DCompile(hlsl.ptr, hlsl.len, NULL, NULL, NULL, name, kind, flags, 0, &blob, &error);
     if (FAILED(result)) {
-        char* msg = (char*)error->GetBufferPointer();
+        char* msg = (char*)ID3D10Blob_GetBufferPointer(error);
         OutputDebugStringA(msg);
         assert(!"failed to compile");
     }
@@ -188,15 +206,15 @@ compileVSPS(D3D11_INPUT_ELEMENT_DESC* desc, isize descCount, LPCWSTR path, ID3D1
 
     {
         ID3DBlob* blob = compileShader(hlsl, "vs", "vs_5_0");
-        device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), NULL, &result.vs);
-        device->CreateInputLayout(desc, descCount, blob->GetBufferPointer(), blob->GetBufferSize(), &result.layout);
-        blob->Release();
+        ID3D11Device_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(blob), ID3D10Blob_GetBufferSize(blob), NULL, &result.vs);
+        ID3D11Device_CreateInputLayout(device, desc, descCount, ID3D10Blob_GetBufferPointer(blob), ID3D10Blob_GetBufferSize(blob), &result.layout);
+        ID3D10Blob_Release(blob);
     }
 
     {
         ID3DBlob* pblob = compileShader(hlsl, "ps", "ps_5_0");
-        device->CreatePixelShader(pblob->GetBufferPointer(), pblob->GetBufferSize(), NULL, &result.ps);
-        pblob->Release();
+        ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(pblob), ID3D10Blob_GetBufferSize(pblob), NULL, &result.ps);
+        ID3D10Blob_Release(pblob);
     }
 
     endTempMemory(temp);
@@ -239,7 +257,7 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, A
         };
 
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = data};
-        common->device->CreateBuffer(&desc, &initial, &blitter.vbuffer);
+        ID3D11Device_CreateBuffer(common->device, &desc, &initial, &blitter.vbuffer);
     }
 
     {
@@ -264,8 +282,8 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, A
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
 
-        common->device->CreateTexture2D(&desc, 0, &blitter.texture);
-        common->device->CreateShaderResourceView((ID3D11Resource*)blitter.texture, NULL, &blitter.textureView);
+        ID3D11Device_CreateTexture2D(common->device, &desc, 0, &blitter.texture);
+        ID3D11Device_CreateShaderResourceView(common->device, (ID3D11Resource*)blitter.texture, NULL, &blitter.textureView);
     }
 
     {
@@ -275,7 +293,7 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, A
             .AddressV = D3D11_TEXTURE_ADDRESS_WRAP,
             .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
         };
-        common->device->CreateSamplerState(&desc, &blitter.sampler);
+        ID3D11Device_CreateSamplerState(common->device, &desc, &blitter.sampler);
     }
 
     {
@@ -283,7 +301,7 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, A
             .FillMode = D3D11_FILL_SOLID,
             .CullMode = D3D11_CULL_NONE,
         };
-        common->device->CreateRasterizerState(&desc, &blitter.rasterizerState);
+        ID3D11Device_CreateRasterizerState(common->device, &desc, &blitter.rasterizerState);
     }
 
     endTempMemory(temp);
@@ -295,38 +313,38 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
     {
         UINT offset = 0;
         UINT stride = sizeof(D3D11BlitterVertex);
-        blitter.common->context->IASetVertexBuffers(0, 1, &blitter.vbuffer, &stride, &offset);
+        ID3D11DeviceContext_IASetVertexBuffers(blitter.common->context, 0, 1, &blitter.vbuffer, &stride, &offset);
     }
 
-    blitter.common->context->VSSetShader(blitter.vsps.vs, NULL, 0);
-    blitter.common->context->IASetInputLayout(blitter.vsps.layout);
-    blitter.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-    blitter.common->context->PSSetShader(blitter.vsps.ps, NULL, 0);
-    blitter.common->context->PSSetShaderResources(0, 1, &blitter.textureView);
-    blitter.common->context->PSSetSamplers(0, 1, &blitter.sampler);
-    blitter.common->context->RSSetState(blitter.rasterizerState);
+    ID3D11DeviceContext_VSSetShader(blitter.common->context, blitter.vsps.vs, NULL, 0);
+    ID3D11DeviceContext_IASetInputLayout(blitter.common->context, blitter.vsps.layout);
+    ID3D11DeviceContext_IASetPrimitiveTopology(blitter.common->context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    ID3D11DeviceContext_PSSetShader(blitter.common->context, blitter.vsps.ps, NULL, 0);
+    ID3D11DeviceContext_PSSetShaderResources(blitter.common->context, 0, 1, &blitter.textureView);
+    ID3D11DeviceContext_PSSetSamplers(blitter.common->context, 0, 1, &blitter.sampler);
+    ID3D11DeviceContext_RSSetState(blitter.common->context, blitter.rasterizerState);
 
     {
         FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
-        blitter.common->context->ClearRenderTargetView(blitter.common->rtView, color);
+        ID3D11DeviceContext_ClearRenderTargetView(blitter.common->context, blitter.common->rtView, color);
     }
 
     {
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
-        blitter.common->context->Map((ID3D11Resource*)blitter.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
+        ID3D11DeviceContext_Map(blitter.common->context, (ID3D11Resource*)blitter.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
         TracyCZoneN(tracyCtx, "present copymem", true);
         memcpy(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
         TracyCZoneEnd(tracyCtx);
-        blitter.common->context->Unmap((ID3D11Resource*)blitter.texture, 0);
+        ID3D11DeviceContext_Unmap(blitter.common->context, (ID3D11Resource*)blitter.texture, 0);
     }
 
     {
-        blitter.common->context->OMSetRenderTargets(1, &blitter.common->rtView, 0);
-        blitter.common->context->Draw(4, 0);
+        ID3D11DeviceContext_OMSetRenderTargets(blitter.common->context, 1, &blitter.common->rtView, 0);
+        ID3D11DeviceContext_Draw(blitter.common->context, 4, 0);
     }
 
-    HRESULT presentResult = blitter.common->swapChain->Present(1, 0);
+    HRESULT presentResult = IDXGISwapChain1_Present(blitter.common->swapChain, 1, 0);
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
         Sleep(10);
@@ -417,7 +435,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
         };
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->meshStorage.vertices.ptr};
-        common->device->CreateBuffer(&desc, &initial, &renderer.mesh.vbuffer);
+        ID3D11Device_CreateBuffer(common->device, &desc, &initial, &renderer.mesh.vbuffer);
     }
 
     {
@@ -427,7 +445,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_INDEX_BUFFER,
         };
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->meshStorage.indices.ptr};
-        common->device->CreateBuffer(&desc, &initial, &renderer.mesh.ibuffer);
+        ID3D11Device_CreateBuffer(common->device, &desc, &initial, &renderer.mesh.ibuffer);
     }
 
     {
@@ -437,7 +455,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
         };
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->meshStorage.colors.ptr};
-        common->device->CreateBuffer(&desc, &initial, &renderer.mesh.colorBuffer);
+        ID3D11Device_CreateBuffer(common->device, &desc, &initial, &renderer.mesh.colorBuffer);
     }
 
     {
@@ -448,7 +466,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
-        common->device->CreateBuffer(&desc, 0, &renderer.triFilled.vertices);
+        ID3D11Device_CreateBuffer(common->device, &desc, 0, &renderer.triFilled.vertices);
     }
 
     {
@@ -459,7 +477,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
-        common->device->CreateBuffer(&desc, 0, &renderer.font.vertices);
+        ID3D11Device_CreateBuffer(common->device, &desc, 0, &renderer.font.vertices);
     }
 
     {
@@ -505,9 +523,9 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         D3D11_SUBRESOURCE_DATA initial = {.pSysMem = state->font.atlas, .SysMemPitch = (UINT)state->font.atlasW};
 
         ID3D11Texture2D* tex = 0;
-        common->device->CreateTexture2D(&desc, &initial, &tex);
-        common->device->CreateShaderResourceView((ID3D11Resource*)tex, 0, &renderer.font.textureView);
-        tex->Release();
+        ID3D11Device_CreateTexture2D(common->device, &desc, &initial, &tex);
+        ID3D11Device_CreateShaderResourceView(common->device, (ID3D11Resource*)tex, 0, &renderer.font.textureView);
+        ID3D11Texture2D_Release(tex);
     }
 
     {
@@ -523,7 +541,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
                 .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
             },
         };
-        common->device->CreateBlendState(&desc, &renderer.font.blend);
+        ID3D11Device_CreateBlendState(common->device, &desc, &renderer.font.blend);
     }
 
     {
@@ -533,7 +551,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .AddressV = D3D11_TEXTURE_ADDRESS_WRAP,
             .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
         };
-        common->device->CreateSamplerState(&desc, &renderer.font.sampler);
+        ID3D11Device_CreateSamplerState(common->device, &desc, &renderer.font.sampler);
     }
 
     {
@@ -542,7 +560,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .CullMode = D3D11_CULL_BACK,
             .DepthClipEnable = true,
         };
-        common->device->CreateRasterizerState(&desc, &renderer.rasterizerState);
+        ID3D11Device_CreateRasterizerState(common->device, &desc, &renderer.rasterizerState);
     }
 
     {
@@ -552,17 +570,17 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
-        common->device->CreateBuffer(&desc, 0, &renderer.mesh.constCamera);
+        ID3D11Device_CreateBuffer(common->device, &desc, 0, &renderer.mesh.constCamera);
 
         desc.ByteWidth = sizeof(D3D11ConstMesh);
-        common->device->CreateBuffer(&desc, 0, &renderer.mesh.constMesh);
+        ID3D11Device_CreateBuffer(common->device, &desc, 0, &renderer.mesh.constMesh);
 
         // TODO(khvorov) Resizing
         {
             desc.ByteWidth = sizeof(D3D11FontConstDims);
             D3D11FontConstDims     initDims = {.screen = {(f32)state->windowWidth, (f32)state->windowHeight}, .tex = {(f32)state->font.atlasW, (f32)state->font.atlasH}};
             D3D11_SUBRESOURCE_DATA init = {.pSysMem = &initDims};
-            common->device->CreateBuffer(&desc, &init, &renderer.font.constDims);
+            ID3D11Device_CreateBuffer(common->device, &desc, &init, &renderer.font.constDims);
         }
 
         // TODO(khvorov) Resizing
@@ -570,7 +588,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
             desc.ByteWidth = sizeof(D3D11TriFilledConstDims);
             D3D11TriFilledConstDims initDims = {.screen = {(f32)state->windowWidth, (f32)state->windowHeight}};
             D3D11_SUBRESOURCE_DATA  init = {.pSysMem = &initDims};
-            common->device->CreateBuffer(&desc, &init, &renderer.triFilled.constDims);
+            ID3D11Device_CreateBuffer(common->device, &desc, &init, &renderer.triFilled.constDims);
         }
     }
 
@@ -595,7 +613,7 @@ initD3D11Renderer(D3D11Common* common, State* state) {
                 .StencilFunc = D3D11_COMPARISON_ALWAYS,
             },
         };
-        common->device->CreateDepthStencilState(&desc, &renderer.depthSpencilState);
+        ID3D11Device_CreateDepthStencilState(common->device, &desc, &renderer.depthSpencilState);
     }
 
     {
@@ -612,9 +630,9 @@ initD3D11Renderer(D3D11Common* common, State* state) {
         };
 
         ID3D11Texture2D* depth = 0;
-        common->device->CreateTexture2D(&desc, NULL, &depth);
-        common->device->CreateDepthStencilView((ID3D11Resource*)depth, NULL, &renderer.depthStencilView);
-        depth->Release();
+        ID3D11Device_CreateTexture2D(common->device, &desc, NULL, &depth);
+        ID3D11Device_CreateDepthStencilView(common->device, (ID3D11Resource*)depth, NULL, &renderer.depthStencilView);
+        ID3D11Texture2D_Release(depth);
     }
 
     endTempMemory(temp);
@@ -627,26 +645,26 @@ d3d11render(D3D11Renderer renderer, State* state) {
         UINT          offsets[] = {0, 0};
         UINT          strides[] = {sizeof(*state->meshStorage.vertices.ptr), sizeof(*state->meshStorage.colors.ptr)};
         ID3D11Buffer* buffers[] = {renderer.mesh.vbuffer, renderer.mesh.colorBuffer};
-        renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
+        ID3D11DeviceContext_IASetVertexBuffers(renderer.common->context, 0, arrayCount(buffers), buffers, strides, offsets);
     }
 
-    renderer.common->context->IASetIndexBuffer(renderer.mesh.ibuffer, DXGI_FORMAT_R32_UINT, 0);
-    renderer.common->context->VSSetShader(renderer.mesh.vsps.vs, NULL, 0);
-    renderer.common->context->IASetInputLayout(renderer.mesh.vsps.layout);
-    renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_IASetIndexBuffer(renderer.common->context, renderer.mesh.ibuffer, DXGI_FORMAT_R32_UINT, 0);
+    ID3D11DeviceContext_VSSetShader(renderer.common->context, renderer.mesh.vsps.vs, NULL, 0);
+    ID3D11DeviceContext_IASetInputLayout(renderer.common->context, renderer.mesh.vsps.layout);
+    ID3D11DeviceContext_IASetPrimitiveTopology(renderer.common->context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    renderer.common->context->PSSetShader(renderer.mesh.vsps.ps, NULL, 0);
-    renderer.common->context->RSSetState(renderer.rasterizerState);
-    renderer.common->context->OMSetDepthStencilState(renderer.depthSpencilState, 0);
+    ID3D11DeviceContext_PSSetShader(renderer.common->context, renderer.mesh.vsps.ps, NULL, 0);
+    ID3D11DeviceContext_RSSetState(renderer.common->context, renderer.rasterizerState);
+    ID3D11DeviceContext_OMSetDepthStencilState(renderer.common->context, renderer.depthSpencilState, 0);
 
     {
         ID3D11Buffer* buffers[] = {renderer.mesh.constCamera, renderer.mesh.constMesh};
-        renderer.common->context->VSSetConstantBuffers(0, arrayCount(buffers), buffers);
+        ID3D11DeviceContext_VSSetConstantBuffers(renderer.common->context, 0, arrayCount(buffers), buffers);
     }
 
     {
         D3D11_MAPPED_SUBRESOURCE mappedCamera = {};
-        renderer.common->context->Map((ID3D11Resource*)renderer.mesh.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
+        ID3D11DeviceContext_Map(renderer.common->context, (ID3D11Resource*)renderer.mesh.constCamera, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedCamera);
         D3D11ConstCamera* constCamera = (D3D11ConstCamera*)mappedCamera.pData;
         constCamera->orientation = state->camera.currentOrientation;
         constCamera->pos = state->camera.pos;
@@ -654,38 +672,38 @@ d3d11render(D3D11Renderer renderer, State* state) {
         constCamera->tanHalfFovY = state->camera.tanHalfFov.y;
         constCamera->nearClipZ = state->camera.nearClipZ;
         constCamera->farClipZ = state->camera.farClipZ;
-        renderer.common->context->Unmap((ID3D11Resource*)renderer.mesh.constCamera, 0);
+        ID3D11DeviceContext_Unmap(renderer.common->context, (ID3D11Resource*)renderer.mesh.constCamera, 0);
     }
 
     {
         FLOAT color[] = {0.0f, 0.0, 0.0f, 1.f};
-        renderer.common->context->ClearRenderTargetView(renderer.common->rtView, color);
+        ID3D11DeviceContext_ClearRenderTargetView(renderer.common->context, renderer.common->rtView, color);
     }
 
-    renderer.common->context->ClearDepthStencilView(renderer.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+    ID3D11DeviceContext_ClearDepthStencilView(renderer.common->context, renderer.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-    renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, renderer.depthStencilView);
+    ID3D11DeviceContext_OMSetRenderTargets(renderer.common->context, 1, &renderer.common->rtView, renderer.depthStencilView);
 
     for (isize meshIndex = 0; meshIndex < state->meshes.len; meshIndex++) {
         Mesh mesh = state->meshes.ptr[meshIndex];
 
         D3D11_MAPPED_SUBRESOURCE mappedMesh = {};
-        renderer.common->context->Map((ID3D11Resource*)renderer.mesh.constMesh, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedMesh);
+        ID3D11DeviceContext_Map(renderer.common->context, (ID3D11Resource*)renderer.mesh.constMesh, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedMesh);
         D3D11ConstMesh* constMesh = (D3D11ConstMesh*)mappedMesh.pData;
         constMesh->orientation = mesh.orientation;
         constMesh->pos = mesh.pos;
-        renderer.common->context->Unmap((ID3D11Resource*)renderer.mesh.constMesh, 0);
+        ID3D11DeviceContext_Unmap(renderer.common->context, (ID3D11Resource*)renderer.mesh.constMesh, 0);
 
         i32 baseVertex = mesh.vertices.ptr - state->meshStorage.vertices.ptr;
         i32 baseIndex = (i32*)mesh.indices.ptr - (i32*)state->meshStorage.indices.ptr;
-        renderer.common->context->DrawIndexed(mesh.indices.len * 3, baseIndex, baseVertex);
+        ID3D11DeviceContext_DrawIndexed(renderer.common->context, mesh.indices.len * 3, baseIndex, baseVertex);
     }
 
     if (state->showDebugUI) {
-        renderer.common->context->OMSetRenderTargets(1, &renderer.common->rtView, 0);
+        ID3D11DeviceContext_OMSetRenderTargets(renderer.common->context, 1, &renderer.common->rtView, 0);
 
         D3D11_MAPPED_SUBRESOURCE mappedTriFilledVertices = {};
-        renderer.common->context->Map((ID3D11Resource*)renderer.triFilled.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTriFilledVertices);
+        ID3D11DeviceContext_Map(renderer.common->context, (ID3D11Resource*)renderer.triFilled.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTriFilledVertices);
 
         struct {
             D3D11TriFilledVertex* ptr;
@@ -694,7 +712,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         } triFilled = {(D3D11TriFilledVertex*)mappedTriFilledVertices.pData, 0, renderer.triFilled.vertexCap};
 
         D3D11_MAPPED_SUBRESOURCE mappedFontVertices = {};
-        renderer.common->context->Map((ID3D11Resource*)renderer.font.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedFontVertices);
+        ID3D11DeviceContext_Map(renderer.common->context, (ID3D11Resource*)renderer.font.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedFontVertices);
 
         struct {
             D3D11FontVertex* ptr;
@@ -795,56 +813,56 @@ d3d11render(D3D11Renderer renderer, State* state) {
             }
         }
 
-        renderer.common->context->Unmap((ID3D11Resource*)renderer.triFilled.vertices, 0);
-        renderer.common->context->Unmap((ID3D11Resource*)renderer.font.vertices, 0);
+        ID3D11DeviceContext_Unmap(renderer.common->context, (ID3D11Resource*)renderer.triFilled.vertices, 0);
+        ID3D11DeviceContext_Unmap(renderer.common->context, (ID3D11Resource*)renderer.font.vertices, 0);
 
         {
             UINT          offsets[] = {0};
             UINT          strides[] = {sizeof(D3D11TriFilledVertex)};
             ID3D11Buffer* buffers[] = {renderer.triFilled.vertices};
-            renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
+            ID3D11DeviceContext_IASetVertexBuffers(renderer.common->context, 0, arrayCount(buffers), buffers, strides, offsets);
         }
 
         {
             ID3D11Buffer* buffers[] = {renderer.triFilled.constDims};
-            renderer.common->context->VSSetConstantBuffers(0, arrayCount(buffers), buffers);
+            ID3D11DeviceContext_VSSetConstantBuffers(renderer.common->context, 0, arrayCount(buffers), buffers);
         }
 
-        renderer.common->context->VSSetShader(renderer.triFilled.vsps.vs, NULL, 0);
-        renderer.common->context->IASetInputLayout(renderer.triFilled.vsps.layout);
-        renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11DeviceContext_VSSetShader(renderer.common->context, renderer.triFilled.vsps.vs, NULL, 0);
+        ID3D11DeviceContext_IASetInputLayout(renderer.common->context, renderer.triFilled.vsps.layout);
+        ID3D11DeviceContext_IASetPrimitiveTopology(renderer.common->context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        renderer.common->context->PSSetShader(renderer.triFilled.vsps.ps, NULL, 0);
+        ID3D11DeviceContext_PSSetShader(renderer.common->context, renderer.triFilled.vsps.ps, NULL, 0);
 
-        renderer.common->context->Draw(triFilled.len, 0);
+        ID3D11DeviceContext_Draw(renderer.common->context, triFilled.len, 0);
 
         {
             UINT          offsets[] = {0};
             UINT          strides[] = {sizeof(D3D11FontVertex)};
             ID3D11Buffer* buffers[] = {renderer.font.vertices};
-            renderer.common->context->IASetVertexBuffers(0, arrayCount(buffers), buffers, strides, offsets);
+            ID3D11DeviceContext_IASetVertexBuffers(renderer.common->context, 0, arrayCount(buffers), buffers, strides, offsets);
         }
 
         {
             ID3D11Buffer* buffers[] = {renderer.font.constDims};
-            renderer.common->context->VSSetConstantBuffers(0, arrayCount(buffers), buffers);
+            ID3D11DeviceContext_VSSetConstantBuffers(renderer.common->context, 0, arrayCount(buffers), buffers);
         }
 
-        renderer.common->context->PSSetShaderResources(0, 1, &renderer.font.textureView);
-        renderer.common->context->PSSetSamplers(0, 1, &renderer.font.sampler);
+        ID3D11DeviceContext_PSSetShaderResources(renderer.common->context, 0, 1, &renderer.font.textureView);
+        ID3D11DeviceContext_PSSetSamplers(renderer.common->context, 0, 1, &renderer.font.sampler);
 
-        renderer.common->context->VSSetShader(renderer.font.vsps.vs, NULL, 0);
-        renderer.common->context->IASetInputLayout(renderer.font.vsps.layout);
-        renderer.common->context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11DeviceContext_VSSetShader(renderer.common->context, renderer.font.vsps.vs, NULL, 0);
+        ID3D11DeviceContext_IASetInputLayout(renderer.common->context, renderer.font.vsps.layout);
+        ID3D11DeviceContext_IASetPrimitiveTopology(renderer.common->context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        renderer.common->context->PSSetShader(renderer.font.vsps.ps, NULL, 0);
+        ID3D11DeviceContext_PSSetShader(renderer.common->context, renderer.font.vsps.ps, NULL, 0);
 
-        renderer.common->context->OMSetBlendState(renderer.font.blend, NULL, ~0U);
+        ID3D11DeviceContext_OMSetBlendState(renderer.common->context, renderer.font.blend, NULL, ~0U);
 
-        renderer.common->context->Draw(font.len, 0);
+        ID3D11DeviceContext_Draw(renderer.common->context, font.len, 0);
     }
 
-    HRESULT presentResult = renderer.common->swapChain->Present(1, 0);
+    HRESULT presentResult = IDXGISwapChain1_Present(renderer.common->swapChain, 1, 0);
     asserthr(presentResult);
     if (presentResult == DXGI_STATUS_OCCLUDED) {
         Sleep(10);
@@ -1142,47 +1160,47 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     // TODO(khvorov) Does this prevent bluescreens?
     {
-        d3d11renderer.mesh.vbuffer->Release();
-        d3d11renderer.mesh.ibuffer->Release();
-        d3d11renderer.mesh.colorBuffer->Release();
-        d3d11renderer.mesh.vsps.vs->Release();
-        d3d11renderer.mesh.vsps.layout->Release();
-        d3d11renderer.mesh.vsps.ps->Release();
-        d3d11renderer.mesh.constCamera->Release();
-        d3d11renderer.mesh.constMesh->Release();
+        ID3D11Buffer_Release(d3d11renderer.mesh.vbuffer);
+        ID3D11Buffer_Release(d3d11renderer.mesh.ibuffer);
+        ID3D11Buffer_Release(d3d11renderer.mesh.colorBuffer);
+        ID3D11VertexShader_Release(d3d11renderer.mesh.vsps.vs);
+        ID3D11InputLayout_Release(d3d11renderer.mesh.vsps.layout);
+        ID3D11PixelShader_Release(d3d11renderer.mesh.vsps.ps);
+        ID3D11Buffer_Release(d3d11renderer.mesh.constCamera);
+        ID3D11Buffer_Release(d3d11renderer.mesh.constMesh);
 
-        d3d11renderer.rasterizerState->Release();
-        d3d11renderer.depthSpencilState->Release();
-        d3d11renderer.depthStencilView->Release();
+        ID3D11RasterizerState_Release(d3d11renderer.rasterizerState);
+        ID3D11DepthStencilState_Release(d3d11renderer.depthSpencilState);
+        ID3D11DepthStencilView_Release(d3d11renderer.depthStencilView);
 
-        d3d11renderer.triFilled.vertices->Release();
-        d3d11renderer.triFilled.vsps.vs->Release();
-        d3d11renderer.triFilled.vsps.layout->Release();
-        d3d11renderer.triFilled.vsps.ps->Release();
-        d3d11renderer.triFilled.constDims->Release();
+        ID3D11Buffer_Release(d3d11renderer.triFilled.vertices);
+        ID3D11VertexShader_Release(d3d11renderer.triFilled.vsps.vs);
+        ID3D11InputLayout_Release(d3d11renderer.triFilled.vsps.layout);
+        ID3D11PixelShader_Release(d3d11renderer.triFilled.vsps.ps);
+        ID3D11Buffer_Release(d3d11renderer.triFilled.constDims);
 
-        d3d11renderer.font.vertices->Release();
-        d3d11renderer.font.vsps.vs->Release();
-        d3d11renderer.font.vsps.layout->Release();
-        d3d11renderer.font.vsps.ps->Release();
-        d3d11renderer.font.textureView->Release();
-        d3d11renderer.font.sampler->Release();
-        d3d11renderer.font.blend->Release();
-        d3d11renderer.font.constDims->Release();
+        ID3D11Buffer_Release(d3d11renderer.font.vertices);
+        ID3D11VertexShader_Release(d3d11renderer.font.vsps.vs);
+        ID3D11InputLayout_Release(d3d11renderer.font.vsps.layout);
+        ID3D11PixelShader_Release(d3d11renderer.font.vsps.ps);
+        ID3D11ShaderResourceView_Release(d3d11renderer.font.textureView);
+        ID3D11SamplerState_Release(d3d11renderer.font.sampler);
+        ID3D11BlendState_Release(d3d11renderer.font.blend);
+        ID3D11Buffer_Release(d3d11renderer.font.constDims);
 
-        d3d11blitter.vbuffer->Release();
-        d3d11blitter.vsps.vs->Release();
-        d3d11blitter.vsps.ps->Release();
-        d3d11blitter.vsps.layout->Release();
-        d3d11blitter.texture->Release();
-        d3d11blitter.textureView->Release();
-        d3d11blitter.sampler->Release();
-        d3d11blitter.rasterizerState->Release();
+        ID3D11Buffer_Release(d3d11blitter.vbuffer);
+        ID3D11VertexShader_Release(d3d11blitter.vsps.vs);
+        ID3D11PixelShader_Release(d3d11blitter.vsps.ps);
+        ID3D11InputLayout_Release(d3d11blitter.vsps.layout);
+        ID3D11Texture1D_Release(d3d11blitter.texture);
+        ID3D11ShaderResourceView_Release(d3d11blitter.textureView);
+        ID3D11SamplerState_Release(d3d11blitter.sampler);
+        ID3D11RasterizerState_Release(d3d11blitter.rasterizerState);
 
-        d3d11common.swapChain->Release();
-        d3d11common.rtView->Release();
-        d3d11common.device->Release();
-        d3d11common.context->Release();
+        IDXGISwapChain1_Release(d3d11common.swapChain);
+        ID3D11RenderTargetView_Release(d3d11common.rtView);
+        ID3D11Device_Release(d3d11common.device);
+        ID3D11DeviceContext_Release(d3d11common.context);
     }
 
     return 0;
