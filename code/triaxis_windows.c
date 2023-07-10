@@ -337,8 +337,8 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
     }
 
     {
-        assert(tex.width == blitter.tex.width);
-        assert(tex.height == blitter.tex.height);
+        assert(tex.width <= blitter.tex.width);
+        assert(tex.height <= blitter.tex.height);
 
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
         ID3D11DeviceContext_Map(blitter.common->context, (ID3D11Resource*)blitter.tex.tex2d, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
