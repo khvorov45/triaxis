@@ -34,8 +34,13 @@
 #define STR(x) ((Str) {.ptr = x, .len = sizeof(x) - 1})
 #define STRARG(x) x, sizeof(x) - 1
 
+#ifdef TRIAXIS_profile
 #define TIMED_SECTION_START(name) spall_buffer_begin(&globalSpallProfile, &globalSpallBuffer, STRARG(name), __rdtsc())
 #define TIMED_SECTION_END() spall_buffer_end(&globalSpallProfile, &globalSpallBuffer, __rdtsc())
+#else
+#define TIMED_SECTION_START(name)
+#define TIMED_SECTION_END()
+#endif
 
 #ifdef TRIAXIS_asserts
 #define assert(cond) do { if (cond) {} else { __debugbreak(); }} while (0)
@@ -1256,8 +1261,10 @@ swRendererSetImageSize(SWRenderer* renderer, isize width, isize height) {
 
 function void
 swRendererClearImage(SWRenderer* renderer) {
+    TIMED_SECTION_START(__FUNCTION__);
     zeromem(renderer->image.pixels, renderer->image.width * renderer->image.height * sizeof(u32));
     fltset(renderer->image.depth, FLT_MAX, renderer->image.width * renderer->image.height);
+    TIMED_SECTION_END();
 }
 
 typedef struct Triangle {
@@ -1295,6 +1302,8 @@ swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
 function void
 swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
+    TIMED_SECTION_START(__FUNCTION__);
+
     Triangle tr = swRendererPullTriangle(renderer, trig);
 
     V2f v1 = tr.v1;
@@ -1399,6 +1408,8 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
             }
         }
     }
+
+    TIMED_SECTION_END();
 }
 
 function void
@@ -2448,6 +2459,8 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
 
 function void
 update(State* state, f32 deltaSec) {
+    TIMED_SECTION_START(__FUNCTION__);
+
     // NOTE(khvorov) Misc
     {
         if (inputKeyWasPressed(&state->input, InputKey_ToggleDebugTriangles)) {
@@ -2609,6 +2622,8 @@ update(State* state, f32 deltaSec) {
         }
         nk_end(&state->ui);
     }
+
+    TIMED_SECTION_END();
 }
 
 function Color255
@@ -2631,6 +2646,8 @@ typedef struct ClipPlane {
 
 function void
 swRender(State* state) {
+    TIMED_SECTION_START(__FUNCTION__);
+
     meshStorageClearBuffers(&state->swRenderer.trisCamera);
     meshStorageClearBuffers(&state->swRenderer.trisScreen);
     if (state->swRenderer.showDebugTriangles) {
@@ -2642,6 +2659,7 @@ swRender(State* state) {
         }
 
         // NOTE(khvorov) Clip camera space tris
+        TIMED_SECTION_START("sw clip");
         for (isize triIndex = 0; triIndex < state->swRenderer.trisCamera.indices.len; triIndex++) {
             TriangleIndices tri = state->swRenderer.trisCamera.indices.ptr[triIndex];
 
@@ -2773,6 +2791,7 @@ swRender(State* state) {
                 meshStorageAddTriangle(&state->swRenderer.trisScreen, triPoly);
             }
         }
+        TIMED_SECTION_END();
 
         swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
         swRendererClearImage(&state->swRenderer);
@@ -2835,4 +2854,6 @@ swRender(State* state) {
             }
         }
     }
+
+    TIMED_SECTION_END();
 }

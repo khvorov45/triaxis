@@ -1147,10 +1147,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         bool prevShowDebugUI = state->showDebugUI;
         {
-            TIMED_SECTION_START("update");
             f32 ms = msSinceLastUpdate(&timer);
             update(state, ms / 1000.0f);
-            TIMED_SECTION_END();
         }
         if (prevShowDebugUI != state->showDebugUI) {
             ShowCursor(state->showDebugUI);
@@ -1158,9 +1156,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         if (state->useSW) {
             {
-                TIMED_SECTION_START("render");
                 swRender(state);
-                TIMED_SECTION_END();
             }
 
             d3d11blit(d3d11blitter, state->swRenderer.texture);
