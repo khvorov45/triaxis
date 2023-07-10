@@ -62,8 +62,7 @@ compile(Arena* arena, void* data) {
                 prb_addStrSegment(&builder, " -g");
             }
             if (opt->optimise) {
-                // NOTE(khvorov) -fno-builtin is to prevent generating calls to memset and such
-                prb_addStrSegment(&builder, " -O3 -fno-builtin");
+                prb_addStrSegment(&builder, " -O3");
             }
             flags = prb_endStr(&builder);
         }

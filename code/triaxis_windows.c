@@ -333,9 +333,9 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
         ID3D11DeviceContext_Map(blitter.common->context, (ID3D11Resource*)blitter.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
-        // TracyCZoneN(tracyCtx, "present copymem", true);
+        TIMED_SECTION_START("present copymem");
         memcpy_(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
-        // TracyCZoneEnd(tracyCtx);
+        TIMED_SECTION_END();
         ID3D11DeviceContext_Unmap(blitter.common->context, (ID3D11Resource*)blitter.texture, 0);
     }
 
@@ -1066,7 +1066,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         // NOTE(khvorov) Input
         {
-            // TracyCZoneN(tracyCtx, "input", true);
+            TIMED_SECTION_START("input");
 
             inputBeginFrame(&state->input);
             for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1142,15 +1142,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 state->input.mouse.y = point.y;
             }
 
-            // TracyCZoneEnd(tracyCtx);
+            TIMED_SECTION_END();
         }
 
         bool prevShowDebugUI = state->showDebugUI;
         {
-            // TracyCZoneN(tracyCtx, "update", true);
+            TIMED_SECTION_START("update");
             f32 ms = msSinceLastUpdate(&timer);
             update(state, ms / 1000.0f);
-            // TracyCZoneEnd(tracyCtx);
+            TIMED_SECTION_END();
         }
         if (prevShowDebugUI != state->showDebugUI) {
             ShowCursor(state->showDebugUI);
@@ -1158,9 +1158,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         if (state->useSW) {
             {
-                // TracyCZoneN(tracyCtx, "render", true);
+                TIMED_SECTION_START("render");
                 swRender(state);
-                // TracyCZoneEnd(tracyCtx);
+                TIMED_SECTION_END();
             }
 
             d3d11blit(d3d11blitter, state->swRenderer.texture);

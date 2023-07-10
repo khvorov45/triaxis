@@ -2287,9 +2287,9 @@ runBench(Arena* arena) {
             u8* arr1 = (u8*)arenaAlloc(arena, toCopy, 64);
             u8* arr2 = (u8*)arenaAlloc(arena, toCopy, 64);
 
-            // TracyCZoneN(tracyCtx, "bench copymem", true);
+            TIMED_SECTION_START("bench copymem");
             memcpy_(arr1, arr2, toCopy);
-            // TracyCZoneEnd(tracyCtx);
+            TIMED_SECTION_END();
 
             endTempMemory(temp);
         }
@@ -2301,9 +2301,9 @@ runBench(Arena* arena) {
         for (isize ind = 0; ind < samples; ind++) {
             TempMemory temp = beginTempMemory(arena);
 
-            // TracyCZoneN(tracyCtx, "bench zeromem", true);
+            TIMED_SECTION_START("bench zeromem");
             zeromem(arenaFreePtr(arena), toZero);
-            // TracyCZoneEnd(tracyCtx);
+            TIMED_SECTION_END();
 
             endTempMemory(temp);
         }
@@ -2367,6 +2367,18 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
     assert(bytes > 0);
 
     Arena arena = {.base = mem, .size = bytes};
+
+#ifdef TRIAXIS_profile
+    {
+        Arena spallArena = createArenaFromArena(&arena, 100 * MEGABYTE);
+        globalSpallProfile = spall_init_file("profile.spall", 1.0 / rdtscFreqPerMicrosecond);
+        globalSpallBuffer = (SpallBuffer) {.data = spallArena.base, .length = spallArena.size};
+        spall_buffer_init(&globalSpallProfile, &globalSpallBuffer);
+    }
+#else
+    unused(rdtscFreqPerMicrosecond);
+#endif
+
 #ifdef TRIAXIS_tests
     runTests(&arena);
 #endif
@@ -2380,17 +2392,6 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
     state->scratch = createArenaFromArena(&arena, 10 * MEGABYTE);
     state->perm = createArenaFromArena(&arena, 10 * MEGABYTE);
     state->debug.arena = createArenaFromArena(&arena, 10 * MEGABYTE);
-
-#ifdef TRIAXIS_profile
-    {
-        Arena spallArena = createArenaFromArena(&arena, 100 * MEGABYTE);
-        globalSpallProfile = spall_init_file("profile.spall", 1.0 / rdtscFreqPerMicrosecond);
-        globalSpallBuffer = (SpallBuffer) {.data = spallArena.base, .length = spallArena.size};
-        spall_buffer_init(&globalSpallProfile, &globalSpallBuffer);
-    }
-#else
-    unused(rdtscFreqPerMicrosecond);
-#endif
 
     {
         state->uifont.userdata.ptr = &state->font;
