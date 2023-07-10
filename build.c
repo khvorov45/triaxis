@@ -27,14 +27,16 @@ Str globalBuildDir = {};
 Str globalTracyDir = {};
 
 function void
-compile(Arena* arena, Opt opt) {
+compile(Arena* arena, void* data) {
+    Opt* opt = (Opt*)data;
+
     prb_Arena      argsDefinesBuilderArena = prb_createArenaFromArena(arena, 1 * prb_MEGABYTE);
     prb_GrowingStr argsDefinesBuilder = prb_beginStr(&argsDefinesBuilderArena);
     prb_GrowingStr nameBuilder = prb_beginStr(arena);
 
 #define boolarg(name) \
     do { \
-        if (opt.name) { \
+        if (opt->name) { \
             prb_addStrSegment(&nameBuilder, "_" #name); \
             prb_addStrSegment(&argsDefinesBuilder, " -DTRIAXIS_" #name); \
         } \
@@ -56,10 +58,10 @@ compile(Arena* arena, Opt opt) {
         {
             prb_GrowingStr builder = prb_beginStr(arena);
             prb_addStrSegment(&builder, "%.*s", LIT(argsDefines));
-            if (opt.debuginfo) {
+            if (opt->debuginfo) {
                 prb_addStrSegment(&builder, " -g");
             }
-            if (opt.optimise) {
+            if (opt->optimise) {
                 // NOTE(khvorov) -fno-builtin is to prevent generating calls to memset and such
                 prb_addStrSegment(&builder, " -O3 -fno-builtin");
             }
@@ -143,11 +145,17 @@ main() {
         assert(prb_writeEntireFile(arena, path, gen.ptr, gen.len));
     }
 
-    Opt debug = {.debuginfo = true, .asserts = true, .tests = true, .bench = true};
-    compile(arena, debug);
+    Opt opts[] = {
+        {.debuginfo = true, .asserts = true, .tests = true, .bench = true},
+        {.debuginfo = true, .optimise = true, .profile = true, .bench = true},
+    };
 
-    Opt profile = {.debuginfo = true, .optimise = true, .profile = true, .bench = true};
-    compile(arena, profile);
+    prb_Job jobs[prb_arrayCount(opts)];
+    for (isize ind = 0; ind < prb_arrayCount(jobs); ind++) {
+        jobs[ind] = prb_createJob(compile, opts + ind, arena, 10 * prb_MEGABYTE);
+    }
+    prb_launchJobs(jobs, prb_arrayCount(jobs), prb_Background_Yes);
+    prb_waitForJobs(jobs, prb_arrayCount(jobs));
 
     prb_writeToStdout(prb_fmt(arena, "total: %.2fms\n", prb_getMsFrom(scriptStart)));
     return 0;
