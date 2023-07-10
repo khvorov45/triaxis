@@ -1148,6 +1148,7 @@ typedef struct Texture {
     u32*  ptr;
     isize width;
     isize height;
+    isize pitch;
 } Texture;
 
 function void
@@ -1167,7 +1168,7 @@ swDrawLine(Texture texture, V2f v1, V2f v2, Color01 color) {
 
     for (;;) {
         if (y0 >= 0 && x0 >= 0 && y0 < texture.height && x0 < texture.width) {
-            isize index = y0 * texture.width + x0;
+            isize index = y0 * texture.pitch + x0;
             texture.ptr[index] = color32;
         }
         if (x0 == x1 && y0 == y1) {
@@ -1205,7 +1206,7 @@ swDrawRect(Texture texture, Rect2f rect, Color01 color) {
 
     for (i32 ycoord = y0; ycoord < y1; ycoord++) {
         for (i32 xcoord = x0; xcoord < x1; xcoord++) {
-            isize index = ycoord * texture.width + xcoord;
+            isize index = ycoord * texture.pitch + xcoord;
             texture.ptr[index] = color32;
         }
     }
@@ -1221,6 +1222,7 @@ typedef struct SWRenderer {
             u32*   pixels;
             isize  width;
             isize  height;
+            isize  pitch;
             float* depth;
             isize  cap;
         } image;
@@ -1253,17 +1255,20 @@ createSWRenderer(Arena* arena, isize bytes) {
 
 function void
 swRendererSetImageSize(SWRenderer* renderer, isize width, isize height) {
-    isize pixelCount = width * height;
+    isize pitch = width + 16;
+    isize pixelCount = pitch * height;
     assert(pixelCount <= renderer->image.cap);
     renderer->image.width = width;
     renderer->image.height = height;
+    renderer->image.pitch = pitch;
 }
 
 function void
 swRendererClearImage(SWRenderer* renderer) {
     TIMED_SECTION_START(__FUNCTION__);
-    zeromem(renderer->image.pixels, renderer->image.width * renderer->image.height * sizeof(u32));
-    fltset(renderer->image.depth, FLT_MAX, renderer->image.width * renderer->image.height);
+    isize entryCount = renderer->image.pitch * renderer->image.height;
+    zeromem(renderer->image.pixels, entryCount * sizeof(u32));
+    fltset(renderer->image.depth, FLT_MAX, entryCount);
     TIMED_SECTION_END();
 }
 
@@ -1375,7 +1380,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
                     f32 zinterp = 1.0f / zinterpinv;
 
-                    i32 index = ycoord * renderer->image.width + xcoord;
+                    i32 index = ycoord * renderer->image.pitch + xcoord;
                     f32 existingZ = renderer->image.depth[index];
                     if (existingZ > zinterp) {
                         renderer->image.depth[index] = zinterp;
@@ -1386,8 +1391,6 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                         );
 
                         Color01 color01 = color01scale(color01z, zinterp);
-
-                        assert(index < renderer->image.width * renderer->image.height);
 
                         u32      existingColoru32 = renderer->image.pixels[index];
                         Color255 existingColor255 = coloru32to255(existingColoru32);
@@ -1507,66 +1510,7 @@ swRendererPushMesh(SWRenderer* renderer, Mesh mesh, Camera camera) {
 }
 
 function void
-swRendererScaleOntoAPixelGrid(SWRenderer* renderer, isize width, isize height, Arena* scratch) {
-    TempMemory temp = beginTempMemory(scratch);
-
-    u32* currentImageCopy = arenaAllocArray(scratch, u32, renderer->image.width * renderer->image.height);
-
-    for (isize ind = 0; ind < renderer->image.width * renderer->image.height; ind++) {
-        currentImageCopy[ind] = renderer->image.pixels[ind];
-    }
-
-    isize scaleX = width / renderer->image.width;
-    isize scaleY = height / renderer->image.height;
-
-    isize oldWidth = renderer->image.width;
-    isize oldHeight = renderer->image.height;
-    swRendererSetImageSize(renderer, width, height);
-
-    // NOTE(khvorov) Copy the scaled up image
-    for (isize oldRow = 0; oldRow < oldHeight; oldRow++) {
-        isize newRowStart = oldRow * scaleY;
-        isize newRowEnd = newRowStart + scaleY;
-        for (isize newRow = newRowStart; newRow < newRowEnd; newRow++) {
-            for (isize oldColumn = 0; oldColumn < oldWidth; oldColumn++) {
-                isize newColumnStart = oldColumn * scaleX;
-                isize newColumnEnd = newColumnStart + scaleX;
-                for (isize newColumn = newColumnStart; newColumn < newColumnEnd; newColumn++) {
-                    isize oldIndex = oldRow * oldWidth + oldColumn;
-                    u32   oldVal = currentImageCopy[oldIndex];
-                    isize newIndex = newRow * width + newColumn;
-                    renderer->image.pixels[newIndex] = oldVal;
-                }
-            }
-        }
-    }
-
-    // NOTE(khvorov) Grid line
-    u32 color32 = 0xFFFFFFFF;
-    for (isize oldRow = 0; oldRow < oldHeight; oldRow++) {
-        isize topleftY = oldRow * scaleY;
-        for (isize oldCol = 0; oldCol < oldWidth; oldCol++) {
-            isize topleftX = oldCol * scaleX;
-            for (isize toplineX = topleftX; toplineX < topleftX + scaleX; toplineX++) {
-                renderer->image.pixels[topleftY * renderer->image.width + toplineX] = color32;
-            }
-            for (isize leftlineY = topleftY + 1; leftlineY < topleftY + scaleY; leftlineY++) {
-                renderer->image.pixels[leftlineY * renderer->image.width + topleftX] = color32;
-            }
-
-            {
-                isize centerY = topleftY + scaleY / 2;
-                isize centerX = topleftX + scaleX / 2;
-                renderer->image.pixels[centerY * renderer->image.width + centerX] = color32;
-            }
-        }
-    }
-
-    endTempMemory(temp);
-}
-
-function void
-swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize finalImageHeight, Arena* scratch) {
+swRendererDrawDebugTriangles(SWRenderer* renderer) {
     // NOTE(khvorov) Debug triangles from
     // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules
     arrpush(renderer->trisScreen.vertices, ((V3f) {.x = 0.5, .y = 0.5, .z = 1}));
@@ -1694,25 +1638,6 @@ swRendererDrawDebugTriangles(SWRenderer* renderer, isize finalImageWidth, isize 
     swRendererSetImageSize(renderer, imageWidth, imageHeight);
     swRendererClearImage(renderer);
     swRendererFillTriangles(renderer);
-    swRendererScaleOntoAPixelGrid(renderer, finalImageWidth, finalImageHeight, scratch);
-
-    // NOTE(khvorov) Fill triangles on the pixel grid - vertices have to be shifted to correspond
-    // to their positions in the smaller image
-    {
-        isize imageScaleX = finalImageWidth / imageWidth;
-        isize imageScaleY = finalImageHeight / imageHeight;
-
-        V2f offset = v2fhadamard(v2fhadamard((V2f) {(f32)imageScaleX, (f32)imageScaleY}, (V2f) {1, -1}), (V2f) {1.0f / (f32)finalImageWidth, 1.0f / (f32)finalImageHeight});
-        for (isize ind = 0; ind < renderer->trisScreen.vertices.len; ind++) {
-            renderer->trisScreen.vertices.ptr[ind].xy = v2fadd(renderer->trisScreen.vertices.ptr[ind].xy, offset);
-        }
-
-        swRendererOutlineTriangles(renderer);
-
-        for (isize ind = 0; ind < renderer->trisScreen.vertices.len; ind++) {
-            renderer->trisScreen.vertices.ptr[ind].xy = v2fsub(renderer->trisScreen.vertices.ptr[ind].xy, offset);
-        }
-    }
 }
 
 //
@@ -1819,7 +1744,7 @@ swDrawGlyph(Font* font, Glyph glyph, Texture dest, i32 x, i32 y, Color01 color) 
             Color01 thisColor = color;
             thisColor.a *= ((f32)alpha) / 255.0f;
 
-            i32      destIndex = destRow * dest.width + destCol;
+            i32      destIndex = destRow * dest.pitch + destCol;
             u32      old32 = dest.ptr[destIndex];
             Color255 old255 = coloru32to255(old32);
             Color01  old01 = color255to01(old255);
@@ -2453,7 +2378,7 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
         arrpush(state->meshes, ground);
     }
 
-    state->useSW = false;
+    state->useSW = true;
     return state;
 }
 
@@ -2651,7 +2576,7 @@ swRender(State* state) {
     meshStorageClearBuffers(&state->swRenderer.trisCamera);
     meshStorageClearBuffers(&state->swRenderer.trisScreen);
     if (state->swRenderer.showDebugTriangles) {
-        swRendererDrawDebugTriangles(&state->swRenderer, state->windowWidth, state->windowHeight, &state->scratch);
+        swRendererDrawDebugTriangles(&state->swRenderer);
     } else {
         for (isize meshIndex = 0; meshIndex < state->meshes.len; meshIndex++) {
             Mesh mesh = state->meshes.ptr[meshIndex];
@@ -2825,7 +2750,7 @@ swRender(State* state) {
 
                     for (i32 ycoord = y0; ycoord < y1; ycoord++) {
                         for (i32 xcoord = x0; xcoord < x1; xcoord++) {
-                            tex.ptr[ycoord * tex.width + xcoord] = color;
+                            tex.ptr[ycoord * tex.pitch + xcoord] = color;
                         }
                     }
                 } break;

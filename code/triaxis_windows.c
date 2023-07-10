@@ -227,13 +227,17 @@ typedef struct D3D11BlitterVertex {
 } D3D11BlitterVertex;
 
 typedef struct D3D11Blitter {
-    D3D11Common*              common;
-    ID3D11Buffer*             vbuffer;
-    VSPS                      vsps;
-    ID3D11Texture2D*          texture;
-    ID3D11ShaderResourceView* textureView;
-    ID3D11SamplerState*       sampler;
-    ID3D11RasterizerState*    rasterizerState;
+    D3D11Common*           common;
+    ID3D11Buffer*          vbuffer;
+    VSPS                   vsps;
+    ID3D11SamplerState*    sampler;
+    ID3D11RasterizerState* rasterizerState;
+
+    struct {
+        ID3D11Texture2D*          tex2d;
+        ID3D11ShaderResourceView* view;
+        isize                     width, height;
+    } tex;
 } D3D11Blitter;
 
 static D3D11Blitter
@@ -282,8 +286,11 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, A
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
 
-        ID3D11Device_CreateTexture2D(common->device, &desc, 0, &blitter.texture);
-        ID3D11Device_CreateShaderResourceView(common->device, (ID3D11Resource*)blitter.texture, NULL, &blitter.textureView);
+        ID3D11Device_CreateTexture2D(common->device, &desc, 0, &blitter.tex.tex2d);
+        ID3D11Device_CreateShaderResourceView(common->device, (ID3D11Resource*)blitter.tex.tex2d, NULL, &blitter.tex.view);
+
+        blitter.tex.width = textureWidth;
+        blitter.tex.height = textureHeight;
     }
 
     {
@@ -320,7 +327,7 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
     ID3D11DeviceContext_IASetInputLayout(blitter.common->context, blitter.vsps.layout);
     ID3D11DeviceContext_IASetPrimitiveTopology(blitter.common->context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
     ID3D11DeviceContext_PSSetShader(blitter.common->context, blitter.vsps.ps, NULL, 0);
-    ID3D11DeviceContext_PSSetShaderResources(blitter.common->context, 0, 1, &blitter.textureView);
+    ID3D11DeviceContext_PSSetShaderResources(blitter.common->context, 0, 1, &blitter.tex.view);
     ID3D11DeviceContext_PSSetSamplers(blitter.common->context, 0, 1, &blitter.sampler);
     ID3D11DeviceContext_RSSetState(blitter.common->context, blitter.rasterizerState);
 
@@ -330,13 +337,20 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
     }
 
     {
+        assert(tex.width == blitter.tex.width);
+        assert(tex.height == blitter.tex.height);
+
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
-        ID3D11DeviceContext_Map(blitter.common->context, (ID3D11Resource*)blitter.texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
+        ID3D11DeviceContext_Map(blitter.common->context, (ID3D11Resource*)blitter.tex.tex2d, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
         TIMED_SECTION_START("present copymem");
-        memcpy_(pixels, tex.ptr, tex.width * tex.height * sizeof(u32));
+        for (isize row = 0; row < tex.height; row++) {
+            u32* srcRow = tex.ptr + row * tex.pitch;
+            u32* destRow = pixels + row * blitter.tex.width;
+            memcpy_(destRow, srcRow, tex.width * sizeof(u32));
+        }
         TIMED_SECTION_END();
-        ID3D11DeviceContext_Unmap(blitter.common->context, (ID3D11Resource*)blitter.texture, 0);
+        ID3D11DeviceContext_Unmap(blitter.common->context, (ID3D11Resource*)blitter.tex.tex2d, 0);
     }
 
     {
@@ -1203,8 +1217,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         ID3D11VertexShader_Release(d3d11blitter.vsps.vs);
         ID3D11PixelShader_Release(d3d11blitter.vsps.ps);
         ID3D11InputLayout_Release(d3d11blitter.vsps.layout);
-        ID3D11Texture1D_Release(d3d11blitter.texture);
-        ID3D11ShaderResourceView_Release(d3d11blitter.textureView);
+        ID3D11Texture1D_Release(d3d11blitter.tex.tex2d);
+        ID3D11ShaderResourceView_Release(d3d11blitter.tex.view);
         ID3D11SamplerState_Release(d3d11blitter.sampler);
         ID3D11RasterizerState_Release(d3d11blitter.rasterizerState);
 
