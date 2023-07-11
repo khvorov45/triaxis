@@ -1350,7 +1350,6 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         i32 yend = min((i32)ymax, renderer->image.height - 1);
         i32 xend = min((i32)xmax, renderer->image.width - 1);
 
-        // TODO(khvorov) Are constant increments actually faster than just computing the edge cross every time?
         V2f topleft = {(f32)(xstart), (f32)(ystart)};
         f32 cross1topleft = edgeWedge(v1, v2, topleft);
         f32 cross2topleft = edgeWedge(v2, v3, topleft);
