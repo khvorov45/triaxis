@@ -1341,6 +1341,10 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         f32 dcross2x = v2.y - v3.y;
         f32 dcross3x = v3.y - v1.y;
 
+        __m512 dcross1x512 = _mm512_set1_ps(dcross1x);
+        __m512 dcross2x512 = _mm512_set1_ps(dcross2x);
+        __m512 dcross3x512 = _mm512_set1_ps(dcross3x);
+
         f32 dcross1y = v2.x - v1.x;
         f32 dcross2y = v3.x - v2.x;
         f32 dcross3y = v1.x - v3.x;
@@ -1362,22 +1366,29 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
         for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
             f32 yinc = (f32)(ycoord - ystart);
+
             f32 cross1row = cross1topleft + yinc * dcross1y;
             f32 cross2row = cross2topleft + yinc * dcross2y;
             f32 cross3row = cross3topleft + yinc * dcross3y;
 
+            __m512 cross1row512 = _mm512_set1_ps(cross1row);
+            __m512 cross2row512 = _mm512_set1_ps(cross2row);
+            __m512 cross3row512 = _mm512_set1_ps(cross3row);
+
             __m512i xcoord512 = xfirst512;
-            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, sixteen512)) {
-                __m512i xinc512i = _mm512_sub_epi32(xcoord512, xstart512);
+            __m512i xinc512i = seq0to15;
+            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, sixteen512), xinc512i = _mm512_add_epi32(xinc512i, sixteen512)) {
                 __m512  xinc512f = _mm512_cvtepi32_ps(xinc512i);
+                __m512 cross1_512 = _mm512_add_ps(cross1row512, _mm512_mul_ps(xinc512f, dcross1x512));
+                __m512 cross2_512 = _mm512_add_ps(cross2row512, _mm512_mul_ps(xinc512f, dcross2x512));
+                __m512 cross3_512 = _mm512_add_ps(cross3row512, _mm512_mul_ps(xinc512f, dcross3x512));
 
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
-                    f32 xinc = (((f32*)&xinc512f)[simdIndex]);
-                    f32 cross1 = cross1row + xinc * dcross1x;
-                    f32 cross2 = cross2row + xinc * dcross2x;
-                    f32 cross3 = cross3row + xinc * dcross3x;
+                    f32 cross1 = (((f32*)&cross1_512)[simdIndex]);
+                    f32 cross2 = (((f32*)&cross2_512)[simdIndex]);
+                    f32 cross3 = (((f32*)&cross3_512)[simdIndex]);
 
                     bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
                     bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
