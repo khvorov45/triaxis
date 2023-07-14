@@ -1356,6 +1356,9 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
         __m512i seq0to15 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+        __m512i sixteen512 = _mm512_set1_epi32(16);
+        __m512i xstart512 = _mm512_set1_epi32(xstart);
+        __m512i xfirst512 = _mm512_add_epi32(xstart512, seq0to15);
 
         for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
             f32 yinc = (f32)(ycoord - ystart);
@@ -1363,16 +1366,15 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
             f32 cross2row = cross2topleft + yinc * dcross2y;
             f32 cross3row = cross3topleft + yinc * dcross3y;
 
-            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16) {
-                __m512i xcoord512start = _mm512_set1_epi32(simdXcoord);
-                __m512i xcoord512 = _mm512_add_epi32(xcoord512start, seq0to15);
+            __m512i xcoord512 = xfirst512;
+            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, sixteen512)) {
+                __m512i xinc512i = _mm512_sub_epi32(xcoord512, xstart512);
+                __m512  xinc512f = _mm512_cvtepi32_ps(xinc512i);
 
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
-                    i32 xcoord = (((i32*)&xcoord512)[simdIndex]);
-
-                    f32 xinc = (f32)(xcoord - xstart);
+                    f32 xinc = (((f32*)&xinc512f)[simdIndex]);
                     f32 cross1 = cross1row + xinc * dcross1x;
                     f32 cross2 = cross2row + xinc * dcross2x;
                     f32 cross3 = cross3row + xinc * dcross3x;
@@ -1389,6 +1391,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                         f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
                         f32 zinterp = 1.0f / zinterpinv;
 
+                        i32 xcoord = (((i32*)&xcoord512)[simdIndex]);
                         i32 index = ycoord * renderer->image.pitch + xcoord;
                         f32 existingZ = renderer->image.depth[index];
                         if (existingZ > zinterp) {
