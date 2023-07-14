@@ -1370,7 +1370,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
-                    f32 xcoord = (f32)(((i32*)&xcoord512)[simdIndex]);
+                    i32 xcoord = (((i32*)&xcoord512)[simdIndex]);
 
                     f32 xinc = (f32)(xcoord - xstart);
                     f32 cross1 = cross1row + xinc * dcross1x;
