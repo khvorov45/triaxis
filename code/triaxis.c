@@ -1355,56 +1355,67 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         f32 cross2topleft = edgeWedge(v2, v3, topleft);
         f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
+        __m512i seq0to15 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+
         for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
             f32 yinc = (f32)(ycoord - ystart);
             f32 cross1row = cross1topleft + yinc * dcross1y;
             f32 cross2row = cross2topleft + yinc * dcross2y;
             f32 cross3row = cross3topleft + yinc * dcross3y;
 
-            for (i32 xcoord = xstart; xcoord <= xend; xcoord++) {
-                f32 xinc = (f32)(xcoord - xstart);
-                f32 cross1 = cross1row + xinc * dcross1x;
-                f32 cross2 = cross2row + xinc * dcross2x;
-                f32 cross3 = cross3row + xinc * dcross3x;
+            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16) {
+                __m512i xcoord512start = _mm512_set1_epi32(simdXcoord);
+                __m512i xcoord512 = _mm512_add_epi32(xcoord512start, seq0to15);
 
-                bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
-                bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
-                bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
+                // TODO(khvorov) Finish simd-asation
+                i32 maxSimdXCoord = min(xend - simdXcoord, 15);
+                for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
+                    f32 xcoord = (f32)(((i32*)&xcoord512)[simdIndex]);
 
-                if (pass1 && pass2 && pass3) {
-                    f32 cross1scaled = cross1 / tr.area;
-                    f32 cross2scaled = cross2 / tr.area;
-                    f32 cross3scaled = cross3 / tr.area;
+                    f32 xinc = (f32)(xcoord - xstart);
+                    f32 cross1 = cross1row + xinc * dcross1x;
+                    f32 cross2 = cross2row + xinc * dcross2x;
+                    f32 cross3 = cross3row + xinc * dcross3x;
 
-                    f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
-                    f32 zinterp = 1.0f / zinterpinv;
+                    bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
+                    bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
+                    bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
 
-                    i32 index = ycoord * renderer->image.pitch + xcoord;
-                    f32 existingZ = renderer->image.depth[index];
-                    if (existingZ > zinterp) {
-                        renderer->image.depth[index] = zinterp;
+                    if (pass1 && pass2 && pass3) {
+                        f32 cross1scaled = cross1 / tr.area;
+                        f32 cross2scaled = cross2 / tr.area;
+                        f32 cross3scaled = cross3 / tr.area;
 
-                        Color01 color01z = color01add(
-                            color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
-                            color01scale(c3z, cross1scaled)
-                        );
+                        f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
+                        f32 zinterp = 1.0f / zinterpinv;
 
-                        Color01 color01 = color01scale(color01z, zinterp);
+                        i32 index = ycoord * renderer->image.pitch + xcoord;
+                        f32 existingZ = renderer->image.depth[index];
+                        if (existingZ > zinterp) {
+                            renderer->image.depth[index] = zinterp;
 
-                        u32      existingColoru32 = renderer->image.pixels[index];
-                        Color255 existingColor255 = coloru32to255(existingColoru32);
-                        Color01  existingColor01 = color255to01(existingColor255);
+                            Color01 color01z = color01add(
+                                color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
+                                color01scale(c3z, cross1scaled)
+                            );
 
-                        Color01 blended01 = {
-                            .r = lerpf(existingColor01.r, color01.r, color01.a),
-                            .g = lerpf(existingColor01.g, color01.g, color01.a),
-                            .b = lerpf(existingColor01.b, color01.b, color01.a),
-                            .a = 1,
-                        };
+                            Color01 color01 = color01scale(color01z, zinterp);
 
-                        Color255 blended255 = color01to255(blended01);
-                        u32      blendedu32 = color255tou32(blended255);
-                        renderer->image.pixels[index] = blendedu32;
+                            u32      existingColoru32 = renderer->image.pixels[index];
+                            Color255 existingColor255 = coloru32to255(existingColoru32);
+                            Color01  existingColor01 = color255to01(existingColor255);
+
+                            Color01 blended01 = {
+                                .r = lerpf(existingColor01.r, color01.r, color01.a),
+                                .g = lerpf(existingColor01.g, color01.g, color01.a),
+                                .b = lerpf(existingColor01.b, color01.b, color01.a),
+                                .a = 1,
+                            };
+
+                            Color255 blended255 = color01to255(blended01);
+                            u32      blendedu32 = color255tou32(blended255);
+                            renderer->image.pixels[index] = blendedu32;
+                        }
                     }
                 }
             }
