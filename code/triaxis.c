@@ -35,11 +35,11 @@
 #define STRARG(x) x, sizeof(x) - 1
 
 #ifdef TRIAXIS_profile
-#define TIMED_SECTION_START(name) spall_buffer_begin(&globalSpallProfile, &globalSpallBuffer, STRARG(name), __rdtsc())
-#define TIMED_SECTION_END() spall_buffer_end(&globalSpallProfile, &globalSpallBuffer, __rdtsc())
+#define timedSectionStart(name) spall_buffer_begin(&globalSpallProfile, &globalSpallBuffer, STRARG(name), __rdtsc())
+#define timedSectionEnd() spall_buffer_end(&globalSpallProfile, &globalSpallBuffer, __rdtsc())
 #else
-#define TIMED_SECTION_START(name)
-#define TIMED_SECTION_END()
+#define timedSectionStart(name)
+#define timedSectionEnd()
 #endif
 
 #ifdef TRIAXIS_asserts
@@ -1265,11 +1265,11 @@ swRendererSetImageSize(SWRenderer* renderer, isize width, isize height) {
 
 function void
 swRendererClearImage(SWRenderer* renderer) {
-    TIMED_SECTION_START(__FUNCTION__);
+    timedSectionStart(__FUNCTION__);
     isize entryCount = renderer->image.pitch * renderer->image.height;
     zeromem(renderer->image.pixels, entryCount * sizeof(u32));
     fltset(renderer->image.depth, FLT_MAX, entryCount);
-    TIMED_SECTION_END();
+    timedSectionEnd();
 }
 
 typedef struct Triangle {
@@ -1307,7 +1307,7 @@ swRendererPullTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
 function void
 swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
-    TIMED_SECTION_START(__FUNCTION__);
+    timedSectionStart(__FUNCTION__);
 
     Triangle tr = swRendererPullTriangle(renderer, trig);
 
@@ -1411,7 +1411,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         }
     }
 
-    TIMED_SECTION_END();
+    timedSectionEnd();
 }
 
 function void
@@ -2222,9 +2222,9 @@ runBench(Arena* arena) {
             u8* arr1 = (u8*)arenaAlloc(arena, toCopy, 64);
             u8* arr2 = (u8*)arenaAlloc(arena, toCopy, 64);
 
-            TIMED_SECTION_START("bench copymem");
+            timedSectionStart("bench copymem");
             memcpy_(arr1, arr2, toCopy);
-            TIMED_SECTION_END();
+            timedSectionEnd();
 
             endTempMemory(temp);
         }
@@ -2236,9 +2236,9 @@ runBench(Arena* arena) {
         for (isize ind = 0; ind < samples; ind++) {
             TempMemory temp = beginTempMemory(arena);
 
-            TIMED_SECTION_START("bench zeromem");
+            timedSectionStart("bench zeromem");
             zeromem(arenaFreePtr(arena), toZero);
-            TIMED_SECTION_END();
+            timedSectionEnd();
 
             endTempMemory(temp);
         }
@@ -2383,7 +2383,7 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
 
 function void
 update(State* state, f32 deltaSec) {
-    TIMED_SECTION_START(__FUNCTION__);
+    timedSectionStart(__FUNCTION__);
 
     // NOTE(khvorov) Misc
     {
@@ -2547,7 +2547,7 @@ update(State* state, f32 deltaSec) {
         nk_end(&state->ui);
     }
 
-    TIMED_SECTION_END();
+    timedSectionEnd();
 }
 
 function Color255
@@ -2570,7 +2570,7 @@ typedef struct ClipPlane {
 
 function void
 swRender(State* state) {
-    TIMED_SECTION_START(__FUNCTION__);
+    timedSectionStart(__FUNCTION__);
 
     meshStorageClearBuffers(&state->swRenderer.trisCamera);
     meshStorageClearBuffers(&state->swRenderer.trisScreen);
@@ -2583,7 +2583,7 @@ swRender(State* state) {
         }
 
         // NOTE(khvorov) Clip camera space tris
-        TIMED_SECTION_START("sw clip");
+        timedSectionStart("sw clip");
         for (isize triIndex = 0; triIndex < state->swRenderer.trisCamera.indices.len; triIndex++) {
             TriangleIndices tri = state->swRenderer.trisCamera.indices.ptr[triIndex];
 
@@ -2715,7 +2715,7 @@ swRender(State* state) {
                 meshStorageAddTriangle(&state->swRenderer.trisScreen, triPoly);
             }
         }
-        TIMED_SECTION_END();
+        timedSectionEnd();
 
         swRendererSetImageSize(&state->swRenderer, state->windowWidth, state->windowHeight);
         swRendererClearImage(&state->swRenderer);
@@ -2779,5 +2779,5 @@ swRender(State* state) {
         }
     }
 
-    TIMED_SECTION_END();
+    timedSectionEnd();
 }

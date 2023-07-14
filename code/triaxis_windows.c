@@ -343,13 +343,13 @@ d3d11blit(D3D11Blitter blitter, Texture tex) {
         D3D11_MAPPED_SUBRESOURCE mappedTexture = {};
         ID3D11DeviceContext_Map(blitter.common->context, (ID3D11Resource*)blitter.tex.tex2d, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTexture);
         u32* pixels = (u32*)mappedTexture.pData;
-        TIMED_SECTION_START("present copymem");
+        timedSectionStart("present copymem");
         for (isize row = 0; row < tex.height; row++) {
             u32* srcRow = tex.ptr + row * tex.pitch;
             u32* destRow = pixels + row * blitter.tex.width;
             memcpy_(destRow, srcRow, tex.width * sizeof(u32));
         }
-        TIMED_SECTION_END();
+        timedSectionEnd();
         ID3D11DeviceContext_Unmap(blitter.common->context, (ID3D11Resource*)blitter.tex.tex2d, 0);
     }
 
@@ -1073,14 +1073,14 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     D3D11Renderer d3d11renderer = initD3D11Renderer(&d3d11common, state);
 
     for (bool running = true; running;) {
-        TIMED_SECTION_START("frame");
+        timedSectionStart("frame");
 
         assert(state->scratch.tempCount == 0);
         assert(state->scratch.used == 0);
 
         // NOTE(khvorov) Input
         {
-            TIMED_SECTION_START("input");
+            timedSectionStart("input");
 
             inputBeginFrame(&state->input);
             for (MSG msg = {}; PeekMessageA(&msg, 0, 0, 0, PM_REMOVE);) {
@@ -1156,7 +1156,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
                 state->input.mouse.y = point.y;
             }
 
-            TIMED_SECTION_END();
+            timedSectionEnd();
         }
 
         bool prevShowDebugUI = state->showDebugUI;
@@ -1180,7 +1180,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         nk_clear(&state->ui);
 
-        TIMED_SECTION_END();
+        timedSectionEnd();
     }
 
     // TODO(khvorov) Does this prevent bluescreens?
