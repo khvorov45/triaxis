@@ -1378,7 +1378,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
             __m512i xcoord512 = xfirst512;
             __m512i xinc512i = seq0to15;
             for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, sixteen512), xinc512i = _mm512_add_epi32(xinc512i, sixteen512)) {
-                __m512  xinc512f = _mm512_cvtepi32_ps(xinc512i);
+                __m512 xinc512f = _mm512_cvtepi32_ps(xinc512i);
                 __m512 cross1_512 = _mm512_add_ps(cross1row512, _mm512_mul_ps(xinc512f, dcross1x512));
                 __m512 cross2_512 = _mm512_add_ps(cross2row512, _mm512_mul_ps(xinc512f, dcross2x512));
                 __m512 cross3_512 = _mm512_add_ps(cross3row512, _mm512_mul_ps(xinc512f, dcross3x512));
