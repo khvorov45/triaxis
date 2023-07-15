@@ -1337,6 +1337,10 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         bool allowZero2 = isTopLeft(v2, v3);
         bool allowZero3 = isTopLeft(v3, v1);
 
+        __mmask16 allowZero1_512 = 0xFFFF * (u16)(allowZero1);
+        __mmask16 allowZero2_512 = 0xFFFF * (u16)(allowZero2);
+        __mmask16 allowZero3_512 = 0xFFFF * (u16)(allowZero3);
+
         f32 dcross1x = v1.y - v2.y;
         f32 dcross2x = v2.y - v3.y;
         f32 dcross3x = v3.y - v1.y;
@@ -1361,6 +1365,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
         __m512i seq0to15 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
         __m512i sixteen512 = _mm512_set1_epi32(16);
+        __m512i zero512 = _mm512_set1_epi32(0);
         __m512i xstart512 = _mm512_set1_epi32(xstart);
         __m512i xfirst512 = _mm512_add_epi32(xstart512, seq0to15);
 
@@ -1383,18 +1388,34 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 cross2_512 = _mm512_add_ps(cross2row512, _mm512_mul_ps(xinc512f, dcross2x512));
                 __m512 cross3_512 = _mm512_add_ps(cross3row512, _mm512_mul_ps(xinc512f, dcross3x512));
 
+                __mmask16 cross1gt0 = _mm512_cmp_ps_mask(cross1_512, zero512, _CMP_GT_OQ);
+                __mmask16 cross2gt0 = _mm512_cmp_ps_mask(cross2_512, zero512, _CMP_GT_OQ);
+                __mmask16 cross3gt0 = _mm512_cmp_ps_mask(cross3_512, zero512, _CMP_GT_OQ);
+
+                __mmask16 cross1eq0 = _mm512_cmp_ps_mask(cross1_512, zero512, _CMP_EQ_OQ);
+                __mmask16 cross2eq0 = _mm512_cmp_ps_mask(cross2_512, zero512, _CMP_EQ_OQ);
+                __mmask16 cross3eq0 = _mm512_cmp_ps_mask(cross3_512, zero512, _CMP_EQ_OQ);
+
+                __mmask16 cross1eq0andAllow = cross1eq0 & allowZero1_512;
+                __mmask16 cross2eq0andAllow = cross2eq0 & allowZero2_512;
+                __mmask16 cross3eq0andAllow = cross3eq0 & allowZero3_512;
+
+                __mmask16 pass1_512 = cross1gt0 | cross1eq0andAllow;
+                __mmask16 pass2_512 = cross2gt0 | cross2eq0andAllow;
+                __mmask16 pass3_512 = cross3gt0 | cross3eq0andAllow;
+
+                __mmask16 allpass512 = pass1_512 & pass2_512 & pass3_512;
+
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
-                    f32 cross1 = (((f32*)&cross1_512)[simdIndex]);
-                    f32 cross2 = (((f32*)&cross2_512)[simdIndex]);
-                    f32 cross3 = (((f32*)&cross3_512)[simdIndex]);
+                    __mmask16 allpassMask = 1 << simdIndex;
+                    bool      allpass = allpass512 & allpassMask;
+                    if (allpass) {
+                        f32 cross1 = (((f32*)&cross1_512)[simdIndex]);
+                        f32 cross2 = (((f32*)&cross2_512)[simdIndex]);
+                        f32 cross3 = (((f32*)&cross3_512)[simdIndex]);
 
-                    bool pass1 = cross1 > 0 || (cross1 == 0 && allowZero1);
-                    bool pass2 = cross2 > 0 || (cross2 == 0 && allowZero2);
-                    bool pass3 = cross3 > 0 || (cross3 == 0 && allowZero3);
-
-                    if (pass1 && pass2 && pass3) {
                         f32 cross1scaled = cross1 / tr.area;
                         f32 cross2scaled = cross2 / tr.area;
                         f32 cross3scaled = cross3 / tr.area;
