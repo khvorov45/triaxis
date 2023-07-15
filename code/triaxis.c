@@ -1428,12 +1428,15 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 zinterpinv512 = _mm512_add_ps(_mm512_add_ps(z1inv512scaled, z2inv512scaled), z3inv512scaled);
                 __m512 zinterp512 = _mm512_div_ps(one512f, zinterpinv512);
 
-                __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
-                __m512  existingZ512 = _mm512_mask_loadu_ps(zero512f, allpass512, renderer->image.depth + ycoordTimesPitch + simdXcoord);
+                f32*   depthAddr = renderer->image.depth + ycoordTimesPitch + simdXcoord;
+                __m512 existingZ512 = _mm512_mask_loadu_ps(zero512f, allpass512, depthAddr);
 
                 // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
                 __mmask16 zpass512 = _mm512_cmp_ps_mask(existingZ512, zinterp512, _CMP_GT_OQ);
                 __mmask16 allPassAndZPass512 = allpass512 & zpass512;
+                _mm512_mask_storeu_ps(depthAddr, allPassAndZPass512, zinterp512);  // renderer->image.depth[index] = zinterp;
+
+                __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
 
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
@@ -1441,10 +1444,6 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     __mmask16 passMask = 1 << simdIndex;
                     bool      allpassAndZpass = allPassAndZPass512 & passMask;
                     if (allpassAndZpass) {
-                        i32 index = ((i32*)&index512)[simdIndex];
-                        f32 zinterp = ((f32*)&zinterp512)[simdIndex];
-                        renderer->image.depth[index] = zinterp;
-
                         f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
                         f32 cross2scaled = (((f32*)&cross2scaled512)[simdIndex]);
                         f32 cross3scaled = (((f32*)&cross3scaled512)[simdIndex]);
@@ -1454,8 +1453,10 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                             color01scale(c3z, cross1scaled)
                         );
 
+                        f32     zinterp = ((f32*)&zinterp512)[simdIndex];
                         Color01 color01 = color01scale(color01z, zinterp);
 
+                        i32      index = ((i32*)&index512)[simdIndex];
                         u32      existingColoru32 = renderer->image.pixels[index];
                         Color255 existingColor255 = coloru32to255(existingColoru32);
                         Color01  existingColor01 = color255to01(existingColor255);
