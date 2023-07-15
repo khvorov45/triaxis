@@ -1352,14 +1352,6 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         f32 xmax = max(v1.x, max(v2.x, v3.x));
         f32 ymax = max(v1.y, max(v2.y, v3.y));
 
-        bool allowZero1 = isTopLeft(v1, v2);
-        bool allowZero2 = isTopLeft(v2, v3);
-        bool allowZero3 = isTopLeft(v3, v1);
-
-        __mmask16 allowZero1_512 = 0xFFFF * (u16)(allowZero1);
-        __mmask16 allowZero2_512 = 0xFFFF * (u16)(allowZero2);
-        __mmask16 allowZero3_512 = 0xFFFF * (u16)(allowZero3);
-
         f32 dcross1x = v1.y - v2.y;
         f32 dcross2x = v2.y - v3.y;
         f32 dcross3x = v3.y - v1.y;
@@ -1414,23 +1406,13 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 cross2_512 = _mm512_add_ps(cross2row512, _mm512_mul_ps(xinc512f, dcross2x512));
                 __m512 cross3_512 = _mm512_add_ps(cross3row512, _mm512_mul_ps(xinc512f, dcross3x512));
 
-                __mmask16 cross1gt0 = _mm512_cmp_ps_mask(cross1_512, n0_512f, _CMP_GT_OQ);
-                __mmask16 cross2gt0 = _mm512_cmp_ps_mask(cross2_512, n0_512f, _CMP_GT_OQ);
-                __mmask16 cross3gt0 = _mm512_cmp_ps_mask(cross3_512, n0_512f, _CMP_GT_OQ);
+                // NOTE(khvorov) >= here means edges of adjacent tris will be filled by both tris.
+                // Not ideal but seems to be the least bad simple way to get around floating point imprecision-related inconsistencies
+                __mmask16 cross1gt0_512 = _mm512_cmp_ps_mask(cross1_512, n0_512f, _CMP_GE_OQ);
+                __mmask16 cross2gt0_512 = _mm512_cmp_ps_mask(cross2_512, n0_512f, _CMP_GE_OQ);
+                __mmask16 cross3gt0_512 = _mm512_cmp_ps_mask(cross3_512, n0_512f, _CMP_GE_OQ);
 
-                __mmask16 cross1eq0 = _mm512_cmp_ps_mask(cross1_512, n0_512f, _CMP_EQ_OQ);
-                __mmask16 cross2eq0 = _mm512_cmp_ps_mask(cross2_512, n0_512f, _CMP_EQ_OQ);
-                __mmask16 cross3eq0 = _mm512_cmp_ps_mask(cross3_512, n0_512f, _CMP_EQ_OQ);
-
-                __mmask16 cross1eq0andAllow = cross1eq0 & allowZero1_512;
-                __mmask16 cross2eq0andAllow = cross2eq0 & allowZero2_512;
-                __mmask16 cross3eq0andAllow = cross3eq0 & allowZero3_512;
-
-                __mmask16 pass1_512 = cross1gt0 | cross1eq0andAllow;
-                __mmask16 pass2_512 = cross2gt0 | cross2eq0andAllow;
-                __mmask16 pass3_512 = cross3gt0 | cross3eq0andAllow;
-
-                __mmask16 allpass512 = pass1_512 & pass2_512 & pass3_512;
+                __mmask16 allpass512 = cross1gt0_512 & cross2gt0_512 & cross3gt0_512;
 
                 __m512 cross1scaled512 = _mm512_mul_ps(cross1_512, oneOverArea512);
                 __m512 cross2scaled512 = _mm512_mul_ps(cross2_512, oneOverArea512);
