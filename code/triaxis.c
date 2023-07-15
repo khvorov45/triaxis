@@ -1471,6 +1471,11 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 color01zb512 = _mm512_add_ps(_mm512_add_ps(c1zbscaled512, c2zbscaled512), c3zbscaled512);
                 __m512 color01za512 = _mm512_add_ps(_mm512_add_ps(c1zascaled512, c2zascaled512), c3zascaled512);
 
+                __m512 color01r512 = _mm512_mul_ps(color01zr512, zinterp512);
+                __m512 color01g512 = _mm512_mul_ps(color01zg512, zinterp512);
+                __m512 color01b512 = _mm512_mul_ps(color01zb512, zinterp512);
+                __m512 color01a512 = _mm512_mul_ps(color01za512, zinterp512);
+
                 __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
 
                 // TODO(khvorov) Finish simd-asation
@@ -1479,15 +1484,12 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     __mmask16 passMask = 1 << simdIndex;
                     bool      allpassAndZpass = allPassAndZPass512 & passMask;
                     if (allpassAndZpass) {
-                        Color01 color01z = {
-                            .r = ((f32*)&color01zr512)[simdIndex],
-                            .g = ((f32*)&color01zg512)[simdIndex],
-                            .b = ((f32*)&color01zb512)[simdIndex],
-                            .a = ((f32*)&color01za512)[simdIndex],
+                        Color01 color01 = {
+                            .r = ((f32*)&color01r512)[simdIndex],
+                            .g = ((f32*)&color01g512)[simdIndex],
+                            .b = ((f32*)&color01b512)[simdIndex],
+                            .a = ((f32*)&color01a512)[simdIndex],
                         };
-
-                        f32     zinterp = ((f32*)&zinterp512)[simdIndex];
-                        Color01 color01 = color01scale(color01z, zinterp);
 
                         i32      index = ((i32*)&index512)[simdIndex];
                         u32      existingColoru32 = renderer->image.pixels[index];
