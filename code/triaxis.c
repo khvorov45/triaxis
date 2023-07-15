@@ -1332,6 +1332,21 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         Color01 c2z = color01scale(c2, z2inv);
         Color01 c3z = color01scale(c3, z3inv);
 
+        __m512 c1zr512 = _mm512_set1_ps(c1z.r);
+        __m512 c1zg512 = _mm512_set1_ps(c1z.g);
+        __m512 c1zb512 = _mm512_set1_ps(c1z.b);
+        __m512 c1za512 = _mm512_set1_ps(c1z.a);
+
+        __m512 c2zr512 = _mm512_set1_ps(c2z.r);
+        __m512 c2zg512 = _mm512_set1_ps(c2z.g);
+        __m512 c2zb512 = _mm512_set1_ps(c2z.b);
+        __m512 c2za512 = _mm512_set1_ps(c2z.a);
+
+        __m512 c3zr512 = _mm512_set1_ps(c3z.r);
+        __m512 c3zg512 = _mm512_set1_ps(c3z.g);
+        __m512 c3zb512 = _mm512_set1_ps(c3z.b);
+        __m512 c3za512 = _mm512_set1_ps(c3z.a);
+
         f32 xmin = min(v1.x, min(v2.x, v3.x));
         f32 ymin = min(v1.y, min(v2.y, v3.y));
         f32 xmax = max(v1.x, max(v2.x, v3.x));
@@ -1434,7 +1449,27 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
                 __mmask16 zpass512 = _mm512_cmp_ps_mask(existingZ512, zinterp512, _CMP_GT_OQ);
                 __mmask16 allPassAndZPass512 = allpass512 & zpass512;
-                _mm512_mask_storeu_ps(depthAddr, allPassAndZPass512, zinterp512);  // renderer->image.depth[index] = zinterp;
+                _mm512_mask_storeu_ps(depthAddr, allPassAndZPass512, zinterp512);
+
+                __m512 c1zrscaled512 = _mm512_mul_ps(c1zr512, cross2scaled512);
+                __m512 c1zgscaled512 = _mm512_mul_ps(c1zg512, cross2scaled512);
+                __m512 c1zbscaled512 = _mm512_mul_ps(c1zb512, cross2scaled512);
+                __m512 c1zascaled512 = _mm512_mul_ps(c1za512, cross2scaled512);
+
+                __m512 c2zrscaled512 = _mm512_mul_ps(c2zr512, cross3scaled512);
+                __m512 c2zgscaled512 = _mm512_mul_ps(c2zg512, cross3scaled512);
+                __m512 c2zbscaled512 = _mm512_mul_ps(c2zb512, cross3scaled512);
+                __m512 c2zascaled512 = _mm512_mul_ps(c2za512, cross3scaled512);
+
+                __m512 c3zrscaled512 = _mm512_mul_ps(c3zr512, cross1scaled512);
+                __m512 c3zgscaled512 = _mm512_mul_ps(c3zg512, cross1scaled512);
+                __m512 c3zbscaled512 = _mm512_mul_ps(c3zb512, cross1scaled512);
+                __m512 c3zascaled512 = _mm512_mul_ps(c3za512, cross1scaled512);
+
+                __m512 color01zr512 = _mm512_add_ps(_mm512_add_ps(c1zrscaled512, c2zrscaled512), c3zrscaled512);
+                __m512 color01zg512 = _mm512_add_ps(_mm512_add_ps(c1zgscaled512, c2zgscaled512), c3zgscaled512);
+                __m512 color01zb512 = _mm512_add_ps(_mm512_add_ps(c1zbscaled512, c2zbscaled512), c3zbscaled512);
+                __m512 color01za512 = _mm512_add_ps(_mm512_add_ps(c1zascaled512, c2zascaled512), c3zascaled512);
 
                 __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
 
@@ -1444,14 +1479,12 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     __mmask16 passMask = 1 << simdIndex;
                     bool      allpassAndZpass = allPassAndZPass512 & passMask;
                     if (allpassAndZpass) {
-                        f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
-                        f32 cross2scaled = (((f32*)&cross2scaled512)[simdIndex]);
-                        f32 cross3scaled = (((f32*)&cross3scaled512)[simdIndex]);
-
-                        Color01 color01z = color01add(
-                            color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
-                            color01scale(c3z, cross1scaled)
-                        );
+                        Color01 color01z = {
+                            .r = ((f32*)&color01zr512)[simdIndex],
+                            .g = ((f32*)&color01zg512)[simdIndex],
+                            .b = ((f32*)&color01zb512)[simdIndex],
+                            .a = ((f32*)&color01za512)[simdIndex],
+                        };
 
                         f32     zinterp = ((f32*)&zinterp512)[simdIndex];
                         Color01 color01 = color01scale(color01z, zinterp);
