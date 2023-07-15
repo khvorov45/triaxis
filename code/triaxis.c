@@ -1447,7 +1447,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 f32*   depthAddr = renderer->image.depth + addrOffset;
                 __m512 existingZ512 = _mm512_mask_loadu_ps(n0_512f, allpass512, depthAddr);
 
-                // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
+                // TODO(khvorov) Probably do fixed point because this is too flaky since the edge can be on the verge of being topleft or not
                 __mmask16 zpass512 = _mm512_cmp_ps_mask(existingZ512, zinterp512, _CMP_GT_OQ);
                 __mmask16 allPassAndZPass512 = allpass512 & zpass512;
                 _mm512_mask_storeu_ps(depthAddr, allPassAndZPass512, zinterp512);
