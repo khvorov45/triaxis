@@ -1324,6 +1324,10 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         f32 z2inv = 1.0f / tr.v2z;
         f32 z3inv = 1.0f / tr.v3z;
 
+        __m512 z1inv512 = _mm512_set1_ps(z1inv);
+        __m512 z2inv512 = _mm512_set1_ps(z2inv);
+        __m512 z3inv512 = _mm512_set1_ps(z3inv);
+
         Color01 c1z = color01scale(c1, z1inv);
         Color01 c2z = color01scale(c2, z2inv);
         Color01 c3z = color01scale(c3, z3inv);
@@ -1369,6 +1373,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         __m512i seq0to15 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
         __m512i sixteen512 = _mm512_set1_epi32(16);
         __m512i zero512 = _mm512_set1_epi32(0);
+        __m512  one512 = _mm512_set1_ps(1);
         __m512i xstart512 = _mm512_set1_epi32(xstart);
         __m512i xfirst512 = _mm512_add_epi32(xstart512, seq0to15);
 
@@ -1413,24 +1418,30 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 cross2scaled512 = _mm512_mul_ps(cross2_512, oneOverArea512);
                 __m512 cross3scaled512 = _mm512_mul_ps(cross3_512, oneOverArea512);
 
+                __m512 z1inv512scaled = _mm512_mul_ps(z1inv512, cross2scaled512);
+                __m512 z2inv512scaled = _mm512_mul_ps(z2inv512, cross3scaled512);
+                __m512 z3inv512scaled = _mm512_mul_ps(z3inv512, cross1scaled512);
+
+                __m512 zinterpinv512 = _mm512_add_ps(_mm512_add_ps(z1inv512scaled, z2inv512scaled), z3inv512scaled);
+                __m512 zinterp512 = _mm512_div_ps(one512, zinterpinv512);
+
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
                     __mmask16 allpassMask = 1 << simdIndex;
                     bool      allpass = allpass512 & allpassMask;
                     if (allpass) {
-                        f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
-                        f32 cross2scaled = (((f32*)&cross2scaled512)[simdIndex]);
-                        f32 cross3scaled = (((f32*)&cross3scaled512)[simdIndex]);
-
-                        f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
-                        f32 zinterp = 1.0f / zinterpinv;
+                        f32 zinterp = ((f32*)&zinterp512)[simdIndex];
 
                         i32 xcoord = (((i32*)&xcoord512)[simdIndex]);
                         i32 index = ycoord * renderer->image.pitch + xcoord;
                         f32 existingZ = renderer->image.depth[index];
                         if (existingZ > zinterp) {
                             renderer->image.depth[index] = zinterp;
+
+                            f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
+                            f32 cross2scaled = (((f32*)&cross2scaled512)[simdIndex]);
+                            f32 cross3scaled = (((f32*)&cross3scaled512)[simdIndex]);
 
                             Color01 color01z = color01add(
                                 color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
