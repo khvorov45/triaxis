@@ -1429,18 +1429,21 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 zinterp512 = _mm512_div_ps(one512f, zinterpinv512);
 
                 __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
+                __m512  existingZ512 = _mm512_mask_loadu_ps(zero512f, allpass512, renderer->image.depth + ycoordTimesPitch + simdXcoord);
+
+                __mmask16 zpass512 = _mm512_cmp_ps_mask(existingZ512, zinterp512, _CMP_GT_OQ);
 
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
-                    __mmask16 allpassMask = 1 << simdIndex;
-                    bool      allpass = allpass512 & allpassMask;
+                    __mmask16 passMask = 1 << simdIndex;
+                    bool      allpass = allpass512 & passMask;
                     if (allpass) {
-                        f32 zinterp = ((f32*)&zinterp512)[simdIndex];
-
-                        i32 index = ((i32*)&index512)[simdIndex];
-                        f32 existingZ = renderer->image.depth[index];
-                        if (existingZ > zinterp) {
+                        // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
+                        bool zpass = zpass512 & passMask;
+                        if (zpass) {
+                            i32 index = ((i32*)&index512)[simdIndex];
+                            f32 zinterp = ((f32*)&zinterp512)[simdIndex];
                             renderer->image.depth[index] = zinterp;
 
                             f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
