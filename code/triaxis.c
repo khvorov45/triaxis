@@ -1443,7 +1443,8 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 zinterpinv512 = _mm512_add_ps(_mm512_add_ps(z1inv512scaled, z2inv512scaled), z3inv512scaled);
                 __m512 zinterp512 = _mm512_div_ps(one512f, zinterpinv512);
 
-                f32*   depthAddr = renderer->image.depth + ycoordTimesPitch + simdXcoord;
+                i32    addrOffset = ycoordTimesPitch + simdXcoord;
+                f32*   depthAddr = renderer->image.depth + addrOffset;
                 __m512 existingZ512 = _mm512_mask_loadu_ps(zero512f, allpass512, depthAddr);
 
                 // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
@@ -1476,6 +1477,9 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 color01b512 = _mm512_mul_ps(color01zb512, zinterp512);
                 __m512 color01a512 = _mm512_mul_ps(color01za512, zinterp512);
 
+                u32*    pxAddr = renderer->image.pixels + addrOffset;
+                __m512i existingColoru32_512 = _mm512_mask_loadu_epi32(zero512f, allPassAndZPass512, pxAddr);
+
                 __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
 
                 // TODO(khvorov) Finish simd-asation
@@ -1484,17 +1488,16 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     __mmask16 passMask = 1 << simdIndex;
                     bool      allpassAndZpass = allPassAndZPass512 & passMask;
                     if (allpassAndZpass) {
+                        u32      existingColoru32 = ((u32*)&existingColoru32_512)[simdIndex];
+                        Color255 existingColor255 = coloru32to255(existingColoru32);
+                        Color01  existingColor01 = color255to01(existingColor255);
+
                         Color01 color01 = {
                             .r = ((f32*)&color01r512)[simdIndex],
                             .g = ((f32*)&color01g512)[simdIndex],
                             .b = ((f32*)&color01b512)[simdIndex],
                             .a = ((f32*)&color01a512)[simdIndex],
                         };
-
-                        i32      index = ((i32*)&index512)[simdIndex];
-                        u32      existingColoru32 = renderer->image.pixels[index];
-                        Color255 existingColor255 = coloru32to255(existingColoru32);
-                        Color01  existingColor01 = color255to01(existingColor255);
 
                         Color01 blended01 = {
                             .r = lerpf(existingColor01.r, color01.r, color01.a),
@@ -1505,6 +1508,8 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
                         Color255 blended255 = color01to255(blended01);
                         u32      blendedu32 = color255tou32(blended255);
+
+                        i32 index = ((i32*)&index512)[simdIndex];
                         renderer->image.pixels[index] = blendedu32;
                     }
                 }
