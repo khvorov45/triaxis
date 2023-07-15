@@ -1438,40 +1438,38 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
                     __mmask16 passMask = 1 << simdIndex;
                     bool      allpass = allpass512 & passMask;
-                    if (allpass) {
-                        // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
-                        bool zpass = zpass512 & passMask;
-                        if (zpass) {
-                            i32 index = ((i32*)&index512)[simdIndex];
-                            f32 zinterp = ((f32*)&zinterp512)[simdIndex];
-                            renderer->image.depth[index] = zinterp;
+                    bool      zpass = zpass512 & passMask;
+                    // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
+                    if (allpass && zpass) {
+                        i32 index = ((i32*)&index512)[simdIndex];
+                        f32 zinterp = ((f32*)&zinterp512)[simdIndex];
+                        renderer->image.depth[index] = zinterp;
 
-                            f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
-                            f32 cross2scaled = (((f32*)&cross2scaled512)[simdIndex]);
-                            f32 cross3scaled = (((f32*)&cross3scaled512)[simdIndex]);
+                        f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
+                        f32 cross2scaled = (((f32*)&cross2scaled512)[simdIndex]);
+                        f32 cross3scaled = (((f32*)&cross3scaled512)[simdIndex]);
 
-                            Color01 color01z = color01add(
-                                color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
-                                color01scale(c3z, cross1scaled)
-                            );
+                        Color01 color01z = color01add(
+                            color01add(color01scale(c1z, cross2scaled), color01scale(c2z, cross3scaled)),
+                            color01scale(c3z, cross1scaled)
+                        );
 
-                            Color01 color01 = color01scale(color01z, zinterp);
+                        Color01 color01 = color01scale(color01z, zinterp);
 
-                            u32      existingColoru32 = renderer->image.pixels[index];
-                            Color255 existingColor255 = coloru32to255(existingColoru32);
-                            Color01  existingColor01 = color255to01(existingColor255);
+                        u32      existingColoru32 = renderer->image.pixels[index];
+                        Color255 existingColor255 = coloru32to255(existingColoru32);
+                        Color01  existingColor01 = color255to01(existingColor255);
 
-                            Color01 blended01 = {
-                                .r = lerpf(existingColor01.r, color01.r, color01.a),
-                                .g = lerpf(existingColor01.g, color01.g, color01.a),
-                                .b = lerpf(existingColor01.b, color01.b, color01.a),
-                                .a = 1,
-                            };
+                        Color01 blended01 = {
+                            .r = lerpf(existingColor01.r, color01.r, color01.a),
+                            .g = lerpf(existingColor01.g, color01.g, color01.a),
+                            .b = lerpf(existingColor01.b, color01.b, color01.a),
+                            .a = 1,
+                        };
 
-                            Color255 blended255 = color01to255(blended01);
-                            u32      blendedu32 = color255tou32(blended255);
-                            renderer->image.pixels[index] = blendedu32;
-                        }
+                        Color255 blended255 = color01to255(blended01);
+                        u32      blendedu32 = color255tou32(blended255);
+                        renderer->image.pixels[index] = blendedu32;
                     }
                 }
             }
