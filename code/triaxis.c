@@ -1386,9 +1386,10 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         __m512 oneOverArea512 = _mm512_set1_ps(oneOverArea);
 
         __m512i seq0to15i = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-        __m512i sixteen512i = _mm512_set1_epi32(16);
-        __m512  zero512f = _mm512_set1_ps(0);
-        __m512  one512f = _mm512_set1_ps(1);
+        __m512i n16_512i = _mm512_set1_epi32(16);
+        __m512  n0_512f = _mm512_set1_ps(0);
+        __m512  n1_512f = _mm512_set1_ps(1);
+        __m512  n255_512f = _mm512_set1_ps(255);
         __m512i xstart512 = _mm512_set1_epi32(xstart);
         __m512i xfirst512 = _mm512_add_epi32(xstart512, seq0to15i);
 
@@ -1403,24 +1404,23 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
             __m512 cross2row512 = _mm512_set1_ps(cross2row);
             __m512 cross3row512 = _mm512_set1_ps(cross3row);
 
-            i32     ycoordTimesPitch = ycoord * renderer->image.pitch;
-            __m512i ycoordTimesPitch512 = _mm512_set1_epi32(ycoordTimesPitch);
+            i32 ycoordTimesPitch = ycoord * renderer->image.pitch;
 
             __m512i xcoord512 = xfirst512;
             __m512i xinc512i = seq0to15i;
-            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, sixteen512i), xinc512i = _mm512_add_epi32(xinc512i, sixteen512i)) {
+            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, n16_512i), xinc512i = _mm512_add_epi32(xinc512i, n16_512i)) {
                 __m512 xinc512f = _mm512_cvtepi32_ps(xinc512i);
                 __m512 cross1_512 = _mm512_add_ps(cross1row512, _mm512_mul_ps(xinc512f, dcross1x512));
                 __m512 cross2_512 = _mm512_add_ps(cross2row512, _mm512_mul_ps(xinc512f, dcross2x512));
                 __m512 cross3_512 = _mm512_add_ps(cross3row512, _mm512_mul_ps(xinc512f, dcross3x512));
 
-                __mmask16 cross1gt0 = _mm512_cmp_ps_mask(cross1_512, zero512f, _CMP_GT_OQ);
-                __mmask16 cross2gt0 = _mm512_cmp_ps_mask(cross2_512, zero512f, _CMP_GT_OQ);
-                __mmask16 cross3gt0 = _mm512_cmp_ps_mask(cross3_512, zero512f, _CMP_GT_OQ);
+                __mmask16 cross1gt0 = _mm512_cmp_ps_mask(cross1_512, n0_512f, _CMP_GT_OQ);
+                __mmask16 cross2gt0 = _mm512_cmp_ps_mask(cross2_512, n0_512f, _CMP_GT_OQ);
+                __mmask16 cross3gt0 = _mm512_cmp_ps_mask(cross3_512, n0_512f, _CMP_GT_OQ);
 
-                __mmask16 cross1eq0 = _mm512_cmp_ps_mask(cross1_512, zero512f, _CMP_EQ_OQ);
-                __mmask16 cross2eq0 = _mm512_cmp_ps_mask(cross2_512, zero512f, _CMP_EQ_OQ);
-                __mmask16 cross3eq0 = _mm512_cmp_ps_mask(cross3_512, zero512f, _CMP_EQ_OQ);
+                __mmask16 cross1eq0 = _mm512_cmp_ps_mask(cross1_512, n0_512f, _CMP_EQ_OQ);
+                __mmask16 cross2eq0 = _mm512_cmp_ps_mask(cross2_512, n0_512f, _CMP_EQ_OQ);
+                __mmask16 cross3eq0 = _mm512_cmp_ps_mask(cross3_512, n0_512f, _CMP_EQ_OQ);
 
                 __mmask16 cross1eq0andAllow = cross1eq0 & allowZero1_512;
                 __mmask16 cross2eq0andAllow = cross2eq0 & allowZero2_512;
@@ -1441,11 +1441,11 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 z3inv512scaled = _mm512_mul_ps(z3inv512, cross1scaled512);
 
                 __m512 zinterpinv512 = _mm512_add_ps(_mm512_add_ps(z1inv512scaled, z2inv512scaled), z3inv512scaled);
-                __m512 zinterp512 = _mm512_div_ps(one512f, zinterpinv512);
+                __m512 zinterp512 = _mm512_div_ps(n1_512f, zinterpinv512);
 
                 i32    addrOffset = ycoordTimesPitch + simdXcoord;
                 f32*   depthAddr = renderer->image.depth + addrOffset;
-                __m512 existingZ512 = _mm512_mask_loadu_ps(zero512f, allpass512, depthAddr);
+                __m512 existingZ512 = _mm512_mask_loadu_ps(n0_512f, allpass512, depthAddr);
 
                 // TODO(khvorov) Is there a bug where sometimes the wrong pixel is on top?
                 __mmask16 zpass512 = _mm512_cmp_ps_mask(existingZ512, zinterp512, _CMP_GT_OQ);
@@ -1477,42 +1477,28 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 color01b512 = _mm512_mul_ps(color01zb512, zinterp512);
                 __m512 color01a512 = _mm512_mul_ps(color01za512, zinterp512);
 
-                u32*    pxAddr = renderer->image.pixels + addrOffset;
-                __m512i existingColoru32_512 = _mm512_mask_loadu_epi32(zero512f, allPassAndZPass512, pxAddr);
+                __m512 color255r512f = _mm512_mul_ps(color01r512, n255_512f);
+                __m512 color255g512f = _mm512_mul_ps(color01g512, n255_512f);
+                __m512 color255b512f = _mm512_mul_ps(color01b512, n255_512f);
+                __m512 color255a512f = _mm512_mul_ps(color01a512, n255_512f);
 
-                __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
+                __m512i color255r512i = _mm512_cvt_roundps_epi32(color255r512f, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+                __m512i color255g512i = _mm512_cvt_roundps_epi32(color255g512f, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+                __m512i color255b512i = _mm512_cvt_roundps_epi32(color255b512f, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+                __m512i color255a512i = _mm512_cvt_roundps_epi32(color255a512f, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
 
-                // TODO(khvorov) Finish simd-asation
-                i32 maxSimdXCoord = min(xend - simdXcoord, 15);
-                for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
-                    __mmask16 passMask = 1 << simdIndex;
-                    bool      allpassAndZpass = allPassAndZPass512 & passMask;
-                    if (allpassAndZpass) {
-                        u32      existingColoru32 = ((u32*)&existingColoru32_512)[simdIndex];
-                        Color255 existingColor255 = coloru32to255(existingColoru32);
-                        Color01  existingColor01 = color255to01(existingColor255);
+                __m512i color255r512shifted = _mm512_slli_epi32(color255r512i, 16);
+                __m512i color255g512shifted = _mm512_slli_epi32(color255g512i, 8);
+                __m512i color255b512shifted = color255b512i;
+                __m512i color255a512shifted = _mm512_slli_epi32(color255a512i, 24);
 
-                        Color01 color01 = {
-                            .r = ((f32*)&color01r512)[simdIndex],
-                            .g = ((f32*)&color01g512)[simdIndex],
-                            .b = ((f32*)&color01b512)[simdIndex],
-                            .a = ((f32*)&color01a512)[simdIndex],
-                        };
+                __m512i coloru32_512 = _mm512_or_epi32(
+                    _mm512_or_epi32(color255r512shifted, color255g512shifted),
+                    _mm512_or_epi32(color255b512shifted, color255a512shifted)
+                );
 
-                        Color01 blended01 = {
-                            .r = lerpf(existingColor01.r, color01.r, color01.a),
-                            .g = lerpf(existingColor01.g, color01.g, color01.a),
-                            .b = lerpf(existingColor01.b, color01.b, color01.a),
-                            .a = 1,
-                        };
-
-                        Color255 blended255 = color01to255(blended01);
-                        u32      blendedu32 = color255tou32(blended255);
-
-                        i32 index = ((i32*)&index512)[simdIndex];
-                        renderer->image.pixels[index] = blendedu32;
-                    }
-                }
+                u32* pxAddr = renderer->image.pixels + addrOffset;
+                _mm512_mask_storeu_epi32(pxAddr, allPassAndZPass512, coloru32_512);
             }
         }
     }
