@@ -1363,6 +1363,9 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         f32 cross2topleft = edgeWedge(v2, v3, topleft);
         f32 cross3topleft = edgeWedge(v3, v1, topleft);
 
+        f32    oneOverArea = 1 / tr.area;
+        __m512 oneOverArea512 = _mm512_set1_ps(oneOverArea);
+
         __m512i seq0to15 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
         __m512i sixteen512 = _mm512_set1_epi32(16);
         __m512i zero512 = _mm512_set1_epi32(0);
@@ -1406,19 +1409,19 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
 
                 __mmask16 allpass512 = pass1_512 & pass2_512 & pass3_512;
 
+                __m512 cross1scaled512 = _mm512_mul_ps(cross1_512, oneOverArea512);
+                __m512 cross2scaled512 = _mm512_mul_ps(cross2_512, oneOverArea512);
+                __m512 cross3scaled512 = _mm512_mul_ps(cross3_512, oneOverArea512);
+
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
                 for (i32 simdIndex = 0; simdIndex <= maxSimdXCoord; simdIndex++) {
                     __mmask16 allpassMask = 1 << simdIndex;
                     bool      allpass = allpass512 & allpassMask;
                     if (allpass) {
-                        f32 cross1 = (((f32*)&cross1_512)[simdIndex]);
-                        f32 cross2 = (((f32*)&cross2_512)[simdIndex]);
-                        f32 cross3 = (((f32*)&cross3_512)[simdIndex]);
-
-                        f32 cross1scaled = cross1 / tr.area;
-                        f32 cross2scaled = cross2 / tr.area;
-                        f32 cross3scaled = cross3 / tr.area;
+                        f32 cross1scaled = (((f32*)&cross1scaled512)[simdIndex]);
+                        f32 cross2scaled = (((f32*)&cross2scaled512)[simdIndex]);
+                        f32 cross3scaled = (((f32*)&cross3scaled512)[simdIndex]);
 
                         f32 zinterpinv = z1inv * cross2scaled + z2inv * cross3scaled + z3inv * cross1scaled;
                         f32 zinterp = 1.0f / zinterpinv;
