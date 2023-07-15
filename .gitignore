@@ -12,3 +12,6 @@ win32_d3d11.c
 compile_flags.txt
 .cache
 *.spall
+*.ilk
+*sublime-*
+shell.bat
