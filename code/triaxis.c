@@ -1370,12 +1370,12 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
         f32    oneOverArea = 1 / tr.area;
         __m512 oneOverArea512 = _mm512_set1_ps(oneOverArea);
 
-        __m512i seq0to15 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-        __m512i sixteen512 = _mm512_set1_epi32(16);
-        __m512i zero512 = _mm512_set1_epi32(0);
-        __m512  one512 = _mm512_set1_ps(1);
+        __m512i seq0to15i = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+        __m512i sixteen512i = _mm512_set1_epi32(16);
+        __m512  zero512f = _mm512_set1_ps(0);
+        __m512  one512f = _mm512_set1_ps(1);
         __m512i xstart512 = _mm512_set1_epi32(xstart);
-        __m512i xfirst512 = _mm512_add_epi32(xstart512, seq0to15);
+        __m512i xfirst512 = _mm512_add_epi32(xstart512, seq0to15i);
 
         for (i32 ycoord = ystart; ycoord <= yend; ycoord++) {
             f32 yinc = (f32)(ycoord - ystart);
@@ -1388,21 +1388,24 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
             __m512 cross2row512 = _mm512_set1_ps(cross2row);
             __m512 cross3row512 = _mm512_set1_ps(cross3row);
 
+            i32     ycoordTimesPitch = ycoord * renderer->image.pitch;
+            __m512i ycoordTimesPitch512 = _mm512_set1_epi32(ycoordTimesPitch);
+
             __m512i xcoord512 = xfirst512;
-            __m512i xinc512i = seq0to15;
-            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, sixteen512), xinc512i = _mm512_add_epi32(xinc512i, sixteen512)) {
+            __m512i xinc512i = seq0to15i;
+            for (i32 simdXcoord = xstart; simdXcoord <= xend; simdXcoord += 16, xcoord512 = _mm512_add_epi32(xcoord512, sixteen512i), xinc512i = _mm512_add_epi32(xinc512i, sixteen512i)) {
                 __m512 xinc512f = _mm512_cvtepi32_ps(xinc512i);
                 __m512 cross1_512 = _mm512_add_ps(cross1row512, _mm512_mul_ps(xinc512f, dcross1x512));
                 __m512 cross2_512 = _mm512_add_ps(cross2row512, _mm512_mul_ps(xinc512f, dcross2x512));
                 __m512 cross3_512 = _mm512_add_ps(cross3row512, _mm512_mul_ps(xinc512f, dcross3x512));
 
-                __mmask16 cross1gt0 = _mm512_cmp_ps_mask(cross1_512, zero512, _CMP_GT_OQ);
-                __mmask16 cross2gt0 = _mm512_cmp_ps_mask(cross2_512, zero512, _CMP_GT_OQ);
-                __mmask16 cross3gt0 = _mm512_cmp_ps_mask(cross3_512, zero512, _CMP_GT_OQ);
+                __mmask16 cross1gt0 = _mm512_cmp_ps_mask(cross1_512, zero512f, _CMP_GT_OQ);
+                __mmask16 cross2gt0 = _mm512_cmp_ps_mask(cross2_512, zero512f, _CMP_GT_OQ);
+                __mmask16 cross3gt0 = _mm512_cmp_ps_mask(cross3_512, zero512f, _CMP_GT_OQ);
 
-                __mmask16 cross1eq0 = _mm512_cmp_ps_mask(cross1_512, zero512, _CMP_EQ_OQ);
-                __mmask16 cross2eq0 = _mm512_cmp_ps_mask(cross2_512, zero512, _CMP_EQ_OQ);
-                __mmask16 cross3eq0 = _mm512_cmp_ps_mask(cross3_512, zero512, _CMP_EQ_OQ);
+                __mmask16 cross1eq0 = _mm512_cmp_ps_mask(cross1_512, zero512f, _CMP_EQ_OQ);
+                __mmask16 cross2eq0 = _mm512_cmp_ps_mask(cross2_512, zero512f, _CMP_EQ_OQ);
+                __mmask16 cross3eq0 = _mm512_cmp_ps_mask(cross3_512, zero512f, _CMP_EQ_OQ);
 
                 __mmask16 cross1eq0andAllow = cross1eq0 & allowZero1_512;
                 __mmask16 cross2eq0andAllow = cross2eq0 & allowZero2_512;
@@ -1423,7 +1426,9 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                 __m512 z3inv512scaled = _mm512_mul_ps(z3inv512, cross1scaled512);
 
                 __m512 zinterpinv512 = _mm512_add_ps(_mm512_add_ps(z1inv512scaled, z2inv512scaled), z3inv512scaled);
-                __m512 zinterp512 = _mm512_div_ps(one512, zinterpinv512);
+                __m512 zinterp512 = _mm512_div_ps(one512f, zinterpinv512);
+
+                __m512i index512 = _mm512_add_epi32(ycoordTimesPitch512, xcoord512);
 
                 // TODO(khvorov) Finish simd-asation
                 i32 maxSimdXCoord = min(xend - simdXcoord, 15);
@@ -1433,8 +1438,7 @@ swRendererFillTriangle(SWRenderer* renderer, TriangleIndices trig) {
                     if (allpass) {
                         f32 zinterp = ((f32*)&zinterp512)[simdIndex];
 
-                        i32 xcoord = (((i32*)&xcoord512)[simdIndex]);
-                        i32 index = ycoord * renderer->image.pitch + xcoord;
+                        i32 index = ((i32*)&index512)[simdIndex];
                         f32 existingZ = renderer->image.depth[index];
                         if (existingZ > zinterp) {
                             renderer->image.depth[index] = zinterp;
