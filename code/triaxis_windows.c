@@ -406,6 +406,7 @@ typedef struct D3D11Renderer {
     D3D11Common* common;
 
     ID3D11RasterizerState*   rasterizerState;
+    ID3D11RasterizerState*   rasterizerNoCull;
     ID3D11DepthStencilState* depthSpencilState;
     ID3D11DepthStencilView*  depthStencilView;
 
@@ -578,6 +579,14 @@ initD3D11Renderer(D3D11Common* common, State* state) {
     }
 
     {
+        D3D11_RASTERIZER_DESC desc = {
+            .FillMode = D3D11_FILL_SOLID,
+            .CullMode = D3D11_CULL_NONE,
+        };
+        ID3D11Device_CreateRasterizerState(common->device, &desc, &renderer.rasterizerNoCull);
+    }
+
+    {
         D3D11_BUFFER_DESC desc = {
             .ByteWidth = sizeof(D3D11ConstCamera),
             .Usage = D3D11_USAGE_DYNAMIC,
@@ -653,6 +662,26 @@ initD3D11Renderer(D3D11Common* common, State* state) {
     return renderer;
 }
 
+// TODO(khvorov) Replace with quadFilled?
+typedef struct D3D11TriFilledVertexDynArr {
+    D3D11TriFilledVertex* ptr;
+    isize                 len;
+    isize                 cap;
+} D3D11TriFilledVertexDynArr;
+
+static void
+d3d11render_pushQuad(D3D11TriFilledVertexDynArr* triFilled, V2f v1, V2f v2, V2f v3, V2f v4, struct nk_color nkcolor) {
+    Color01 color = color255to01(nkcolorTo255(nkcolor));
+
+    arrpush(*triFilled, ((D3D11TriFilledVertex) {v1, color}));
+    arrpush(*triFilled, ((D3D11TriFilledVertex) {v2, color}));
+    arrpush(*triFilled, ((D3D11TriFilledVertex) {v3, color}));
+
+    arrpush(*triFilled, ((D3D11TriFilledVertex) {v2, color}));
+    arrpush(*triFilled, ((D3D11TriFilledVertex) {v4, color}));
+    arrpush(*triFilled, ((D3D11TriFilledVertex) {v3, color}));
+}
+
 static void
 d3d11render(D3D11Renderer renderer, State* state) {
     {
@@ -714,16 +743,13 @@ d3d11render(D3D11Renderer renderer, State* state) {
     }
 
     if (state->showDebugUI) {
+        ID3D11DeviceContext_RSSetState(renderer.common->context, renderer.rasterizerNoCull);
         ID3D11DeviceContext_OMSetRenderTargets(renderer.common->context, 1, &renderer.common->rtView, 0);
 
         D3D11_MAPPED_SUBRESOURCE mappedTriFilledVertices = {};
         ID3D11DeviceContext_Map(renderer.common->context, (ID3D11Resource*)renderer.triFilled.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedTriFilledVertices);
 
-        struct {
-            D3D11TriFilledVertex* ptr;
-            isize                 len;
-            isize                 cap;
-        } triFilled = {(D3D11TriFilledVertex*)mappedTriFilledVertices.pData, 0, renderer.triFilled.vertexCap};
+        D3D11TriFilledVertexDynArr triFilled = {(D3D11TriFilledVertex*)mappedTriFilledVertices.pData, 0, renderer.triFilled.vertexCap};
 
         D3D11_MAPPED_SUBRESOURCE mappedFontVertices = {};
         ID3D11DeviceContext_Map(renderer.common->context, (ID3D11Resource*)renderer.font.vertices, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedFontVertices);
@@ -739,7 +765,25 @@ d3d11render(D3D11Renderer renderer, State* state) {
             switch (cmd->type) {
                 case NK_COMMAND_NOP: break;
                 case NK_COMMAND_SCISSOR: break;
-                case NK_COMMAND_LINE: break;
+
+                case NK_COMMAND_LINE: {
+                    struct nk_command_line* line = (struct nk_command_line*)cmd;
+
+                    i32 x0 = line->begin.x;
+                    i32 y0 = line->begin.y;
+                    i32 x1 = line->end.x;
+                    i32 y1 = line->end.y;
+
+                    // TODO(khvorov) Thicken lines properly
+                    i32 lt = line->line_thickness;
+                    V2f topleft = {(f32)(x0 - lt), (f32)(y0 + lt)};
+                    V2f topright = {(f32)(x0 + lt), (f32)(y0 - lt)};
+                    V2f bottomleft = {(f32)(x1 - lt), (f32)(y1 + lt)};
+                    V2f bottomright = {(f32)(x1 + lt), (f32)(y1 - lt)};
+
+                    d3d11render_pushQuad(&triFilled, topleft, topright, bottomleft, bottomright, line->color);
+                } break;
+
                 case NK_COMMAND_CURVE: break;
                 case NK_COMMAND_RECT: break;
 
@@ -756,15 +800,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
                     V2f bottomleft = {(f32)x0, (f32)y1};
                     V2f bottomright = {(f32)x1, (f32)y1};
 
-                    Color01 color = color255to01(nkcolorTo255(rect->color));
-
-                    arrpush(triFilled, ((D3D11TriFilledVertex) {topleft, color}));
-                    arrpush(triFilled, ((D3D11TriFilledVertex) {topright, color}));
-                    arrpush(triFilled, ((D3D11TriFilledVertex) {bottomleft, color}));
-
-                    arrpush(triFilled, ((D3D11TriFilledVertex) {topright, color}));
-                    arrpush(triFilled, ((D3D11TriFilledVertex) {bottomright, color}));
-                    arrpush(triFilled, ((D3D11TriFilledVertex) {bottomleft, color}));
+                    d3d11render_pushQuad(&triFilled, topleft, topright, bottomleft, bottomright, rect->color);
                 } break;
 
                 case NK_COMMAND_RECT_MULTI_COLOR: break;
@@ -874,7 +910,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
         ID3D11DeviceContext_OMSetBlendState(renderer.common->context, renderer.font.blend, NULL, ~0U);
 
         ID3D11DeviceContext_Draw(renderer.common->context, font.len, 0);
-    }
+    }  // debugui
 
     HRESULT presentResult = IDXGISwapChain1_Present(renderer.common->swapChain, 1, 0);
     asserthr(presentResult);
@@ -1183,7 +1219,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         timedSectionEnd();
     }
 
-    // TODO(khvorov) Does this prevent bluescreens?
+    // NOTE(khvorov) Had 2 bluescreens on Win10 before adding this
     {
         ID3D11Buffer_Release(d3d11renderer.mesh.vbuffer);
         ID3D11Buffer_Release(d3d11renderer.mesh.ibuffer);
@@ -1195,6 +1231,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         ID3D11Buffer_Release(d3d11renderer.mesh.constMesh);
 
         ID3D11RasterizerState_Release(d3d11renderer.rasterizerState);
+        ID3D11RasterizerState_Release(d3d11renderer.rasterizerNoCull);
         ID3D11DepthStencilState_Release(d3d11renderer.depthSpencilState);
         ID3D11DepthStencilView_Release(d3d11renderer.depthStencilView);
 

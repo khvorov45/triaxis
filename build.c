@@ -19,6 +19,8 @@ typedef struct Opt {
     bool asserts;
     bool tests;
     bool bench;
+
+    bool dontSuppressOut;
 } Opt;
 
 Str globalRootDir = {};
@@ -96,7 +98,14 @@ compile(Arena* arena, void* data) {
 
             Str cmd = prb_fmt(arena, "clang -march=native -Wall -Wextra -fno-caret-diagnostics %.*s %.*s -o %.*s -Wl,-incremental:no", LIT(flags), LIT(src), LIT(exe));
             prb_writelnToStdout(arena, cmd);
-            prb_Process proc = prb_createProcess(cmd, (prb_ProcessSpec) {});
+
+            prb_ProcessSpec spec = {};
+            if (!opt->dontSuppressOut) {
+                spec.redirectStdout = true;
+                spec.redirectStderr = true;
+            }
+
+            prb_Process proc = prb_createProcess(cmd, spec);
             prb_Status  result = prb_launchProcesses(arena, &proc, 1, prb_Background_No);
             assert(result);
         }
@@ -145,7 +154,7 @@ main() {
     }
 
     Opt opts[] = {
-        {.debuginfo = true, .asserts = true, .tests = true, .bench = true},
+        {.debuginfo = true, .asserts = true, .tests = true, .bench = true, .dontSuppressOut = true},
         {.debuginfo = true, .optimise = true, .profile = true, .bench = true},
     };
 

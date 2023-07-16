@@ -30,6 +30,7 @@
 #define arenaAllocCap(arena, type, maxbytes, arr) arr.cap = maxbytes / sizeof(type); arr.ptr = arenaAllocArray(arena, type, arr.cap)
 #define arrpush(arr, val) (((arr).len < (arr).cap) ? ((arr).ptr[(arr).len] = (val), (arr).len++) : (__debugbreak(), 0))
 #define arrget(arr, i) (arr.ptr[((i) < (arr).len ? (i) : (__debugbreak(), 0))])
+#define swap(type, v1, v2) do {type temp = (v1); (v1) = (v2); (v2) = temp;} while (0)
 
 #define STR(x) ((Str) {.ptr = x, .len = sizeof(x) - 1})
 #define STRARG(x) x, sizeof(x) - 1
@@ -2324,10 +2325,6 @@ runBench(Arena* arena) {
 // SECTION App
 //
 
-// TODO(khvorov) Debug overlay with a log panel
-// TODO(khvorov) Coordinate grid
-// TODO(khvorov) Frametime line
-
 typedef struct State {
     SWRenderer  swRenderer;
     MeshStorage meshStorage;
@@ -2353,10 +2350,6 @@ typedef struct State {
 
     struct nk_context   ui;
     struct nk_user_font uifont;
-
-    struct {
-        Arena arena;
-    } debug;
 } State;
 
 function float
@@ -2399,7 +2392,6 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
     initFont(&state->font, &arena);
     state->scratch = createArenaFromArena(&arena, 10 * MEGABYTE);
     state->perm = createArenaFromArena(&arena, 10 * MEGABYTE);
-    state->debug.arena = createArenaFromArena(&arena, 10 * MEGABYTE);
 
     {
         state->uifont.userdata.ptr = &state->font;
@@ -2425,7 +2417,7 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = 1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 1, 0, 0)));
     arrpush(state->meshes, createCubeMesh(&state->meshStorage, 1, (V3f) {.x = -1, .y = 0, .z = 3}, createRotor3fAnglePlane(0, 0, 1, 0)));
 
-    // NOTE(khvorov) Debug grid
+    // NOTE(khvorov) Ground
     {
         MeshBuilder builder = beginMesh(&state->meshStorage);
 
@@ -2450,7 +2442,7 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
         arrpush(state->meshes, ground);
     }
 
-    state->useSW = true;
+    state->showDebugUI = true;
     return state;
 }
 
@@ -2616,6 +2608,17 @@ update(State* state, f32 deltaSec) {
             builder.len = 0;
             fmtF32(&builder, state->camera.pos.z, posFmt);
             nk_text(&state->ui, builder.ptr, builder.len, NK_TEXT_ALIGN_CENTERED);
+
+            // TODO(khvorov) Frametime line
+            {
+                f32 values[] = {26.0f, 13.0f, 30.0f, 15.0f, 25.0f, 10.0f, 20.0f, 40.0f, 12.0f, 8.0f, 22.0f, 28.0f};
+                nk_layout_row_dynamic(&state->ui, 150, 1);
+                nk_chart_begin(&state->ui, NK_CHART_LINES, NK_LEN(values), 0, 50);
+                for (isize i = 0; i < NK_LEN(values); ++i) {
+                    nk_chart_push(&state->ui, values[i]);
+                }
+                nk_chart_end(&state->ui);
+            }
         }
         nk_end(&state->ui);
     }
@@ -2806,7 +2809,11 @@ swRender(State* state) {
             switch (cmd->type) {
                 case NK_COMMAND_NOP: break;
                 case NK_COMMAND_SCISSOR: break;
-                case NK_COMMAND_LINE: break;
+
+                case NK_COMMAND_LINE: {
+                    // TODO(khvorov) Implement 
+                } break;
+
                 case NK_COMMAND_CURVE: break;
                 case NK_COMMAND_RECT: break;
 
