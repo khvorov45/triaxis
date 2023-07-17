@@ -154,7 +154,7 @@ main() {
     }
 
     Opt opts[] = {
-        {.debuginfo = true, .asserts = true, .tests = true, .bench = true, .dontSuppressOut = true},
+        {.debuginfo = true, .asserts = true, .profile = true, .tests = true, .bench = true, .dontSuppressOut = true},
         {.debuginfo = true, .optimise = true, .profile = true, .bench = true},
     };
 

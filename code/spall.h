@@ -25,11 +25,18 @@ TODO: Optional Helper APIs:
 
 #if !defined(_MSC_VER) || defined(__clang__)
 #define SPALL_NOINSTRUMENT __attribute__((no_instrument_function))
-#define SPALL_FORCEINLINE __attribute__((always_inline))
 #else
 #define _CRT_SECURE_NO_WARNINGS
 #define SPALL_NOINSTRUMENT // Can't noinstrument on MSVC!
+#endif
+
+#ifndef SPALL_FORCEINLINE
+#if !defined(_MSC_VER) || defined(__clang__)
+#define SPALL_FORCEINLINE __attribute__((always_inline))
+#else
+#define _CRT_SECURE_NO_WARNINGS
 #define SPALL_FORCEINLINE __forceinline
+#endif
 #endif
 
 #include <stdint.h>

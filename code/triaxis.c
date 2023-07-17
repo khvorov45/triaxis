@@ -11,6 +11,10 @@
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #pragma clang diagnostic ignored "-Wmissing-field-initializers"
 #pragma clang diagnostic ignored "-Wsign-compare"
+#ifndef TRIAXIS_optimise
+// NOTE(khvorov) Debuginfo is busted for force-inlined functions
+#define SPALL_FORCEINLINE
+#endif
 #include "spall.h"
 
 // clang-format off
@@ -2373,6 +2377,7 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
 #ifdef TRIAXIS_profile
     {
         Arena spallArena = createArenaFromArena(&arena, 100 * Megabyte);
+        // TODO(khvorov) Name the profile after the exe?
         globalSpallProfile = spall_init_file("profile.spall", 1.0 / rdtscFreqPerMicrosecond);
         globalSpallBuffer = (SpallBuffer) {.data = spallArena.base, .length = spallArena.size};
         spall_buffer_init(&globalSpallProfile, &globalSpallBuffer);
@@ -2803,6 +2808,7 @@ swRender(State* state) {
     }
 
     if (state->showDebugUI) {
+        timedSectionStart("sw debugui");
         Texture tex = state->swRenderer.texture;
 
         const struct nk_command* cmd = 0;
@@ -2812,7 +2818,7 @@ swRender(State* state) {
                 case NK_COMMAND_SCISSOR: break;
 
                 case NK_COMMAND_LINE: {
-                    // TODO(khvorov) Implement 
+                    // TODO(khvorov) Implement
                 } break;
 
                 case NK_COMMAND_CURVE: break;
@@ -2858,6 +2864,8 @@ swRender(State* state) {
                 case NK_COMMAND_CUSTOM: break;
             }
         }
+
+        timedSectionEnd();
     }
 
     timedSectionEnd();
