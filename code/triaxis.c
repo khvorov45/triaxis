@@ -41,8 +41,8 @@
 #define STRARG(x) x, sizeof(x) - 1
 
 #ifdef TRIAXIS_profile
-#define timedSectionStart(name) spall_buffer_begin(&globalSpallProfile, &globalSpallBuffer, STRARG(name), __rdtsc())
-#define timedSectionEnd() spall_buffer_end(&globalSpallProfile, &globalSpallBuffer, __rdtsc())
+#define timedSectionStart(name) timedSectionStart_(STRARG(name))
+#define timedSectionEnd() timedSectionEnd_()
 #else
 #define timedSectionStart(name)
 #define timedSectionEnd()
@@ -68,8 +68,45 @@ typedef double   f64;
 
 #include "generated.c"
 
-globalvar SpallProfile globalSpallProfile;
-globalvar SpallBuffer  globalSpallBuffer;
+//
+// SECTION Profile
+//
+
+globalvar SpallBuffer globalSpallBuffer;
+
+function void
+timedSectionStart_(const char* name, isize nameLen) {
+    isize size = sizeof(SpallBeginEvent) + nameLen;
+    isize remaining = globalSpallBuffer.length - globalSpallBuffer.head;
+    if (size <= remaining) {
+        SpallBeginEventMax* event = (SpallBeginEventMax*)(globalSpallBuffer.data + globalSpallBuffer.head);
+        event->event.type = SpallEventType_Begin;
+        event->event.category = 0;
+        event->event.pid = 0;
+        event->event.tid = 0;
+        event->event.when = __rdtsc();
+        event->event.name_length = nameLen;
+        event->event.args_length = 0;
+        memcpy(event->name_bytes, name, nameLen);
+
+        globalSpallBuffer.head += size;
+    }
+}
+
+function void
+timedSectionEnd_(void) {
+    isize size = sizeof(SpallEndEvent);
+    isize remaining = globalSpallBuffer.length - globalSpallBuffer.head;
+    if (size <= remaining) {
+        SpallEndEvent* event = (SpallEndEvent*)(globalSpallBuffer.data + globalSpallBuffer.head);
+        event->type = SpallEventType_End;
+        event->pid = 0;
+        event->tid = 0;
+        event->when = __rdtsc();
+
+        globalSpallBuffer.head += size;
+    }
+}
 
 //
 // SECTION Memory
@@ -2368,7 +2405,7 @@ initState_uifontTextWidthCalc(nk_handle handle, float height, const char* text, 
 }
 
 function State*
-initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
+initState(void* mem, isize bytes) {
     assert(mem);
     assert(bytes > 0);
 
@@ -2377,10 +2414,7 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
 #ifdef TRIAXIS_profile
     {
         Arena spallArena = createArenaFromArena(&arena, 100 * Megabyte);
-        // TODO(khvorov) Name the profile after the exe?
-        globalSpallProfile = spall_init_file("profile.spall", 1.0 / rdtscFreqPerMicrosecond);
         globalSpallBuffer = (SpallBuffer) {.data = spallArena.base, .length = spallArena.size};
-        spall_buffer_init(&globalSpallProfile, &globalSpallBuffer);
     }
 #else
     unused(rdtscFreqPerMicrosecond);
@@ -3827,10 +3861,9 @@ getClockMarker(void) {
 }
 
 function f32
-getMsFromMarker(Clock clock, ClockMarker marker) {
-    ClockMarker now = getClockMarker();
-    LONGLONG    diff = now.counter.QuadPart - marker.counter.QuadPart;
-    f32         result = (f32)diff / (f32)clock.freqPerSecond.QuadPart * 1000.0f;
+getMsBetween(Clock clock, ClockMarker marker1, ClockMarker marker2) {
+    LONGLONG diff = marker2.counter.QuadPart - marker1.counter.QuadPart;
+    f32      result = (f32)diff / (f32)clock.freqPerSecond.QuadPart * 1000.0f;
     return result;
 }
 
@@ -3838,13 +3871,6 @@ typedef struct Timer {
     Clock       clock;
     ClockMarker update;
 } Timer;
-
-function f32
-msSinceLastUpdate(Timer* timer) {
-    f32 result = getMsFromMarker(timer->clock, timer->update);
-    timer->update = getClockMarker();
-    return result;
-}
 
 //
 // SECTION Main
@@ -3883,36 +3909,21 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     unused(lpCmdLine);
     unused(nCmdShow);
 
-    Timer timer = {.clock = createClock(), .update = getClockMarker()};
-
-    f64 rdtscFreqPerMicrosecond = 1.0f;
-#ifdef TRIAXIS_profile
-    {
-        u64 begin = __rdtsc();
-        Sleep(100);
-        f64 waited = msSinceLastUpdate(&timer);
-        u64 end = __rdtsc();
-        u64 ticksu = end - begin;
-        f64 ticksf = (f64)ticksu;
-        f64 microseconds = waited * 1000.0f;
-        rdtscFreqPerMicrosecond = ticksf / microseconds;
-    }
-#endif
-
     State* state = 0;
     {
         isize memSize = 1 * Gigabyte;
         void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         assert(memBase);
-        state = initState(memBase, memSize, rdtscFreqPerMicrosecond);
+        state = initState(memBase, memSize);
     }
 
     globalState = state;
-    HWND window = 0;
+    HWND   window = 0;
+    HANDLE profileFileHandle = 0;
     {
         TempMemory temp = beginTempMemory(&state->scratch);
         LPWSTR     exename = (LPWSTR)arenaFreePtr(&state->scratch);
-        GetModuleFileNameW(hInstance, exename, arenaFreeSize(&state->scratch) / sizeof(u16));
+        DWORD      exeNameChars = GetModuleFileNameW(hInstance, exename, arenaFreeSize(&state->scratch) / sizeof(u16));
 
         WNDCLASSEXW windowClass = {
             .cbSize = sizeof(WNDCLASSEXW),
@@ -3940,6 +3951,24 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
             NULL
         );
         assert(window);
+
+#ifdef TRIAXIS_profile
+        assert(exeNameChars >= 3);
+        exename[exeNameChars - 3] = 's';
+        exename[exeNameChars - 2] = 'p';
+        exename[exeNameChars - 1] = 'l';
+
+        profileFileHandle = CreateFileW(
+            exename,
+            GENERIC_WRITE,
+            FILE_SHARE_WRITE,
+            NULL,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+        );
+        assert(profileFileHandle != INVALID_HANDLE_VALUE);
+#endif
 
         endTempMemory(temp);
     }
@@ -3986,6 +4015,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
     D3D11Common   d3d11common = initD3D11Common(window, state->windowWidth, state->windowHeight);
     D3D11Blitter  d3d11blitter = initD3D11Blitter(&d3d11common, state->windowWidth, state->windowHeight, &state->scratch);
     D3D11Renderer d3d11renderer = initD3D11Renderer(&d3d11common, state);
+
+    Timer timer = {.clock = createClock(), .update = getClockMarker()};
 
     for (bool running = true; running;) {
         timedSectionStart("frame");
@@ -4076,7 +4107,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
         bool prevShowDebugUI = state->showDebugUI;
         {
-            f32 ms = msSinceLastUpdate(&timer);
+            ClockMarker now = getClockMarker();
+            f32         ms = getMsBetween(timer.clock, timer.update, now);
+            timer.update = now;
             update(state, ms / 1000.0f);
         }
         if (prevShowDebugUI != state->showDebugUI) {
@@ -4084,10 +4117,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         }
 
         if (state->useSW) {
-            {
-                swRender(state);
-            }
-
+            swRender(state);
             d3d11blit(d3d11blitter, state->swRenderer.texture);
         } else {
             d3d11render(d3d11renderer, state);
@@ -4144,8 +4174,49 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         ID3D11DeviceContext_Release(d3d11common.context);
     }
 
-    spall_buffer_quit(&globalSpallProfile, &globalSpallBuffer);
-    spall_quit(&globalSpallProfile);
+#ifdef TRIAXIS_profile
+    {
+        ClockMarker beforeSleep = getClockMarker();
+        u64         begin = __rdtsc();
+        Sleep(100);
+        u64         end = __rdtsc();
+        ClockMarker afterSleep = getClockMarker();
+        f64         waited = getMsBetween(timer.clock, beforeSleep, afterSleep);
+        u64         ticksu = end - begin;
+        f64         ticksf = (f64)ticksu;
+        f64         microseconds = waited * 1000.0f;
+        f64         rdtscFreqPerMicrosecond = ticksf / microseconds;
+
+        SpallHeader header = {
+            .magic_header = 0x0BADF00D,
+            .version = 1,
+            .timestamp_unit = 1.0 / rdtscFreqPerMicrosecond,
+            .must_be_0 = 0,
+        };
+        DWORD written = 0;
+        WriteFile(
+            profileFileHandle,
+            &header,
+            sizeof(header),
+            &written,
+            NULL
+        );
+        assert(written == sizeof(header));
+
+        isize toWrite = globalSpallBuffer.head;
+        assert(toWrite < 2ll * Gigabyte);
+        written = 0;
+        WriteFile(
+            profileFileHandle,
+            globalSpallBuffer.data,
+            toWrite,
+            &written,
+            NULL
+        );
+        assert(written == toWrite);
+        CloseHandle(profileFileHandle);
+    }
+#endif
 
     return 0;
 }
