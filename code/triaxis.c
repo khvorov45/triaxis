@@ -14,10 +14,10 @@
 #include "spall.h"
 
 // clang-format off
-#define BYTE (1)
-#define KILOBYTE (1024 * BYTE)
-#define MEGABYTE (1024 * KILOBYTE)
-#define GIGABYTE (1024 * MEGABYTE)
+#define Byte (1)
+#define Kilobyte (1024 * Byte)
+#define Megabyte (1024 * Kilobyte)
+#define Gigabyte (1024 * Megabyte)
 #define PI (3.14159)
 #define function static
 #define arrayCount(x) (int)(sizeof(x) / sizeof(x[0]))
@@ -2216,7 +2216,7 @@ runTests(Arena* arena) {
     }
 
     {
-        MeshStorage store = createMeshStorage(arena, MEGABYTE);
+        MeshStorage store = createMeshStorage(arena, Megabyte);
 
         Mesh cube1 = createCubeMesh(&store, 2, (V3f) {}, createRotor3f());
         assert(store.vertices.len == cube1.vertices.len);
@@ -2371,7 +2371,7 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
 
 #ifdef TRIAXIS_profile
     {
-        Arena spallArena = createArenaFromArena(&arena, 100 * MEGABYTE);
+        Arena spallArena = createArenaFromArena(&arena, 100 * Megabyte);
         globalSpallProfile = spall_init_file("profile.spall", 1.0 / rdtscFreqPerMicrosecond);
         globalSpallBuffer = (SpallBuffer) {.data = spallArena.base, .length = spallArena.size};
         spall_buffer_init(&globalSpallProfile, &globalSpallBuffer);
@@ -2390,15 +2390,15 @@ initState(void* mem, isize bytes, f64 rdtscFreqPerMicrosecond) {
     State* state = arenaAllocArray(&arena, State, 1);
 
     initFont(&state->font, &arena);
-    state->scratch = createArenaFromArena(&arena, 10 * MEGABYTE);
-    state->perm = createArenaFromArena(&arena, 10 * MEGABYTE);
+    state->scratch = createArenaFromArena(&arena, 10 * Megabyte);
+    state->perm = createArenaFromArena(&arena, 10 * Megabyte);
 
     {
         state->uifont.userdata.ptr = &state->font;
         state->uifont.height = state->font.lineAdvance;
         state->uifont.width = initState_uifontTextWidthCalc;
 
-        isize nkMemSize = 16 * MEGABYTE;
+        isize nkMemSize = 16 * Megabyte;
         u8*   nkmem = arenaAllocArray(&arena, u8, nkMemSize);
         nk_init_fixed(&state->ui, nkmem, nkMemSize, &state->uifont);
     }
@@ -2863,7 +2863,7 @@ swRender(State* state) {
 }
 
 #undef function
-#undef BYTE
+#undef Byte
 #define WIN32_LEAN_AND_MEAN 1
 #define VC_EXTRALEAN 1
 #include <Windows.h>
@@ -2893,7 +2893,7 @@ swRender(State* state) {
 #define asserthr(x) assert(SUCCEEDED(x))
 
 #define function static
-#define BYTE (1)
+#define Byte (1)
 
 function Str
 readEntireFile(Arena* arena, LPCWSTR path) {
@@ -3892,7 +3892,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
 
     State* state = 0;
     {
-        isize memSize = 1 * 1024 * 1024 * 1024;
+        isize memSize = 1 * Gigabyte;
         void* memBase = VirtualAlloc(0, memSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         assert(memBase);
         state = initState(memBase, memSize, rdtscFreqPerMicrosecond);
