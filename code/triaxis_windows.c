@@ -774,6 +774,7 @@ d3d11render(D3D11Renderer renderer, State* state) {
                     i32 x1 = line->end.x;
                     i32 y1 = line->end.y;
 
+                    //
                     // TODO(khvorov) Thicken lines properly
                     i32 lt = line->line_thickness;
                     V2f topleft = {(f32)(x0 - lt), (f32)(y0 + lt)};
