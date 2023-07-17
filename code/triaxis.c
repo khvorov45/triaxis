@@ -2868,6 +2868,7 @@ swRender(State* state) {
 #define VC_EXTRALEAN 1
 #include <Windows.h>
 #include <hidusage.h>
+#include <timeapi.h>
 
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "user32")
@@ -2891,7 +2892,10 @@ swRender(State* state) {
 
 #define asserthr(x) assert(SUCCEEDED(x))
 
-static Str
+#define function static
+#define BYTE (1)
+
+function Str
 readEntireFile(Arena* arena, LPCWSTR path) {
     void*         buf = arenaFreePtr(arena);
     HANDLE        handle = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
@@ -2916,7 +2920,7 @@ typedef struct D3D11Common {
     IDXGISwapChain1*        swapChain;
 } D3D11Common;
 
-static D3D11Common
+function D3D11Common
 initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
     ID3D11Device*        device = 0;
     ID3D11DeviceContext* context = 0;
@@ -3027,7 +3031,7 @@ initD3D11Common(HWND window, isize viewportWidth, isize viewportHeight) {
     return common;
 }
 
-static ID3DBlob*
+function ID3DBlob*
 compileShader(Str hlsl, const char* name, const char* kind) {
     UINT flags = D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
 #ifdef TRIAXIS_debuginfo
@@ -3058,7 +3062,7 @@ typedef struct VSPS {
     ID3D11PixelShader*  ps;
 } VSPS;
 
-static VSPS
+function VSPS
 compileVSPS(D3D11_INPUT_ELEMENT_DESC* desc, isize descCount, LPCWSTR path, ID3D11Device* device, Arena* scratch) {
     TempMemory temp = beginTempMemory(scratch);
 
@@ -3102,7 +3106,7 @@ typedef struct D3D11Blitter {
     } tex;
 } D3D11Blitter;
 
-static D3D11Blitter
+function D3D11Blitter
 initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, Arena* scratch) {
     TempMemory temp = beginTempMemory(scratch);
 
@@ -3177,7 +3181,7 @@ initD3D11Blitter(D3D11Common* common, isize textureWidth, isize textureHeight, A
     return blitter;
 }
 
-static void
+function void
 d3d11blit(D3D11Blitter blitter, Texture tex) {
     {
         UINT offset = 0;
@@ -3299,7 +3303,7 @@ typedef struct D3D11Renderer {
     } font;
 } D3D11Renderer;
 
-static D3D11Renderer
+function D3D11Renderer
 initD3D11Renderer(D3D11Common* common, State* state) {
     TempMemory temp = beginTempMemory(&state->scratch);
 
@@ -3531,7 +3535,7 @@ typedef struct D3D11TriFilledVertexDynArr {
     isize                 cap;
 } D3D11TriFilledVertexDynArr;
 
-static void
+function void
 d3d11render_pushQuad(D3D11TriFilledVertexDynArr* triFilled, V2f v1, V2f v2, V2f v3, V2f v4, struct nk_color nkcolor) {
     Color01 color = color255to01(nkcolorTo255(nkcolor));
 
@@ -3544,7 +3548,7 @@ d3d11render_pushQuad(D3D11TriFilledVertexDynArr* triFilled, V2f v1, V2f v2, V2f 
     arrpush(*triFilled, ((D3D11TriFilledVertex) {v3, color}));
 }
 
-static void
+function void
 d3d11render(D3D11Renderer renderer, State* state) {
     {
         UINT          offsets[] = {0, 0};
@@ -3791,8 +3795,6 @@ d3d11render(D3D11Renderer renderer, State* state) {
 // SECTION Timing
 //
 
-#include <timeapi.h>
-
 typedef struct Clock {
     LARGE_INTEGER freqPerSecond;
 } Clock;
@@ -3801,21 +3803,21 @@ typedef struct ClockMarker {
     LARGE_INTEGER counter;
 } ClockMarker;
 
-static Clock
+function Clock
 createClock(void) {
     Clock clock = {};
     QueryPerformanceFrequency(&clock.freqPerSecond);
     return clock;
 }
 
-static ClockMarker
+function ClockMarker
 getClockMarker(void) {
     ClockMarker marker = {};
     QueryPerformanceCounter(&marker.counter);
     return marker;
 }
 
-static f32
+function f32
 getMsFromMarker(Clock clock, ClockMarker marker) {
     ClockMarker now = getClockMarker();
     LONGLONG    diff = now.counter.QuadPart - marker.counter.QuadPart;
@@ -3828,7 +3830,7 @@ typedef struct Timer {
     ClockMarker update;
 } Timer;
 
-static f32
+function f32
 msSinceLastUpdate(Timer* timer) {
     f32 result = getMsFromMarker(timer->clock, timer->update);
     timer->update = getClockMarker();
@@ -3840,7 +3842,7 @@ msSinceLastUpdate(Timer* timer) {
 //
 
 // NOTE(khvorov) Only to be accessed in windowProc
-static State* globalState = 0;
+function State* globalState = 0;
 
 LRESULT CALLBACK
 windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
