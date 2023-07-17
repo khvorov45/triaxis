@@ -20,6 +20,7 @@
 #define Gigabyte (1024 * Megabyte)
 #define PI (3.14159)
 #define function static
+#define globalvar static
 #define arrayCount(x) (int)(sizeof(x) / sizeof(x[0]))
 #define unused(x) (x) = (x)
 #define min(x, y) (((x) < (y)) ? (x) : (y))
@@ -63,8 +64,8 @@ typedef double   f64;
 
 #include "generated.c"
 
-SpallProfile globalSpallProfile;
-SpallBuffer  globalSpallBuffer;
+globalvar SpallProfile globalSpallProfile;
+globalvar SpallBuffer  globalSpallBuffer;
 
 //
 // SECTION Memory
@@ -3842,7 +3843,7 @@ msSinceLastUpdate(Timer* timer) {
 //
 
 // NOTE(khvorov) Only to be accessed in windowProc
-function State* globalState = 0;
+globalvar State* globalState = 0;
 
 LRESULT CALLBACK
 windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
