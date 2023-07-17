@@ -774,15 +774,20 @@ d3d11render(D3D11Renderer renderer, State* state) {
                     i32 x1 = line->end.x;
                     i32 y1 = line->end.y;
 
-                    //
-                    // TODO(khvorov) Thicken lines properly
-                    i32 lt = line->line_thickness;
-                    V2f topleft = {(f32)(x0 - lt), (f32)(y0 + lt)};
-                    V2f topright = {(f32)(x0 + lt), (f32)(y0 - lt)};
-                    V2f bottomleft = {(f32)(x1 - lt), (f32)(y1 + lt)};
-                    V2f bottomright = {(f32)(x1 + lt), (f32)(y1 - lt)};
+                    V2f begin = {(f32)x0, (f32)y0};
+                    V2f end = {(f32)x1, (f32)y1};
 
-                    d3d11render_pushQuad(&triFilled, topleft, topright, bottomleft, bottomright, line->color);
+                    V2f vec = v2fsub(end, begin);
+                    V2f vecPerpendicular = {-vec.y, vec.x};
+                    V2f vecPerpN = v2fnormalise(vecPerpendicular);
+                    V2f pointMove = v2fscale(vecPerpN, (f32)line->line_thickness);
+
+                    V2f v1 = v2fadd(begin, pointMove);
+                    V2f v2 = v2fsub(begin, pointMove);
+                    V2f v3 = v2fadd(end, pointMove);
+                    V2f v4 = v2fsub(end, pointMove);
+
+                    d3d11render_pushQuad(&triFilled, v1, v2, v3, v4, line->color);
                 } break;
 
                 case NK_COMMAND_CURVE: break;
