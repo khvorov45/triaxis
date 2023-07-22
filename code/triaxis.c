@@ -8,14 +8,7 @@
 #include <immintrin.h>
 #include <float.h>
 
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#pragma clang diagnostic ignored "-Wmissing-field-initializers"
-#pragma clang diagnostic ignored "-Wsign-compare"
-#ifndef TRIAXIS_optimise
-// NOTE(khvorov) Debuginfo is busted for force-inlined functions
-#define SPALL_FORCEINLINE
-#endif
-#include "spall.h"
+void* memcpy(void* dest, const void* src, size_t len);
 
 // clang-format off
 #define Byte (1)
@@ -66,21 +59,75 @@ typedef intptr_t isize;
 typedef float    f32;
 typedef double   f64;
 
-const static __mmask64 globalTailByteMasks512[64] = {0x0, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff, 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff, 0xfffff, 0x1fffff, 0x3fffff, 0x7fffff, 0xffffff, 0x1ffffff, 0x3ffffff, 0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff, 0x7fffffff, 0x0, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff, 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff, 0xfffff, 0x1fffff, 0x3fffff, 0x7fffff, 0xffffff, 0x1ffffff, 0x3ffffff, 0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff, 0x7fffffff};
+const static __mmask64 globalTailByteMasks512[64] = {0x0ULL, 0x1ULL, 0x3ULL, 0x7ULL, 0xfULL, 0x1fULL, 0x3fULL, 0x7fULL, 0xffULL, 0x1ffULL, 0x3ffULL, 0x7ffULL, 0xfffULL, 0x1fffULL, 0x3fffULL, 0x7fffULL, 0xffffULL, 0x1ffffULL, 0x3ffffULL, 0x7ffffULL, 0xfffffULL, 0x1fffffULL, 0x3fffffULL, 0x7fffffULL, 0xffffffULL, 0x1ffffffULL, 0x3ffffffULL, 0x7ffffffULL, 0xfffffffULL, 0x1fffffffULL, 0x3fffffffULL, 0x7fffffffULL, 0x0ffffffffULL, 0x1ffffffffULL, 0x3ffffffffULL, 0x7ffffffffULL, 0xfffffffffULL, 0x1fffffffffULL, 0x3fffffffffULL, 0x7fffffffffULL, 0xffffffffffULL, 0x1ffffffffffULL, 0x3ffffffffffULL, 0x7ffffffffffULL, 0xfffffffffffULL, 0x1fffffffffffULL, 0x3fffffffffffULL, 0x7fffffffffffULL, 0xffffffffffffULL, 0x1ffffffffffffULL, 0x3ffffffffffffULL, 0x7ffffffffffffULL, 0xfffffffffffffULL, 0x1fffffffffffffULL, 0x3fffffffffffffULL, 0x7fffffffffffffULL, 0xffffffffffffffULL, 0x1ffffffffffffffULL, 0x3ffffffffffffffULL, 0x7ffffffffffffffULL, 0xfffffffffffffffULL, 0x1fffffffffffffffULL, 0x3fffffffffffffffULL, 0x7fffffffffffffffULL};
 const static __mmask16 globalTailDWordMasks512[16] = {0x0, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff, 0x7fff};
 
 //
 // SECTION Profile
 //
 
+// Spall data definitions from
+// https://github.com/colrdavidson/spall-web/blob/master/spall.h
+
+typedef struct SpallBuffer {
+    void* base;
+    isize size;
+    isize used;
+} SpallBuffer;
+
+enum {
+    SpallEventType_Invalid = 0,
+    SpallEventType_Custom_Data = 1,
+    SpallEventType_StreamOver = 2,
+    SpallEventType_Begin = 3,
+    SpallEventType_End = 4,
+    SpallEventType_Instant = 5,
+    SpallEventType_Overwrite_Timestamp = 6,
+    SpallEventType_Pad_Skip = 7,
+};
+
+#pragma pack(push, 1)
+
+typedef struct SpallBeginEvent {
+    u8  type;  // = SpallEventType_Begin
+    u8  category;
+    u32 pid;
+    u32 tid;
+    f64 when;
+    u8  name_length;
+    u8  args_length;
+} SpallBeginEvent;
+
+typedef struct SpallBeginEventMax {
+    SpallBeginEvent event;
+    char            name_bytes[255];
+    char            args_bytes[255];
+} SpallBeginEventMax;
+
+typedef struct SpallEndEvent {
+    u8  type;  // = SpallEventType_End
+    u32 pid;
+    u32 tid;
+    f64 when;
+} SpallEndEvent;
+
+typedef struct SpallHeader {
+    u64 magic_header;  // = 0x0BADF00D
+    u64 version;  // = 1
+    f64 timestamp_unit;
+    u64 must_be_0;
+} SpallHeader;
+
+#pragma pack(pop)
+
 globalvar SpallBuffer globalSpallBuffer;
 
 function void
 timedSectionStart_(const char* name, isize nameLen) {
     isize size = sizeof(SpallBeginEvent) + nameLen;
-    isize remaining = globalSpallBuffer.length - globalSpallBuffer.head;
+    isize remaining = globalSpallBuffer.size - globalSpallBuffer.used;
     if (size <= remaining) {
-        SpallBeginEventMax* event = (SpallBeginEventMax*)(globalSpallBuffer.data + globalSpallBuffer.head);
+        SpallBeginEventMax* event = (SpallBeginEventMax*)(globalSpallBuffer.base + globalSpallBuffer.used);
         event->event.type = SpallEventType_Begin;
         event->event.category = 0;
         event->event.pid = 0;
@@ -90,22 +137,22 @@ timedSectionStart_(const char* name, isize nameLen) {
         event->event.args_length = 0;
         memcpy(event->name_bytes, name, nameLen);
 
-        globalSpallBuffer.head += size;
+        globalSpallBuffer.used += size;
     }
 }
 
 function void
 timedSectionEnd_(void) {
     isize size = sizeof(SpallEndEvent);
-    isize remaining = globalSpallBuffer.length - globalSpallBuffer.head;
+    isize remaining = globalSpallBuffer.size - globalSpallBuffer.used;
     if (size <= remaining) {
-        SpallEndEvent* event = (SpallEndEvent*)(globalSpallBuffer.data + globalSpallBuffer.head);
+        SpallEndEvent* event = (SpallEndEvent*)(globalSpallBuffer.base + globalSpallBuffer.used);
         event->type = SpallEventType_End;
         event->pid = 0;
         event->tid = 0;
         event->when = __rdtsc();
 
-        globalSpallBuffer.head += size;
+        globalSpallBuffer.used += size;
     }
 }
 
@@ -2415,7 +2462,7 @@ initState(void* mem, isize bytes) {
 #ifdef TRIAXIS_profile
     {
         Arena spallArena = createArenaFromArena(&arena, 100 * Megabyte);
-        globalSpallBuffer = (SpallBuffer) {.data = spallArena.base, .length = spallArena.size};
+        globalSpallBuffer = (SpallBuffer) {.base = spallArena.base, .size = spallArena.size};
     }
 #else
     unused(rdtscFreqPerMicrosecond);
@@ -2655,7 +2702,7 @@ update(State* state, f32 deltaSec) {
                 f32 values[] = {26.0f, 13.0f, 30.0f, 15.0f, 25.0f, 10.0f, 20.0f, 40.0f, 12.0f, 8.0f, 22.0f, 28.0f};
                 nk_layout_row_dynamic(&state->ui, 150, 1);
                 nk_chart_begin(&state->ui, NK_CHART_LINES, NK_LEN(values), 0, 50);
-                for (isize i = 0; i < NK_LEN(values); ++i) {
+                for (isize i = 0; i < (isize)NK_LEN(values); ++i) {
                     nk_chart_push(&state->ui, values[i]);
                 }
                 nk_chart_end(&state->ui);
@@ -4204,12 +4251,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         );
         assert(written == sizeof(header));
 
-        isize toWrite = globalSpallBuffer.head;
+        isize toWrite = globalSpallBuffer.used;
         assert(toWrite < 2ll * Gigabyte);
         written = 0;
         WriteFile(
             profileFileHandle,
-            globalSpallBuffer.data,
+            globalSpallBuffer.base,
             toWrite,
             &written,
             NULL

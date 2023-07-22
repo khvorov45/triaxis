@@ -1,7 +1,7 @@
 @echo off
 
-if exist build rmdir /s /q build
-mkdir build
+if not exist build mkdir build
+del /q build\*
 
 start /b clang H:/Projects/triaxis/code/triaxis.c ^
     -march=native -Wall -Wextra -fno-caret-diagnostics -Wl,-incremental:no -g ^
