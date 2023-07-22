@@ -28172,11 +28172,14 @@ nk_chart_begin_colored(struct nk_context *ctx, enum nk_chart_type type,
     style = &config->chart;
 
     /* setup basic generic chart  */
+    struct nk_rect scaleRect = {.x = bounds.x, .y = bounds.y, .w = 10, .h = bounds.h};
+    struct nk_rect dataRect = {.x = bounds.x + scaleRect.w, .y = bounds.y, .w = bounds.w - scaleRect.w, .h = bounds.h};
+
     nk_zero(chart, sizeof(*chart));
-    chart->x = bounds.x + style->padding.x;
-    chart->y = bounds.y + style->padding.y;
-    chart->w = bounds.w - 2 * style->padding.x;
-    chart->h = bounds.h - 2 * style->padding.y;
+    chart->x = dataRect.x + style->padding.x;
+    chart->y = dataRect.y + style->padding.y;
+    chart->w = dataRect.w - 2 * style->padding.x;
+    chart->h = dataRect.h - 2 * style->padding.y;
     chart->w = NK_MAX(chart->w, 2 * style->padding.x);
     chart->h = NK_MAX(chart->h, 2 * style->padding.y);
 
@@ -28205,6 +28208,11 @@ nk_chart_begin_colored(struct nk_context *ctx, enum nk_chart_type type,
             nk_fill_rect(&win->buffer, nk_shrink_rect(bounds, style->border),
                 style->rounding, style->background.data.color);
             break;
+    }
+
+    // TODO(khvorov) Scale
+    {
+        nk_fill_rect(&win->buffer, scaleRect, style->rounding, (struct nk_color) {.r = 255, .a = 255});
     }
     return 1;
 }

@@ -2435,11 +2435,16 @@ typedef struct State {
     } meshes;
 
     bool useSW;
-
     bool showDebugUI;
 
     struct nk_context   ui;
     struct nk_user_font uifont;
+
+    struct {
+        f32*  ptr;
+        isize len;
+        isize cap;
+    } frametimes;
 } State;
 
 function float
@@ -2490,6 +2495,8 @@ initState(void* mem, isize bytes) {
         u8*   nkmem = arenaAllocArray(&arena, u8, nkMemSize);
         nk_init_fixed(&state->ui, nkmem, nkMemSize, &state->uifont);
     }
+
+    arenaAllocCap(&arena, f32, sizeof(f32) * 20, state->frametimes);
 
     isize perSystem = arenaFreeSize(&arena) / 3;
     state->swRenderer = createSWRenderer(&arena, perSystem);
@@ -2699,11 +2706,15 @@ update(State* state, f32 deltaSec) {
 
             // TODO(khvorov) Frametime line
             {
-                f32 values[] = {26.0f, 13.0f, 30.0f, 15.0f, 25.0f, 10.0f, 20.0f, 40.0f, 12.0f, 8.0f, 22.0f, 28.0f};
+                if (state->frametimes.len == state->frametimes.cap) {
+                    state->frametimes.len = 0;
+                }
+                arrpush(state->frametimes, deltaSec * 1000.0f);
+
                 nk_layout_row_dynamic(&state->ui, 150, 1);
-                nk_chart_begin(&state->ui, NK_CHART_LINES, NK_LEN(values), 0, 50);
-                for (isize i = 0; i < (isize)NK_LEN(values); ++i) {
-                    nk_chart_push(&state->ui, values[i]);
+                nk_chart_begin(&state->ui, NK_CHART_LINES, state->frametimes.cap, 0, 30);
+                for (isize ind = 0; ind < state->frametimes.cap; ++ind) {
+                    nk_chart_push(&state->ui, state->frametimes.ptr[ind]);
                 }
                 nk_chart_end(&state->ui);
             }
