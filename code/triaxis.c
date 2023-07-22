@@ -2386,7 +2386,7 @@ runBench(Arena* arena) {
             u8* arr1 = (u8*)arenaAlloc(arena, toCopy, 64);
             u8* arr2 = (u8*)arenaAlloc(arena, toCopy, 64);
 
-            timedSectionStart("bench copymem");
+            timedSectionStart("bench memcpy_");
             memcpy_(arr1, arr2, toCopy);
             timedSectionEnd();
 
