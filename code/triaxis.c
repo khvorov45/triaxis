@@ -3924,6 +3924,18 @@ typedef struct Timer {
 // SECTION Main
 //
 
+function void
+clipCursorToWindow(HWND hwnd) {
+    RECT rect = {};
+    GetClientRect(hwnd, &rect);
+    POINT topleft = {rect.left, rect.top};
+    ClientToScreen(hwnd, &topleft);
+    POINT bottomright = {rect.right, rect.bottom};
+    ClientToScreen(hwnd, &bottomright);
+    RECT screen = {.left = topleft.x, .right = bottomright.x, .top = topleft.y, .bottom = bottomright.y};
+    ClipCursor(&screen);
+}
+
 // NOTE(khvorov) Only to be accessed in windowProc
 globalvar State* globalState = 0;
 
@@ -3937,14 +3949,9 @@ windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
             inputClearKeys(&globalState->input);
         } break;
         case WM_SETFOCUS: {
-            RECT rect = {};
-            GetClientRect(hwnd, &rect);
-            POINT topleft = {rect.left, rect.top};
-            ClientToScreen(hwnd, &topleft);
-            POINT bottomright = {rect.right, rect.bottom};
-            ClientToScreen(hwnd, &bottomright);
-            RECT screen = {.left = topleft.x, .right = bottomright.x, .top = topleft.y, .bottom = bottomright.y};
-            ClipCursor(&screen);
+            if (!globalState->showDebugUI) {
+                clipCursorToWindow(hwnd);
+            }
         } break;
         default: result = DefWindowProcW(hwnd, uMsg, wParam, lParam); break;
     }
@@ -4042,14 +4049,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         assert(RegisterRawInputDevices(&mouse, 1, sizeof(RAWINPUTDEVICE)) == TRUE);
     }
 
-#ifdef TRIAXIS_debuginfo
-    // NOTE(khvorov) To prevent a white flash
-    ShowWindow(window, SW_SHOWMINIMIZED);
-#endif
     ShowWindow(window, SW_SHOWNORMAL);
 
     if (!state->showDebugUI) {
         ShowCursor(FALSE);
+        clipCursorToWindow(window);
     }
 
     // NOTE(khvorov) Windows will sleep for random amounts of time if we don't do this
@@ -4162,6 +4166,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdS
         }
         if (prevShowDebugUI != state->showDebugUI) {
             ShowCursor(state->showDebugUI);
+            if (state->showDebugUI) {
+                ClipCursor(0);
+            } else {
+                clipCursorToWindow(window);
+            }
         }
 
         if (state->useSW) {
